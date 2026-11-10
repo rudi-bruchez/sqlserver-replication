@@ -268,7 +268,7 @@ props_list() {
 
 p1() { # DB TYPE ID MARK
     local db=$1 type=$2 id=$3 mark=$4
-    local jid sp rp ra props jname jcat jen cmd refagent refdist distid distjob distjobexists refstep outcome msg
+    local sjob sjobeq sjobpull jid sp rp ra props jname jcat jen cmd refagent refdist distid distjob distjobexists refstep outcome msg
     jid=$(pull_job_id "$db")
     sp=$(sql_value "SELECT ISNULL(STRING_AGG(CONVERT(nvarchar(10), t), N'/'), N'none') FROM (SELECT DISTINCT subscription_type t FROM Sales.dbo.syssubscriptions WHERE srvid >= 0 AND dest_db = N'$db') x")
     ra=$(sql_value "SELECT ISNULL(STRING_AGG(CONVERT(nvarchar(10), status), N'/'), N'none') FROM (SELECT DISTINCT status FROM Sales.dbo.syssubscriptions WHERE srvid >= 0 AND dest_db = N'$db') x")
@@ -282,8 +282,11 @@ p1() { # DB TYPE ID MARK
     refstep=$(sql_value "SELECT COUNT(*) FROM $db.dbo.MSsubscription_properties p JOIN msdb.dbo.sysjobsteps s ON s.step_uid = p.job_step_uid WHERE s.job_id = '$jid'")
     refdist=$(sql_value "SELECT COUNT(*) FROM distribution.dbo.MSdistribution_agents WHERE CONVERT(uniqueidentifier, job_id) = '$jid'")
     distid=$(sql_value "SELECT CONVERT(nvarchar(20), id) + N'/type' + CONVERT(nvarchar(10), subscription_type) FROM distribution.dbo.MSdistribution_agents WHERE subscriber_db = N'$db'")
+    sjob=$(sql_value "SELECT CONVERT(nvarchar(10), COUNT(*)) FROM msdb.dbo.sysjobs WHERE job_id IN (SELECT CONVERT(uniqueidentifier, distribution_jobid) FROM Sales.dbo.syssubscriptions WHERE srvid >= 0 AND dest_db = N'$db')")
+    sjobeq=$(sql_value "SELECT CONVERT(nvarchar(10), COUNT(*)) FROM Sales.dbo.syssubscriptions s JOIN distribution.dbo.MSdistribution_agents a ON a.job_id = s.distribution_jobid WHERE s.srvid >= 0 AND s.dest_db = N'$db' AND a.subscriber_db = N'$db'")
+    sjobpull=$(sql_value "SELECT CONVERT(nvarchar(10), COUNT(*)) FROM Sales.dbo.syssubscriptions WHERE srvid >= 0 AND dest_db = N'$db' AND CONVERT(uniqueidentifier, distribution_jobid) = '$jid'")
     distjobexists=$(sql_value "SELECT COUNT(*) FROM msdb.dbo.sysjobs WHERE job_id = (SELECT CONVERT(uniqueidentifier, job_id) FROM distribution.dbo.MSdistribution_agents WHERE subscriber_db = N'$db')")
-    need jid sp ra rp props jname jcat jen cmd refagent refstep refdist distid distjobexists
+    need sjob sjobeq sjobpull jid sp ra rp props jname jcat jen cmd refagent refstep refdist distid distjobexists
     # Delivery, or the agent's own error: both end the wait, anything else is a timeout.
     wait_until 120 "SELECT CASE WHEN $(delivered_pred "$db" "$mark") OR EXISTS (SELECT 1 FROM msdb.dbo.sysjobhistory WHERE job_id = '$jid' AND message LIKE N'%Agent message code%') THEN 1 ELSE 0 END" \
         || { echo "08-pull: $id: the pull agent neither delivered nor logged an agent message" >&2; exit 1; }
@@ -295,7 +298,7 @@ p1() { # DB TYPE ID MARK
         msg=${msg//|//}
     fi
     need outcome msg
-    r "$id" "publisher_subscription_type=$sp,subscriber_subscription_type=$rp" "syssubscriptions.status=$ra distributor_agent=$distid MSsubscription_properties=[$props] job=[$jname category=$jcat enabled=$jen command=$cmd] job_id_referenced_by: subscriber_agent_id=$refagent step_uid=$refstep MSdistribution_agents.job_id=$refdist; MSdistribution_agents.job_id_is_a_job=$distjobexists agent_outcome=$outcome ($msg)"
+    r "$id" "publisher_subscription_type=$sp,subscriber_subscription_type=$rp" "syssubscriptions.status=$ra distributor_agent=$distid MSsubscription_properties=[$props] job=[$jname category=$jcat enabled=$jen command=$cmd] job_id_referenced_by: subscriber_agent_id=$refagent step_uid=$refstep MSdistribution_agents.job_id=$refdist; MSdistribution_agents.job_id_is_a_job=$distjobexists; syssubscriptions.distribution_jobid: is_the_pull_job=$sjobpull is_a_job=$sjob equals_MSdistribution_agents.job_id=$sjobeq agent_outcome=$outcome ($msg)"
 }
 
 # The pull subscription of m_psub1 is built and delivered, then the omitted one in m_psub2.
@@ -368,7 +371,7 @@ m_bogus;-;0;-;1;NULL'
 
 p2case() { # PROPERTY COLUMN SECRET START SET RESTORE
     local prop=$1 col=$2 secret=$3 start=$4 set=$5 restore=$6
-    local fp0 fp1 fp2 v0 v1 v2 res msg rres rmsg inside after rv shown_set
+    local fp0 fp1 fp2 v0 v1 v2 res msg rres rmsg inside after rv shown_set allowed
     want "P2.$prop" || return 0
     fp0=$(fp m_psub1 "$jid1")
     v0=-; v1=-; v2=-
@@ -376,7 +379,6 @@ p2case() { # PROPERTY COLUMN SECRET START SET RESTORE
     need fp0 v0
     if [ "$start" != - ] && [ -z "${M_ONLY:-}" ]; then
         [ "$v0" = "$start" ] || { echo "08-pull: P2.$prop starts at '$v0', expected '$start'" >&2; exit 1; }
-        [ "$set" != "$start" ] || { echo "08-pull: P2.$prop: the value set equals the start" >&2; exit 1; }
     fi
     res=$(call_in m_psub1 "$(CHANGE_CALL "$prop" "$set")")
     msg=${res#*~}; res=${res%%~*}
@@ -384,6 +386,13 @@ p2case() { # PROPERTY COLUMN SECRET START SET RESTORE
     if [ "$col" != - ]; then v1=$(colval m_psub1 "$col" "$secret"); fi
     need fp1 v1
     inside=$(fpdiff "$fp0" "$fp1")
+    # An ok call on a property with a column must move the column (ftp_*: accepted and ignored, it must not).
+    if [ -z "${M_ONLY:-}" ] && [ "$res" = ok ] && [ "$col" != - ]; then
+        case $prop in
+            ftp_*) [ "$v1" = "$v0" ] || { echo "08-pull: P2.$prop: an ignored property changed ($v0 -> $v1)" >&2; exit 1; } ;;
+            *)     [ "$v1" != "$v0" ] || { echo "08-pull: P2.$prop: ok but the column did not change ($v0)" >&2; exit 1; } ;;
+        esac
+    fi
     # restore when the call said ok or the state moved anyway
     rres=skipped; rmsg=
     rv=$restore; [ "$restore" = BEFORE ] && rv=$v0
@@ -396,6 +405,16 @@ p2case() { # PROPERTY COLUMN SECRET START SET RESTORE
     fp2=$(fpdiff "$fp0" "$(fp m_psub1 "$jid1")")
     if [ "$col" != - ]; then v2=$(colval m_psub1 "$col" "$secret"); fi
     need v2
+    # The restore leaves nothing behind, except these secret columns (named exactly).
+    if [ -z "${M_ONLY:-}" ]; then
+        case $prop in
+            distributor_password|distributor_security_mode) allowed=props.distributor_password ;;
+            dts_package_password) allowed=props.dts_package_password ;;
+            internet_password) allowed=props.internet_password ;;
+            *) allowed= ;;
+        esac
+        [ "$fp2" = "$allowed" ] || { echo "08-pull: P2.$prop: after_restore_differs=[$fp2], allowed=[$allowed]" >&2; exit 1; }
+    fi
     shown_set=$set; [ "$secret" = 1 ] && shown_set='<secret>'
     r "P2.$prop" "$res" "$col: before=$v0 set=$shown_set readback=$v1 changed_inside=[$inside] message=[${msg:-none}] restore_value=$([ "$secret" = 1 ] && echo '<secret>' || echo "$rv") restore=$rres${rmsg:+ [$rmsg]} value_after_restore=$v2 after_restore_differs=[$fp2]"
 }
@@ -409,7 +428,7 @@ fi
 # p3 ORDER DB: build a fresh pull subscription, then drop it in the given order, reading
 # the state between the two drops.
 p3() {
-    local order=$1 db=$2 mark jid s0 s1 s2 s3 a1 a2 a1m a2m first second fdb sdb actions=""
+    local order=$1 db=$2 mark jid s0 s1 s2 s3 a1 a2 a1m a2m base agent_after first second fdb sdb actions=""
     want "P3.$order" || return 0
     mark=$(now)
     build "$db" named
@@ -426,7 +445,16 @@ p3() {
         first="EXEC @rc = sp_dropsubscription @publication = N'm_pp', @article = N'all', @subscriber = @srv, @destination_db = N'$db';"
         second="EXEC @rc = sp_droppullsubscription @publisher = @srv, @publisher_db = N'Sales', @publication = N'm_pp';"
     fi
+    base=$(sql_value "SELECT ISNULL(MAX(instance_id), 0) FROM msdb.dbo.sysjobhistory")
     a1=$(call_in "$fdb" "$first"); a1m=${a1#*~}; a1=${a1%%~*}; s1=$(state "$db" "$jid")
+    agent_after=
+    if [ "$order" = publisher-first ]; then
+        # The pull agent still runs after the publisher forgot the subscription: what does it say?
+        wait_until 180 "SELECT CASE WHEN EXISTS (SELECT 1 FROM msdb.dbo.sysjobhistory WHERE job_id = '$jid' AND instance_id > $base AND message LIKE N'%Agent message code%') THEN 1 ELSE 0 END" \
+            || { echo "08-pull: P3.$order: the pull agent logged nothing after the publisher drop" >&2; exit 1; }
+        agent_after=$(sql_value "SELECT TOP 1 CONVERT(nvarchar(300), LEFT(SUBSTRING(message, CHARINDEX(N'Agent message code', message), 300), CHARINDEX(CHAR(13), SUBSTRING(message, CHARINDEX(N'Agent message code', message), 300) + CHAR(13)) - 1)) FROM msdb.dbo.sysjobhistory WHERE job_id = '$jid' AND instance_id > $base AND message LIKE N'%Agent message code%' ORDER BY instance_id")
+        agent_after=${agent_after//|//}
+    fi
     a2=$(call_in "$sdb" "$second"); a2m=${a2#*~}; a2=${a2%%~*}; s2=$(state "$db" "$jid")
     # Whatever remains after both drops is removed by hand, by identity.
     if [ "$(sql_value "SELECT COUNT(*) FROM msdb.dbo.sysjobs WHERE job_id = '$jid'")" != 0 ]; then
@@ -439,7 +467,7 @@ p3() {
         sql -Q "SET NOCOUNT ON; USE Sales; EXEC sp_dropsubscription @publication = N'm_pp', @article = N'all', @subscriber = @@SERVERNAME, @destination_db = N'$db'" </dev/null >&2; actions+="sp_dropsubscription;"
     fi
     s3=$(state "$db" "$jid")
-    r "P3.$order.step1" "$a1" "${a1m:+message=[$a1m] }before: $s0; after the first drop ($([ "$order" = subscriber-first ] && echo 'sp_droppullsubscription at the subscriber' || echo 'sp_dropsubscription at the publisher')): $s1"
+    r "P3.$order.step1" "$a1" "${a1m:+message=[$a1m] }before: $s0; after the first drop ($([ "$order" = subscriber-first ] && echo 'sp_droppullsubscription at the subscriber' || echo 'sp_dropsubscription at the publisher')): $s1${agent_after:+; the pull agent then logs: $agent_after}"
     r "P3.$order.step2" "$a2" "${a2m:+message=[$a2m] }after the second drop ($([ "$order" = subscriber-first ] && echo 'sp_dropsubscription at the publisher' || echo 'sp_droppullsubscription at the subscriber')): $s2"
     r "P3.$order.cleanup" "${actions:+needed}${actions:-none_needed}" "by hand: ${actions:-nothing}; state after: $s3"
 }

@@ -74,9 +74,10 @@ lab_export() {
 # no publication in the name, so an orphan (agent row gone, job left in msdb) escapes
 # the name test. It counts jobs of the three agent categories that none of the
 # MSlogreader_agents, MSsnapshot_agents, MSdistribution_agents tables references.
-# Pull-subscription agent jobs (Task 7, not yet measured) may be referenced differently
-# (the job lives on the subscriber, or MSdistribution_agents.job_id is another value):
-# Task 7 must check this guard against them before relying on it.
+# Measured in Task 7 (results/2022/08-pull.txt): a pull subscription's agent job lives at
+# the subscriber and its MSdistribution_agents row has job_id = newid(), not that job, so
+# this check flags a live pull job. Acceptable: the guard runs after a script, and any pull
+# subscription an m_ script leaves is residue anyway.
 # The m_ prefix is matched with an escaped LIKE: an unescaped _ matches master, model, msdb.
 residue() {
     local counts files
