@@ -15,7 +15,14 @@ fixtures=(
     "uncaught.sql uncaught"
     "residue.sql residue"
     "residue-job.sh residue"
+    "residue-schema.sql residue"
+    "residue-file.sh residue"
+    "residue-folder.sh residue"
     "wait-timeout.sh results"
+    "sqlvalue-error.sh uncaught"
+    "exit-status.sh exit"
+    "truncated.sql truncated"
+    "duplicate-ids.sql total"
     "restart.sh restart"
 )
 
@@ -29,6 +36,14 @@ cleanup() {
         residue-job.sh) query="IF EXISTS (SELECT * FROM msdb.dbo.sysjobs WHERE name = N'REPLLAB-Sales-m_ghost-1')
                 EXEC msdb.dbo.sp_delete_job @job_name = N'REPLLAB-Sales-m_ghost-1';
             SELECT COUNT(*) FROM msdb.dbo.sysjobs WHERE name = N'REPLLAB-Sales-m_ghost-1';" ;;
+        residue-schema.sql) query="EXEC Sales.sys.sp_executesql N'DROP TYPE IF EXISTS dbo.m_t; DROP SCHEMA IF EXISTS m_s;';
+            SELECT (SELECT COUNT(*) FROM Sales.sys.types WHERE name = N'm_t') + (SELECT COUNT(*) FROM Sales.sys.schemas WHERE name = N'm_s');" ;;
+        residue-file.sh|residue-folder.sh)
+            local path=/var/opt/mssql/data/ReplData/M_LEFT.bak
+            [ "$1" = residue-folder.sh ] && path=/var/opt/mssql/data/ReplData/unc/REPLLAB_SALES_m_ghost
+            podman exec repllab rm -rf "$path" || { echo "cleanup failed: rm $path"; return; }
+            podman exec repllab test ! -e "$path" || echo "cleanup failed: $path still there"
+            return ;;
         *) return 0 ;;
     esac
     if [ ! -f "$lab/lib.sh" ]; then echo "cleanup impossible: lib.sh missing"; return; fi

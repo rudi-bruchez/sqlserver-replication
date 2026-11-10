@@ -10,10 +10,14 @@
 # Guards, checked after each script; the first that fails stops the run with
 # "GUARD <name> failed: <detail>" and a non-zero exit:
 #   restart   tempdb create_date and sqlserver_start_time unchanged (no restart);
+#   exit      the script (sqlcmd for a .sql file) exited 0;
 #   results   at least one R| line other than TOTAL;
-#   total     exactly one R|TOTAL|n line, n equal to the number of other R| lines;
-#   uncaught  no "Msg n, Level 11-25" or "Sqlcmd:" line in the output;
-#   residue   no m_ object, publication, agent, profile, job, snapshot folder or file left;
+#   total     exactly one R|TOTAL|n line, n equal to the number of other R| lines,
+#             and no case id printed twice;
+#   truncated no R| line of exactly 256 characters (sqlcmd's cut of a max column);
+#   uncaught  no "Msg n, Level 11-25" or "Sqlcmd:" line in the output (stderr included);
+#   residue   no m_ object, schema, type, index, login, linked server, publication,
+#             agent, profile, job, snapshot folder or file left;
 #   export    sqlrepl export of Sales identical before and after.
 # restart comes first: after a restart every other check reads a different instance.
 set -uo pipefail
@@ -71,8 +75,16 @@ residue() {
 DECLARE @p nvarchar(10) = N'm\_%';
 SELECT CONCAT(
   'databases=',               (SELECT COUNT(*) FROM sys.databases WHERE name LIKE @p ESCAPE N'\'),
+  ' server_principals=',      (SELECT COUNT(*) FROM sys.server_principals WHERE name LIKE @p ESCAPE N'\'),
+  ' servers=',                (SELECT COUNT(*) FROM sys.servers WHERE name LIKE @p ESCAPE N'\'),
   ' Sales.objects=',          (SELECT COUNT(*) FROM Sales.sys.objects WHERE name LIKE @p ESCAPE N'\'),
+  ' Sales.schemas=',          (SELECT COUNT(*) FROM Sales.sys.schemas WHERE name LIKE @p ESCAPE N'\'),
+  ' Sales.types=',            (SELECT COUNT(*) FROM Sales.sys.types WHERE name LIKE @p ESCAPE N'\'),
+  ' Sales.indexes=',          (SELECT COUNT(*) FROM Sales.sys.indexes WHERE name LIKE @p ESCAPE N'\'),
   ' SalesSub.objects=',       (SELECT COUNT(*) FROM SalesSub.sys.objects WHERE name LIKE @p ESCAPE N'\'),
+  ' SalesSub.schemas=',       (SELECT COUNT(*) FROM SalesSub.sys.schemas WHERE name LIKE @p ESCAPE N'\'),
+  ' SalesSub.types=',         (SELECT COUNT(*) FROM SalesSub.sys.types WHERE name LIKE @p ESCAPE N'\'),
+  ' SalesSub.indexes=',       (SELECT COUNT(*) FROM SalesSub.sys.indexes WHERE name LIKE @p ESCAPE N'\'),
   ' syspublications=',        (SELECT COUNT(*) FROM Sales.dbo.syspublications WHERE name LIKE @p ESCAPE N'\'),
   ' MSpublications=',         (SELECT COUNT(*) FROM distribution.dbo.MSpublications WHERE publication LIKE @p ESCAPE N'\'),
   ' MSsubscriptions=',        (SELECT COUNT(*) FROM distribution.dbo.MSsubscriptions s
@@ -83,10 +95,11 @@ SELECT CONCAT(
                                 WHERE publication LIKE @p ESCAPE N'\' OR subscriber_db LIKE @p ESCAPE N'\'),
   ' MSagent_profiles=',       (SELECT COUNT(*) FROM msdb.dbo.MSagent_profiles WHERE profile_name LIKE @p ESCAPE N'\'),
   ' sysjobs=',                (SELECT COUNT(*) FROM msdb.dbo.sysjobs WHERE name LIKE N'%-m\_%' ESCAPE N'\'))") || return 1
-    # Snapshot folders are named <PUBLISHER>_<DATABASE>_<PUBLICATION>, upper case.
-    files=$(podman exec repllab find /var/opt/mssql/data/ReplData/unc -name '*_M_*' 2>&1) || {
+    # Snapshot folders are named <PUBLISHER>_<DATABASE>_<PUBLICATION>, upper case;
+    # matched in any case all the same, as are files at any depth under data.
+    files=$(podman exec repllab find /var/opt/mssql/data/ReplData/unc -iname '*_m_*' 2>&1) || {
         echo "find in ReplData/unc failed: $files" >&2; return 1; }
-    files+=$'\n'$(podman exec repllab find /var/opt/mssql/data -maxdepth 1 -name 'm_*' 2>&1) || {
+    files+=$'\n'$(podman exec repllab find /var/opt/mssql/data -iname 'm_*' 2>&1) || {
         echo "find in /var/opt/mssql/data failed: $files" >&2; return 1; }
     files=$(printf '%s\n' "$files" | grep -v '^$' | tr '\n' ' ')
     printf '%s files=[%s]\n' "$counts" "$files"
@@ -109,6 +122,7 @@ for script in "$@"; do
         *.sh)  bash "$script" </dev/null >"$log" 2>&1 ;;
         *)     die "not a .sql or .sh script: $script" ;;
     esac
+    status=$?
 
     after_tempdb=$(tempdb_created 2>&1) \
         || guard_failed restart "cannot read tempdb create_date after $name: $after_tempdb"
@@ -118,6 +132,8 @@ for script in "$@"; do
         || guard_failed restart "cannot read the instance start time after $name: $after_start"
     [ "$after_start" = "$before_start" ] \
         || guard_failed restart "sqlserver_start_time went from $before_start to $after_start during $name: the instance restarted"
+
+    [ "$status" -eq 0 ] || guard_failed exit "$name exited with status $status (log: $(tail -n 3 "$log" | tr '\n' ' '))"
 
     cases=$(grep -c -E '^R\|' "$log" | head -n 1)
     totals=$(grep -E '^R\|TOTAL\|' "$log")
@@ -129,6 +145,11 @@ for script in "$@"; do
     [[ $totals =~ ^R\|TOTAL\|([0-9]+)$ ]] || guard_failed total "$name: malformed TOTAL line: $totals"
     [ "${BASH_REMATCH[1]}" -eq "$count" ] \
         || guard_failed total "$name announced ${BASH_REMATCH[1]} cases and printed $count"
+    dups=$(grep -E '^R\|' "$log" | grep -v -E '^R\|TOTAL\|' | cut -d'|' -f2 | sort | uniq -d | tr '\n' ' ')
+    [ -z "$dups" ] || guard_failed total "$name printed these case ids more than once: $dups"
+
+    long=$(grep -E '^R\|' "$log" | awk 'length($0) == 256 { print substr($0, 1, 40) }' | head -n 3 | tr '\n' ' ')
+    [ -z "$long" ] || guard_failed truncated "$name: R| line of exactly 256 characters, an nvarchar(max) cut by sqlcmd (cast it to nvarchar(4000)): $long"
 
     uncaught=$(grep -E '^Msg [0-9]+, Level (1[1-9]|2[0-5])|^Sqlcmd:' "$log" | head -n 3 | tr '\n' ' ')
     [ -z "$uncaught" ] || guard_failed uncaught "$name: $uncaught"

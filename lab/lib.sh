@@ -4,6 +4,9 @@
 # sql [sqlcmd args...]: sqlcmd inside the repllab container, standard input passed
 # through (feed a script with `sql < file.sql`). No -b: sqlcmd then exits 0 on an
 # SQL error, which is why campaign.sh reads the output for Msg lines.
+# sqlcmd cuts an nvarchar(max) or varchar(max) column at 256 characters (-W cannot
+# be combined with -y 0). Cast the printed R| column to nvarchar(4000): campaign.sh
+# rejects any R| line of exactly 256 characters as truncated.
 sql() {
     podman exec -i -e SQLCMDPASSWORD="$MSSQL_SA_PASSWORD" repllab \
         /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -W -s '|' "$@"
@@ -15,7 +18,9 @@ sql() {
 sql_value() {
     local out
     if ! out=$(sql -b -h -1 -Q "SET NOCOUNT ON; $1" </dev/null 2>&1); then
-        printf 'sql_value: query failed: %s\n' "$out" >&2
+        # The server's lines keep their line start, so that campaign.sh sees a
+        # "Msg n, Level m" line in the log of a script that called sql_value.
+        printf 'sql_value: query failed:\n%s\n' "$out" >&2
         return 1
     fi
     out=$(printf '%s\n' "$out" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -v '^$')
