@@ -151,7 +151,7 @@ type FTP struct {
 
 // ObjectName is a schema-qualified object name.
 type ObjectName struct {
-	Schema string `yaml:"schema"`
+	Schema string `yaml:"schema,omitempty"`
 	Name   string `yaml:"name"`
 }
 
@@ -189,8 +189,8 @@ type Commands struct {
 
 // Command is one decoded ins_cmd, upd_cmd or del_cmd.
 type Command struct {
-	Mode      string `yaml:"mode"`
-	Procedure string `yaml:"procedure,omitempty"`
+	Mode      string      `yaml:"mode"`
+	Procedure *ObjectName `yaml:"procedure,omitempty"`
 }
 
 // Filter is a horizontal (row) filter.

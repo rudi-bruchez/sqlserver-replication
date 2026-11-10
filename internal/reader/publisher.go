@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/rudi-bruchez/sqlserver-replication/internal/decode"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
@@ -167,20 +168,19 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 			Delete: command(delCmd),
 		}
 
-		// The filter procedure and the synchronization view are generated
-		// by replication unless the article type says they are manual
-		// (bits 2 and 4 of the log-based types 1, 3, 5, 7). Generated objects
-		// are not configuration.
-		logBased := typ&1 != 0
-		manualFilter := logBased && typ&2 != 0
-		manualView := logBased && typ&4 != 0
-		if filterClause != "" || manualFilter {
+		// sp_articlefilter requires @filter_name, so a filter procedure is
+		// always named by the user, whatever the article type. A filter
+		// clause without a procedure is kept too: sp_addarticle stores it
+		// before any sp_articlefilter call. The synchronization view is
+		// generated as syncobj_0x<hex> unless sp_articleview or a manual
+		// view type named it. Measured on SQL Server 2022 (lab/README.md).
+		if filterClause != "" || filterName != "" {
 			a.Filter = &model.Filter{Clause: filterClause}
-			if manualFilter && filterName != "" {
+			if filterName != "" {
 				a.Filter.Procedure = &model.ObjectName{Schema: filterSchema, Name: filterName}
 			}
 		}
-		if manualView && syncObjID != 0 && syncObjID != objID {
+		if syncObjID != 0 && syncObjID != objID && !strings.HasPrefix(syncName, "syncobj_0x") {
 			a.SyncObject = &model.ObjectName{Schema: syncSchema, Name: syncName}
 		}
 		a.FireTriggersOnSnapshot = fireTriggers != 0
@@ -243,7 +243,11 @@ func (e *exporter) fillCommon(a *model.Article, pub string, typ, preCreation int
 
 func command(s string) model.Command {
 	c := decode.ParseCommand(s)
-	return model.Command{Mode: c.Mode, Procedure: c.Procedure}
+	m := model.Command{Mode: c.Mode}
+	if c.Procedure != "" {
+		m.Procedure = &model.ObjectName{Schema: c.Schema, Name: c.Procedure}
+	}
+	return m
 }
 
 type subscriptionKey struct {

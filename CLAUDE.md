@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Go tool, `replcfg`, that manages SQL Server transactional replication as a declarative file, on the Terraform model: export the current state, diff it against the desired state, generate the `sp_add*` / `sp_change*` / `sp_drop*` calls. The tool replaces the configuration layer only; Microsoft's replication engine (log reader, distribution) stays.
 
-Roadmap and status: step 1 (analysis, `docs/analysis/step-1-analysis.md`) and step 2 (read-only export) are done. Step 3 (plan) and step 4 (apply) are not started. The export has not yet run against a configured replication, only against an instance without one.
+Roadmap and status: step 1 (analysis, `docs/analysis/step-1-analysis.md`) and step 2 (read-only export) are done. Step 3 (plan) and step 4 (apply) are not started. The export has run against the lab replication of `lab/README.md` (SQL Server 2022 Developer in podman), which found and fixed the command parsing and the filter procedure and sync view rules.
 
 Scope: transactional replication, push subscriptions, SQL Server publisher. Merge, peer-to-peer, updatable, pull and anonymous subscriptions and Oracle publishers are out of scope; the export reports them under `warnings` instead of modelling them.
 
@@ -22,10 +22,11 @@ go test ./...
 go test ./internal/decode -run TestParseCommand      # single test
 ```
 
-`TestQueriesParse` (internal/reader) checks the syntax of every SQL query against a live instance and is skipped unless `REPLCFG_TEST_DSN` is set. No replication is needed. On the development machine the local instance is SQL Express with TCP disabled and SQL Browser stopped, so use shared memory:
+`TestQueriesParse` (internal/reader) checks the syntax of every SQL query against a live instance and is skipped unless `REPLCFG_TEST_DSN` is set. No replication is needed. On the Windows machine the local instance is SQL Express with TCP disabled and SQL Browser stopped, so use shared memory; on Linux, the lab container:
 
 ```
 REPLCFG_TEST_DSN='server=lpc:localhost\SQLEXPRESS;encrypt=disable' go test ./...
+REPLCFG_TEST_DSN='sqlserver://sa:<url-encoded password>@127.0.0.1:11980?encrypt=disable' go test ./...
 ```
 
 Running the export:
@@ -49,6 +50,9 @@ Traps already paid for, documented at the queries:
 - A shared distribution agent is stored with `publication = N'ALL'`. It is exported once, under `publisher.shared_distribution_agents`.
 - `job_id` in the replication tables is `binary(16)` and can outlive a deleted job.
 - `SET PARSEONLY` only affects the batches after it in the same session; the test sets it on a dedicated `sql.Conn`.
+- `MSsnapshot_agents` has a row for every publication, `local_job = 0` and a never-created `job_id` when `sp_addpublication_snapshot` was not called.
+- Server names differ in case between tables (`syssubscriptions.srvname` is upper case, `@@SERVERNAME` is not): compare them case-insensitively.
+- The article `type` does not tell a user-named filter procedure or sync view; see `lab/README.md` for what does.
 
 ## stored-procedures/
 
@@ -56,6 +60,6 @@ Source of the SQL Server 2019 replication system procedures, as a reference, not
 
 ## Before step 3
 
-The impact matrix (which property change needs `@force_invalidate_snapshot` or `@force_reinit_subscription`) comes from Microsoft Learn, which contradicts itself on several properties and documents nothing for `immediate_sync`, `independent_agent` and `allow_anonymous`. Measure it on a Developer instance (method in section 9 of the analysis document) before writing the plan logic, and record in the matrix where each entry came from.
+The impact matrix (which property change needs `@force_invalidate_snapshot` or `@force_reinit_subscription`) comes from Microsoft Learn, which contradicts itself on several properties and documents nothing for `immediate_sync`, `independent_agent` and `allow_anonymous`. Measure it on the lab (`lab/`, method in section 9 of the analysis document) before writing the plan logic, and record in the matrix where each entry came from.
 
 Oracles for verification: `Export-DbaReplServerSetting` (dbatools, wraps RMO `ReplicationServer.Script()`) for the export, and RMO with `SqlExecutionModes.CaptureSql` for generated T-SQL.

@@ -7,7 +7,8 @@ Source legend:
 - **[L]** Microsoft Learn, read on 2026-11-10;
 - **[R]** SQL Server 2019 system procedure source in this repository (`stored-procedures/`);
 - **[I]** inference, to be checked;
-- **[M]** to be measured on an instance.
+- **[M]** to be measured on an instance;
+- **[X]** measured, `lab/README.md` (SQL Server 2022 CU27).
 
 ## 1. Scope
 
@@ -98,15 +99,17 @@ All from [L] unless stated otherwise.
 | Column | Values |
 |---|---|
 | `type` | 1 = logbased; 3 = + manual filter; 5 = + manual view; 7 = both; 8 = proc exec; 24 = serializable proc exec; 32, 64, 128 = schema-only procedure, view, function |
-| `status` (bitmask) | 1 = active; 8 = column names in INSERT; 16 = parameterized commands |
+| `status` (bitmask) | 1 = active; 8 = column names in INSERT; 16 = parameterized commands; 32 = undocumented, set with 8 when `schema_option` has `0x8` [X] |
 | `pre_creation_cmd` | 0 = none, 1 = DROP, 2 = DELETE, 3 = TRUNCATE |
-| `schema_option` | `binary(8)`, read as a big-endian `uint64` [I]; 44 bits documented on the `sp_changearticle` page; default `0x30F3` for a table article |
+| `schema_option` | `binary(8)`, read as a big-endian `uint64` [I]; 44 bits documented on the `sp_changearticle` page; default `0x30F3` for a table article per Learn, `0x30073` measured [X] |
 | `ins_cmd`, `del_cmd` | `CALL`, `XCALL` (del), `SQL`, `NONE` |
 | `upd_cmd` | `CALL`, `MCALL`, `SCALL`, `XCALL`, `SQL`, `NONE` |
 
 `ins_cmd`, `upd_cmd` and `del_cmd` are stored as text, together with the procedure name (`CALL [sp_MSins_dboT]`). The declarative file should split the mode (`CALL`) from the procedure name, and carry the name only when it differs from the generated one [I].
 
-For `sysschemaarticles.pre_creation_cmd`, Learn gives 1 = Delete and 2 = Drop, the reverse of `sysarticles`. **[M]**
+For `sysschemaarticles.pre_creation_cmd`, Learn gives 1 = Delete and 2 = Drop, the reverse of `sysarticles`. Measured: the default `drop` is stored as 1, the same code as `sysarticles` [X].
+
+The article `type` does not say whether the filter procedure or the synchronization view was named by the user [X]: `sp_articlefilter` requires `@filter_name` and keeps type 1, and `sp_articleview @view_name` too. A generated synchronization view is named `syncobj_0x<hex>`. The stored commands are schema-qualified on 2022 (`CALL [dbo].[sp_MSins_dboT]`), and `upd_cmd = 'SCALL'` without a procedure name is refused (error 15251) [X].
 
 **`syssubscriptions`**
 
@@ -197,7 +200,7 @@ Proposed order for apply, inferred from the constraints above [I]:
 
 ## 9. Measurements to run on an instance
 
-The local instance is SQL Server Express. It can be a push subscriber, since the agent runs at the distributor, but neither a publisher nor a distributor [L] (tutorial *Prepare SQL Server for replication*). A Developer edition is needed as publisher and local distributor, with the Express instance as subscriber.
+SQL Server Express can be a push subscriber, since the agent runs at the distributor, but neither a publisher nor a distributor [L] (tutorial *Prepare SQL Server for replication*). The measurements run on the lab of `lab/README.md`: one SQL Server 2022 Developer container, distributor, publisher and subscriber at once.
 
 Method: on a publication with a valid snapshot and an active subscription, call each `sp_change*` with both flags at 0. If the call fails, record the message; if it succeeds, the property changes online. Then replay with `@force_invalidate_snapshot = 1` alone. This yields the real matrix, property by property, in a few dozen scripted calls.
 
@@ -207,7 +210,7 @@ Priorities:
 2. the snapshot generated when an article is added, depending on `immediate_sync`: article alone or whole publication;
 3. article `status` and `filter`, where the two Learn pages disagree;
 4. `sp_articlecolumn` on a subscribed article;
-5. decoding of `sysschemaarticles.pre_creation_cmd`;
+5. ~~decoding of `sysschemaarticles.pre_creation_cmd`~~ done [X];
 6. the undocumented article properties of section 5.
 
 ## 10. Next step

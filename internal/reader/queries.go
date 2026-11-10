@@ -130,7 +130,11 @@ SELECT mssa.publication, CAST(ISNULL(mssa.publisher_security_mode, 1) AS int), I
        ISNULL(CONVERT(nvarchar(36), CONVERT(uniqueidentifier, mssa.job_id)), N''),
        ISNULL(CONVERT(nvarchar(36), mssa.job_step_uid), N'')
 FROM {dist}.dbo.MSsnapshot_agents AS mssa
-WHERE mssa.publisher_id = @p1 AND mssa.publisher_db = @p2`
+WHERE mssa.publisher_id = @p1 AND mssa.publisher_db = @p2
+  -- sp_addpublication registers a row with local_job = 0 and a job_id of a
+  -- job that was never created; the agent exists once sp_addpublication_snapshot
+  -- has run (measured, lab/README.md).
+  AND mssa.local_job = 1`
 
 	// A shared agent has publication = N'ALL'
 	// (sp_MSenumdistributionagentproperties.sql:57-64).

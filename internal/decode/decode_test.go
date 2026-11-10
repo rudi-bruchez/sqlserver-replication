@@ -79,10 +79,15 @@ func TestParseCommand(t *testing.T) {
 		want Command
 		out  string
 	}{
-		{"CALL [sp_MSins_dboOrders]", Command{"CALL", "sp_MSins_dboOrders"}, "CALL [sp_MSins_dboOrders]"},
-		{"SCALL sp_MSupd_dboOrders", Command{"SCALL", "sp_MSupd_dboOrders"}, "SCALL [sp_MSupd_dboOrders]"},
-		{"xcall [dbo].[x]", Command{"XCALL", "dbo].[x"}, "XCALL [dbo]].[x]"},
-		{"CALL [a]]b]", Command{"CALL", "a]b"}, "CALL [a]]b]"},
+		{"CALL [sp_MSins_dboOrders]", Command{"CALL", "", "sp_MSins_dboOrders"}, "CALL [sp_MSins_dboOrders]"},
+		{"SCALL sp_MSupd_dboOrders", Command{"SCALL", "", "sp_MSupd_dboOrders"}, "SCALL [sp_MSupd_dboOrders]"},
+		// SQL Server 2022 stores the generated procedures qualified.
+		{"CALL [dbo].[sp_MSins_dboCustomer]", Command{"CALL", "dbo", "sp_MSins_dboCustomer"}, "CALL [dbo].[sp_MSins_dboCustomer]"},
+		{"xcall dbo.x", Command{"XCALL", "dbo", "x"}, "XCALL [dbo].[x]"},
+		{`CALL "s".[a.b]`, Command{"CALL", "s", "a.b"}, "CALL [s].[a.b]"},
+		{"CALL [a]]b]", Command{"CALL", "", "a]b"}, "CALL [a]]b]"},
+		{"CALL [x].[y].[z]", Command{Mode: "CALL [x].[y].[z]"}, "CALL [x].[y].[z]"},
+		{"CALL [unclosed", Command{Mode: "CALL [unclosed"}, "CALL [unclosed"},
 		{"", Command{Mode: "SQL"}, "SQL"},
 		{"SQL", Command{Mode: "SQL"}, "SQL"},
 		{"NONE", Command{Mode: "NONE"}, "NONE"},

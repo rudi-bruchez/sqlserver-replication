@@ -214,7 +214,13 @@ const (
 	ArticleStatusActive            = 0x1
 	ArticleStatusInsertColumnNames = 0x8
 	ArticleStatusParameterized     = 0x10
-	articleStatusKnown             = ArticleStatusActive | ArticleStatusInsertColumnNames | ArticleStatusParameterized
+	// ArticleStatusTimestamp is not on Learn. Measured on SQL Server 2022
+	// CU27 (lab/README.md): sp_addarticle sets it, together with
+	// ArticleStatusInsertColumnNames, when schema_option has 0x8 (timestamp
+	// columns replicated as timestamp). It derives from schema_option and
+	// is not configuration of its own.
+	ArticleStatusTimestamp = 0x20
+	articleStatusKnown     = ArticleStatusActive | ArticleStatusInsertColumnNames | ArticleStatusParameterized | ArticleStatusTimestamp
 )
 
 // ArticleStatusUnknownBits returns the bits of an article status that this
@@ -240,15 +246,19 @@ func PublicationOptionUnknownBits(options int) int { return options &^ pubOption
 
 // Command is a decoded ins_cmd, upd_cmd or del_cmd value.
 type Command struct {
-	Mode      string // CALL, SCALL, MCALL, XCALL, SQL, NONE, or the raw text
-	Procedure string // procedure name without brackets, for the CALL family
+	Mode string // CALL, SCALL, MCALL, XCALL, SQL, NONE, or the raw text
+	// Schema and Procedure name the procedure of the CALL family, without
+	// quotes. Schema is empty when the stored value is not qualified.
+	Schema    string
+	Procedure string
 }
 
 var callModes = map[string]bool{"CALL": true, "SCALL": true, "MCALL": true, "XCALL": true}
 
-// ParseCommand splits a stored command such as "CALL [sp_MSins_dboOrders]"
+// ParseCommand splits a stored command such as "CALL [dbo].[sp_MSins_dboOrders]"
 // into its mode and procedure name. An empty value means the command is built
-// from the log, which sp_addarticle documents as "SQL".
+// from the log, which sp_addarticle documents as "SQL". A value it cannot
+// split is kept whole in Mode.
 func ParseCommand(s string) Command {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -258,7 +268,13 @@ func ParseCommand(s string) Command {
 	upper := strings.ToUpper(mode)
 	switch {
 	case callModes[upper]:
-		return Command{Mode: upper, Procedure: unbracket(strings.TrimSpace(rest))}
+		parts, ok := splitName(strings.TrimSpace(rest))
+		switch {
+		case ok && len(parts) == 1:
+			return Command{Mode: upper, Procedure: parts[0]}
+		case ok && len(parts) == 2:
+			return Command{Mode: upper, Schema: parts[0], Procedure: parts[1]}
+		}
 	case (upper == "SQL" || upper == "NONE") && strings.TrimSpace(rest) == "":
 		return Command{Mode: upper}
 	}
@@ -270,14 +286,64 @@ func (c Command) String() string {
 	if c.Procedure == "" {
 		return c.Mode
 	}
-	return c.Mode + " [" + strings.ReplaceAll(c.Procedure, "]", "]]") + "]"
+	if c.Schema == "" {
+		return c.Mode + " " + quoteName(c.Procedure)
+	}
+	return c.Mode + " " + quoteName(c.Schema) + "." + quoteName(c.Procedure)
 }
 
-func unbracket(s string) string {
-	if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
-		return strings.ReplaceAll(s[1:len(s)-1], "]]", "]")
+func quoteName(s string) string { return "[" + strings.ReplaceAll(s, "]", "]]") + "]" }
+
+// splitName splits a T-SQL multipart name ([a].[b], a.b, "a".b) into its
+// unquoted parts.
+func splitName(s string) ([]string, bool) {
+	var parts []string
+	for {
+		var part string
+		switch {
+		case strings.HasPrefix(s, "["):
+			i := 1
+			var b strings.Builder
+			for {
+				j := strings.IndexByte(s[i:], ']')
+				if j < 0 {
+					return nil, false
+				}
+				b.WriteString(s[i : i+j])
+				i += j + 1
+				if i < len(s) && s[i] == ']' {
+					b.WriteByte(']')
+					i++
+					continue
+				}
+				break
+			}
+			part, s = b.String(), s[i:]
+		case strings.HasPrefix(s, `"`):
+			j := strings.IndexByte(s[1:], '"')
+			if j < 0 {
+				return nil, false
+			}
+			part, s = s[1:1+j], s[2+j:]
+		default:
+			j := strings.IndexByte(s, '.')
+			if j < 0 {
+				j = len(s)
+			}
+			part, s = s[:j], s[j:]
+			if part == "" || strings.ContainsAny(part, " []\"") {
+				return nil, false
+			}
+		}
+		parts = append(parts, part)
+		if s == "" {
+			return parts, true
+		}
+		if s[0] != '.' {
+			return nil, false
+		}
+		s = s[1:]
 	}
-	return s
 }
 
 // Initialization decodes syssubscriptions.sync_type and nosync_type.
