@@ -45,14 +45,7 @@ set -euo pipefail
 EXPECTED_ROWS=75
 pubs="m_p m_sh1 m_sh2"
 rows=()
-# A row of exactly 256 characters is what campaign.sh reads as a sqlcmd cut (the row of
-# AGT.sp_changelogreader_agent.job_security_mode is 256 long by chance, message included):
-# it gets a trailing period so that the guard keeps its meaning.
-r() {
-    local row="R|$1|$2|$3"
-    (( ${#row} == 256 )) && row+=" ."
-    rows+=("$row")
-}
+r() { rows+=("R|$1|$2|$3"); }
 want() { [ -z "${M_ONLY:-}" ] || [[ " $M_ONLY " == *" $1 "* ]]; }
 
 teardown() {
@@ -185,19 +178,21 @@ UNION ALL SELECT N'$1', N'snap_agents', $(hash "SELECT * FROM distribution.dbo.M
 UNION ALL SELECT N'$1', N'logreader', $(hash "SELECT * FROM distribution.dbo.MSlogreader_agents ORDER BY id FOR XML RAW, BINARY BASE64")
 UNION ALL SELECT N'$1', N'subscriber_info', $(hash "SELECT * FROM distribution.dbo.MSsubscriber_info ORDER BY publisher, subscriber FOR XML RAW, BINARY BASE64")
 UNION ALL SELECT N'$1', N'subscriber_sched', $(hash "SELECT * FROM distribution.dbo.MSsubscriber_schedule ORDER BY publisher, subscriber, agent_type FOR XML RAW, BINARY BASE64")
-UNION ALL SELECT N'$1', N'distributor', $(hash "SELECT d.*, p.name AS pname, p.distribution_db, p.security_mode, p.active, p.working_directory, p.trusted FROM msdb.dbo.MSdistributiondbs d CROSS JOIN msdb.dbo.MSdistpublishers p FOR XML RAW, BINARY BASE64")
+UNION ALL SELECT N'$1', N'distributor', $(hash "SELECT d.*, p.name AS pname, p.distribution_db, p.security_mode, p.active, p.working_directory, p.trusted, p.login, p.password FROM msdb.dbo.MSdistributiondbs d CROSS JOIN msdb.dbo.MSdistpublishers p FOR XML RAW, BINARY BASE64")
 UNION ALL SELECT N'$1', N'jobs', $(hash "SELECT * FROM msdb.dbo.sysjobs WHERE job_id IN $JOBS ORDER BY job_id FOR XML RAW, BINARY BASE64")
 UNION ALL SELECT N'$1', N'schedules', $(hash "SELECT js.job_id, ss.freq_type, ss.freq_interval, ss.freq_subday_type, ss.freq_subday_interval, ss.freq_relative_interval, ss.freq_recurrence_factor, ss.active_start_date, ss.active_end_date, ss.active_start_time, ss.active_end_time, ss.enabled FROM msdb.dbo.sysjobschedules js JOIN msdb.dbo.sysschedules ss ON ss.schedule_id = js.schedule_id WHERE js.job_id IN $JOBS ORDER BY js.job_id, ss.schedule_id FOR XML RAW, BINARY BASE64")
 UNION ALL SELECT N'$1', N'steps', $(hash "SELECT job_id, step_id, step_name, subsystem, command, database_name, proxy_id, flags FROM msdb.dbo.sysjobsteps WHERE job_id IN $JOBS ORDER BY job_id, step_id FOR XML RAW, BINARY BASE64");
 SQL
 }
 
-# run_case ID TXN SET RESTORE READ
+# run_case ID TXN SET RESTORE READ [ALLOWED [NOTE]]
+#   ALLOWED: fingerprints that may differ after a restore (TXN 0), default jobs (the
+#   second call bumps the job version); NOTE is appended to the row.
 #   TXN 1: SET runs in a transaction, rolled back in the same batch. TXN 0: SET is
 #   applied, then RESTORE (T-SQL using @vb, the value read before) puts it back.
 #   READ: a scalar expression for the setting itself (N'' when there is none).
 run_case() {
-    local id=$1 txn=$2 set=$3 restore=$4 read=${5:-N\'\'} begin='' out line
+    local id=$1 txn=$2 set=$3 restore=$4 read=${5:-N\'\'} allowed=${6:-jobs} note=${7:-} begin='' out line
     want "$id" || return 0
     [ "$txn" = 1 ] && begin="BEGIN TRAN;"
     [ -n "$restore" ] || restore="SET @rc = 0;"
@@ -220,7 +215,7 @@ BEGIN TRY
 END TRY
 BEGIN CATCH
     SET @res = CONVERT(nvarchar(20), ERROR_NUMBER());
-    SET @msg = LEFT(REPLACE(REPLACE(REPLACE(ERROR_MESSAGE(), N'|', N'/'), CHAR(13), N' '), CHAR(10), N' '), 200);
+    SET @msg = LEFT(REPLACE(REPLACE(REPLACE(REPLACE(ERROR_MESSAGE(), N' Review the documentation for supported parameters.', N''), N'|', N'/'), CHAR(13), N' '), CHAR(10), N' '), 200);
     WHILE @@TRANCOUNT > 0 ROLLBACK;
 END CATCH;
 BEGIN TRY
@@ -246,11 +241,17 @@ SQL
     fi
     # R|id|res|detail
     IFS='|' read -r _ rid rres rdetail <<<"$line"
+    [ -n "$note" ] && rdetail+=" note=$note"
     r "$rid" "$rres" "$rdetail"
     if [[ $rdetail == *RESTORE_FAILED* ]]; then echo "07-changes: $id: restore failed: $rdetail" >&2; exit 1; fi
     local rbd=${rdetail#*after_restore_differs=[}; rbd=${rbd%%]*}
     if [ "$txn" = 1 ] && [ -n "$rbd" ]; then echo "07-changes: $id: rolled back but state differs: $rbd" >&2; exit 1; fi
-    if [ "$txn" = 0 ] && [ -n "${rbd//jobs/}" ]; then echo "07-changes: $id: not restored: $rbd" >&2; exit 1; fi
+    if [ "$txn" = 0 ]; then
+        local x unexpected='' parts
+        IFS=',' read -ra parts <<<"$rbd"
+        for x in "${parts[@]}"; do [ -z "$x" ] || [[ ",$allowed," == *",$x,"* ]] || unexpected+="$x "; done
+        [ -z "$unexpected" ] || { echo "07-changes: $id: not restored: $rbd" >&2; exit 1; }
+    fi
 }
 
 # ---------------------------------------------------------------- control
@@ -268,13 +269,16 @@ for pv in subscriber_login=m_login subscriber_password=M_pass1! subscriber_secur
 done
 
 # ---------------------------------------------------------------- SBR
+# The values differ from the ones stored (read in value_before): a call that writes the
+# stored value changes nothing and would be read as 'no effect'. The sched= field reads
+# type:freq_type,interval,relative,recurrence,subday,subday_interval,start,end,dates.
 sbr() { # PARAM VALUE (VALUE is a T-SQL literal)
     echo "EXEC @rc = sys.sp_changesubscriber @subscriber = @@SERVERNAME, @$1 = $2;"
 }
-SBRREAD="(SELECT CONCAT(i.type, N'/', i.login, N'/', i.description, N'/sec=', i.security_mode, N'/sched=', ISNULL((SELECT STRING_AGG(CONCAT(s.agent_type, N':', s.frequency_type, N',', s.frequency_interval, N',', s.frequency_subday, N',', s.frequency_subday_interval, N',', s.active_start_time_of_day, N',', s.active_end_time_of_day, N',', s.active_start_date, N',', s.active_end_date), N';') FROM distribution.dbo.MSsubscriber_schedule s WHERE s.subscriber = i.subscriber), N'none')) FROM distribution.dbo.MSsubscriber_info i WHERE i.subscriber = @@SERVERNAME)"
+SBRREAD="(SELECT CONCAT(i.type, N'/', i.login, N'/', i.description, N'/sec=', i.security_mode, N'/sched=', ISNULL((SELECT STRING_AGG(CONCAT(s.agent_type, N':', s.frequency_type, N',', s.frequency_interval, N',', s.frequency_relative_interval, N',', s.frequency_recurrence_factor, N',', s.frequency_subday, N',', s.frequency_subday_interval, N',', s.active_start_time_of_day, N',', s.active_end_time_of_day, N',', s.active_start_date, N',', s.active_end_date), N';') FROM distribution.dbo.MSsubscriber_schedule s WHERE s.subscriber = i.subscriber), N'none')) FROM distribution.dbo.MSsubscriber_info i WHERE i.subscriber = @@SERVERNAME)"
 for pv in type=1 login=N\'m_login\' password=N\'M_pass1!\' commit_batch_size=100 status_batch_size=100 flush_frequency=1 \
-          frequency_type=4 frequency_interval=1 frequency_relative_interval=1 frequency_recurrence_factor=1 \
-          frequency_subday=4 frequency_subday_interval=5 active_start_time_of_day=10000 active_end_time_of_day=200000 \
+          frequency_type=4 frequency_interval=2 frequency_relative_interval=2 frequency_recurrence_factor=2 \
+          frequency_subday=8 frequency_subday_interval=7 active_start_time_of_day=10000 active_end_time_of_day=200000 \
           active_start_date=20300101 active_end_date=20400101 description=N\'m_desc\' security_mode=0 publisher=N\'m_x\'; do
     run_case "SBR.${pv%%=*}" 1 "$(sbr "${pv%%=*}" "${pv#*=}")" "" "$SBRREAD"
 done
@@ -288,20 +292,36 @@ for pv in job_login=N\'REPLLAB\\m_nobody\' job_password=N\'M_pass1!\' publisher_
           publisher_password=N\'M_pass1!\' publisher=N\'m_x\' job_security_mode=1; do
     run_case "AGT.sp_changelogreader_agent.${pv%%=*}" 1 "$(lr "${pv%%=*}" "${pv#*=}")" ""
 done
+# The schedule of m_p's snapshot agent is one-time (frequency_type = 1) and, for such a
+# schedule, msdb.dbo.sp_verify_schedule forces interval, subday, relative interval and
+# recurrence to 0: a field changed on it measures that normalization. Each field is
+# therefore changed in the same rolled-back transaction after a base call that makes the
+# schedule daily (frequency_type 4, frequency_interval 1, start date unchanged, 99991231,
+# so it never fires), weekly (8) for frequency_recurrence_factor (ignored by a daily
+# schedule), or monthly relative (32) for frequency_relative_interval. Every row
+# reads schedule=<freq_type>:<interval>,<subday>,<subday_interval>,<relative>,<recurrence>.
 sn() { echo "EXEC @rc = sys.sp_changepublication_snapshot @publication = N'm_p', @$1 = $2;"; }
-for pv in frequency_type=4 frequency_interval=1 frequency_subday=4 frequency_subday_interval=10 frequency_relative_interval=1 \
-          frequency_recurrence_factor=1 active_start_date=20300101 active_end_date=20400101 active_start_time_of_day=10000 \
+SNPUB="sys.sp_changepublication_snapshot @publication = N'm_p'"
+SCHREAD="(SELECT CONCAT(N'schedule=', ss.freq_type, N':', ss.freq_interval, N',', ss.freq_subday_type, N',', ss.freq_subday_interval, N',', ss.freq_relative_interval, N',', ss.freq_recurrence_factor) FROM msdb.dbo.sysschedules ss JOIN msdb.dbo.sysjobschedules js ON js.schedule_id = ss.schedule_id JOIN distribution.dbo.MSsnapshot_agents a ON js.job_id = CONVERT(uniqueidentifier, a.job_id) WHERE a.publication = N'm_p')"
+for pv in frequency_type=4 frequency_interval=2 frequency_subday=8 frequency_subday_interval=20 frequency_relative_interval=2 \
+          frequency_recurrence_factor=2 active_start_date=20300101 active_end_date=20400101 active_start_time_of_day=10000 \
           active_end_time_of_day=200000 snapshot_job_name=N\'m_job\' publisher_security_mode=0 publisher_login=N\'m_login\' \
           publisher_password=N\'M_pass1!\' job_login=N\'REPLLAB\\m_nobody\' job_password=N\'M_pass1!\' publisher=N\'m_x\' job_security_mode=1; do
-    case ${pv%%=*} in
+    f=${pv%%=*}
+    rd=$SCHREAD
+    pre=""
+    case $f in
         snapshot_job_name) rd="(SELECT j.name FROM msdb.dbo.sysjobs j JOIN distribution.dbo.MSsnapshot_agents a ON j.job_id = CONVERT(uniqueidentifier, a.job_id) WHERE a.publication = N'm_p')" ;;
-        *) rd="" ;;
+        frequency_interval) pre="EXEC @rc = $SNPUB, @frequency_type = 4, @frequency_interval = 1; IF @rc <> 0 THROW 50001, N'base call refused', 1;" ;;
+        frequency_recurrence_factor) pre="EXEC @rc = $SNPUB, @frequency_type = 8, @frequency_interval = 2, @frequency_recurrence_factor = 1; IF @rc <> 0 THROW 50001, N'base call refused', 1;" ;;
+        frequency_subday|frequency_subday_interval) pre="EXEC @rc = $SNPUB, @frequency_type = 4, @frequency_interval = 1, @frequency_subday = 4, @frequency_subday_interval = 10; IF @rc <> 0 THROW 50001, N'base call refused', 1;" ;;
+        frequency_relative_interval) pre="EXEC @rc = $SNPUB, @frequency_type = 32, @frequency_interval = 1, @frequency_relative_interval = 1, @frequency_recurrence_factor = 1; IF @rc <> 0 THROW 50001, N'base call refused', 1;" ;;
     esac
-    run_case "AGT.sp_changepublication_snapshot.${pv%%=*}" 1 "$(sn "${pv%%=*}" "${pv#*=}")" "" "$rd"
+    run_case "AGT.sp_changepublication_snapshot.$f" 1 "$pre $(sn "$f" "${pv#*=}")" "" "$rd"
 done
 # frequency_type alone is refused (14278: the daily schedule needs an interval); both together:
 run_case AGT.sp_changepublication_snapshot.frequency_type+frequency_interval 1 \
-    "EXEC @rc = sys.sp_changepublication_snapshot @publication = N'm_p', @frequency_type = 4, @frequency_interval = 1;" ""
+    "EXEC @rc = sys.sp_changepublication_snapshot @publication = N'm_p', @frequency_type = 4, @frequency_interval = 1;" "" "$SCHREAD"
 
 # ---------------------------------------------------------------- PRF
 # Binds the snapshot agent of m_p to m_prof inside a transaction rolled back in the
@@ -361,7 +381,7 @@ run_case DST.sp_changedistributiondb.min_distretention 0 "$(db min_distretention
 run_case DST.sp_changedistributiondb.max_distretention 0 "$(db max_distretention N\'96\')" "$(db max_distretention @vb)" "$(dbread max_distretention)"
 run_case DST.sp_changedistributiondb.history_retention 0 "$(db history_retention N\'24\')" "$(db history_retention @vb)" "$(dbread history_retention)"
 run_case DST.sp_changedistpublisher.working_directory 0 "$(dp working_directory N\'/var/opt/mssql/data\')" "$(dp working_directory @vb)" "$(dpread working_directory)"
-run_case DST.sp_changedistpublisher.security_mode 0 "$(dp security_mode N\'0\')" "$(dp security_mode @vb)" "$(dpread security_mode)"
+run_case DST.sp_changedistpublisher.security_mode 0 "$(dp security_mode N\'0\')" "$(dp security_mode @vb)" "$(dpread security_mode)" jobs,distributor "expected: restoring security_mode = 1 regenerates the stored publisher password (sp_changedistpublisher), so the distributor fingerprint differs after the restore"
 run_case DST.sp_changedistpublisher.trusted 0 "$(dp trusted N\'true\')" "DECLARE @t nvarchar(10) = CASE @vb WHEN N'1' THEN N'true' ELSE N'false' END; $(dp trusted @t)" "$(dpread trusted)"
 run_case DST.sp_changedistpublisher.active 0 "$(dp active N\'false\')" "DECLARE @t nvarchar(10) = CASE @vb WHEN N'1' THEN N'true' ELSE N'false' END; $(dp active @t)" "$(dpread active)"
 
@@ -376,11 +396,15 @@ BEGIN TRY EXEC sp_dropsubscription @publication = N'$2', @article = N'all', @sub
 BEGIN CATCH SET @e = CONVERT(nvarchar(10), ERROR_NUMBER()); WHILE @@TRANCOUNT > 0 ROLLBACK; END CATCH;
 SELECT N'RES=' + @e" </dev/null 2>&1 | sed -n 's/^RES=//p' | tr -d '[:space:]')
     shared=$(sql_value "SELECT COUNT(*) FROM distribution.dbo.MSdistribution_agents a WHERE a.publication = N'ALL' AND a.subscriber_db = N'm_shsub'")
-    job_exists=$(sql_value "SELECT COUNT(*) FROM msdb.dbo.sysjobs j JOIN distribution.dbo.MSdistribution_agents a ON j.job_id = CONVERT(uniqueidentifier, a.job_id) WHERE a.publication = N'ALL' AND a.subscriber_db = N'm_shsub'")
+    job_exists=$(sql_value "SELECT COUNT(*) FROM msdb.dbo.sysjobs WHERE job_id = '$shjob'")
     left_rows=$(sql_value "SELECT COUNT(*) FROM Sales.dbo.syssubscriptions s JOIN Sales.dbo.sysarticles a ON a.artid = s.artid JOIN Sales.dbo.syspublications p ON p.pubid = a.pubid WHERE p.name IN (N'm_sh1', N'm_sh2') AND s.srvid >= 0")
     need res shared job_exists left_rows
     r "$1" "$res" "dropped=$2 shared_agent_rows=$shared shared_agent_job_exists=$job_exists subscription_rows_left_m_sh1_m_sh2=$left_rows"
 }
+# The job id is read once, before the first drop: after the agent row is gone a join
+# through MSdistribution_agents is empty by construction.
+shjob=$(sql_value "SELECT CONVERT(varchar(36), CONVERT(uniqueidentifier, a.job_id)) FROM distribution.dbo.MSdistribution_agents a WHERE a.publication = N'ALL' AND a.subscriber_db = N'm_shsub'")
+need shjob
 shr_case SHR.after1 m_sh1
 shr_case SHR.after2 m_sh2
 
