@@ -1,0 +1,52 @@
+# Microsoft SQL Server 2022 (RTM-CU27-GDR) (KB5126934) - 16.0.4305.5 (X64)
+R|S1.O1|f00=20607,f10=ok|ready=1 sub_status=2
+R|S1.O2|f00=20607,f10=ok|ready=1 sub_status=2; f00 at sp_droparticle 20607
+R|S1.O3|f00=20607,f10=20608,f01=20607,f11=ok|ready=1 sub_status=2
+R|S1.O4|f00=ok,f10=ok,f01=ok,f11=ok|ready=1 sub_status=2
+R|S1.O5|f00=20607,f10=ok,f01=20607,f11=ok|ready=1 sub_status=2
+R|S1.O6|f00=20607,f10=20608,f01=20607,f11=ok|ready=1 sub_status=2
+R|S1.O7|f00=20607,f10=20608,f01=20607,f11=ok|ready=1 sub_status=2
+R|S1.O8|f00=20607,f10=20608,f01=20607,f11=ok|ready=1 sub_status=2
+R|S1.O9|f00=20607,f10=20608,f01=20607,f11=ok|ready=1 sub_status=2
+R|S1.ready|1|sub_status=2 after the nine operations
+R|S2.O1|f00=ok,f10=ok|ready=0 sub_status=1
+R|S2.O2|f00=ok,f10=ok|ready=0 sub_status=1
+R|S2.O3|f00=ok,f10=ok,f01=ok,f11=ok|ready=0 sub_status=1
+R|S2.O4|f00=ok,f10=ok,f01=ok,f11=ok|ready=0 sub_status=1
+R|S2.O5|f00=ok,f10=ok,f01=ok,f11=ok|ready=0 sub_status=1
+R|S2.O6|f00=ok,f10=ok,f01=ok,f11=ok|ready=0 sub_status=1
+R|S2.O7|f00=ok,f10=ok,f01=ok,f11=ok|ready=0 sub_status=1
+R|S2.O8|f00=ok,f10=ok,f01=ok,f11=ok|ready=0 sub_status=1
+R|S2.O9|f00=ok,f10=ok,f01=ok,f11=ok|ready=0 sub_status=1
+R|S2.ready|0|sub_status=1 after the nine operations
+R|S3.O1|f00=ok,f10=ok|ready=0 sub_status=2
+R|S3.O2|f00=ok,f10=ok|ready=0 sub_status=2
+R|S3.O3|f00=20608,f10=20608,f01=ok,f11=ok|ready=0 sub_status=2
+R|S3.O4|f00=ok,f10=ok,f01=ok,f11=ok|ready=0 sub_status=2
+R|S3.O5|f00=ok,f10=ok,f01=ok,f11=ok|ready=0 sub_status=2
+R|S3.O6|f00=20608,f10=20608,f01=ok,f11=ok|ready=0 sub_status=2
+R|S3.O7|f00=20608,f10=20608,f01=ok,f11=ok|ready=0 sub_status=2
+R|S3.O8|f00=20608,f10=20608,f01=ok,f11=ok|ready=0 sub_status=2
+R|S3.O9|f00=20608,f10=20608,f01=ok,f11=ok|ready=0 sub_status=2
+R|S3.ready|0|sub_status=2 after the nine operations
+R|S4.O1|f00=ok,f10=ok|ready=0 sub_status=1
+R|S4.O2|f00=ok,f10=ok|ready=0 sub_status=1
+R|S4.O3|f00=ok,f10=ok,f01=ok,f11=ok|ready=0 sub_status=1
+R|S4.O4|f00=ok,f10=ok,f01=ok,f11=ok|ready=0 sub_status=1
+R|S4.O5|f00=ok,f10=ok,f01=ok,f11=ok|ready=0 sub_status=1
+R|S4.O6|f00=ok,f10=ok,f01=ok,f11=ok|ready=0 sub_status=1
+R|S4.O7|f00=ok,f10=ok,f01=ok,f11=ok|ready=0 sub_status=1
+R|S4.O8|f00=ok,f10=ok,f01=ok,f11=ok|ready=0 sub_status=1
+R|S4.O9|f00=ok,f10=ok,f01=ok,f11=ok|ready=0 sub_status=1
+R|S4.ready|0|sub_status=1 after the nine operations
+R|S5.O1|f00=ok,f10=ok|ready=0 sub_status=1/2
+R|S5.O2|f00=ok,f10=ok|ready=0 sub_status=1/2
+R|S5.O3|f00=20608,f10=20608,f01=ok,f11=ok|ready=0 sub_status=1/2
+R|S5.O4|f00=ok,f10=ok,f01=ok,f11=ok|ready=0 sub_status=1/2
+R|S5.O5|f00=ok,f10=ok,f01=ok,f11=ok|ready=0 sub_status=1/2
+R|S5.O6|f00=20608,f10=20608,f01=ok,f11=ok|ready=0 sub_status=1/2
+R|S5.O7|f00=20608,f10=20608,f01=ok,f11=ok|ready=0 sub_status=1/2
+R|S5.O8|f00=20608,f10=20608,f01=ok,f11=ok|ready=0 sub_status=1/2
+R|S5.O9|f00=20608,f10=20608,f01=ok,f11=ok|ready=0 sub_status=1/2
+R|S5.ready|0|sub_status=1/2 after the nine operations
+R|TOTAL|50
