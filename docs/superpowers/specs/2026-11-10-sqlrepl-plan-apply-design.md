@@ -85,7 +85,7 @@ Defaults are not one value per property. They depend on the context of the objec
 
 | Object, context | Default measured (2022 CU27; same on 2019 CU32 and 2025 CU10 where checked) |
 |---|---|
-| table article, transactional publication, `native` or `concurrent` | `schema_option 0x30073`; commands `CALL [dbo].[sp_MSins_…]`, `SCALL [dbo].[sp_MSupd_…]`, `CALL [dbo].[sp_MSdel_…]`; destination owner: the source schema (`sales.S1` gives `sales`); status 16 (parameterized); `pre_creation_cmd` drop |
+| table article, transactional publication, `native` or `concurrent` | `schema_option 0x30073`; commands `CALL [dbo].[sp_MSins_…]`, `SCALL [dbo].[sp_MSupd_…]`, `CALL [dbo].[sp_MSdel_…]` (an unqualified procedure name in a command is stored with `[dbo]`, even for a source table in another schema: the file writes the schema it means, and the reader compares against the stored one); destination owner: the source schema (`sales.S1` gives `sales`); status 16 (parameterized); `pre_creation_cmd` drop |
 | table article, transactional publication, `character` | `schema_option 0x30073`; commands `SQL`; destination owner NULL |
 | table article, snapshot publication | `schema_option 0x30071`; commands `SQL` |
 | schema-only article (view, procedure) | `schema_option 0x1` |
@@ -174,7 +174,7 @@ Filters and views. The synchronization view is what the snapshot reads; the filt
 
 - a row filter is created or changed by `sp_articlefilter @filter_name, @filter_clause`, immediately followed by `sp_articleview @view_name, @filter_clause` with the same clause;
 - a row filter is dropped by `sp_articlefilter @filter_clause = NULL`, which drops the filter procedure (panel, second round), immediately followed by `sp_articleview @view_name, @filter_clause = NULL`;
-- a column filter (`sp_articlecolumn`) is applied before the `sp_articleview` call. The two rounds disagree on whether `sp_articlecolumn` rebuilds an existing view by itself; until the campaign settles it, any change to the columns of an article that has a synchronization view re-issues `sp_articleview` with the article's clause;
+- a column filter (`sp_articlecolumn`) is applied before the `sp_articleview` call. The last review round saw `sp_articlecolumn` rebuild an existing view by itself (campaign case `F6` confirms it); the plan still re-issues `sp_articleview` with the article's clause after a column change, which costs nothing and does not depend on that behavior;
 - `sp_articleview` is never called without the article's clause: called without `@filter_clause`, it rebuilds the view unfiltered and also sets `sysarticles.filter_clause` to NULL, while the filter procedure keeps filtering the changes (verified after the panel: snapshot unfiltered, changes filtered, export showing no filter);
 - `sp_addarticle @filter_clause` is never generated alone (lab row 12).
 
@@ -197,7 +197,7 @@ Publication properties:
 
 Agents and profiles:
 
-- No `sp_add*_agent` procedure takes a profile (panel, from `sys.all_parameters` and the sources in `stored-procedures/`): an agent is created on the default profile of its type, then bound to the file's profile. `msdb.dbo.sp_update_agent_profile` is the candidate, but it refused to run with 21482 ("can only be executed in the distribution database") from the publication database and from the distribution database alike on 2022 (panel, second round). How to bind an agent to a profile is a campaign item; until it is measured, `plan` refuses a file that binds an agent to a non-default profile. Profiles are created before the agents that use them.
+- No `sp_add*_agent` procedure takes a profile (panel, from `sys.all_parameters` and the sources in `stored-procedures/`): an agent is created on the default profile of its type, then bound to the file's profile by `distribution.dbo.sp_update_agent_profile @agent_type, @agent_id, @profile_id`. The procedure lives in `msdb` and checks that it runs in the distribution database: called as `msdb.dbo.sp_update_agent_profile` it executes in `msdb` whatever the current database and refuses with 21482, which the second review round took for a refusal of the binding itself; called through the distribution database it succeeds (verified on 2022 after the plan review, campaign rows `PRF.*`). Profiles are created before the agents that use them.
 
 ### Order
 
@@ -281,7 +281,7 @@ The first block of the implementation plan, before the planner (Rudi's decision)
 2. drops: `sp_droparticle`, `sp_dropsubscription` per article, `sp_droppublication`, their flags and costs, on each kind of publication;
 3. concurrent sync without `immediate_sync`: extending a subscription with `@article = 'all'` (measured on 2022: only the new article is delivered), on each version;
 4. dropping an article and adding it back, on each kind of publication;
-5. subscription changes (`sp_changesubscription`, `sp_changesubscriber`), agent changes (`sp_change*_agent`, schedules, how to bind an agent to a profile given the 21482 refusal of `sp_update_agent_profile`), the lifecycle of a shared distribution agent, distributor changes (`sp_changedistributiondb`, `sp_changedistpublisher`, `working_directory` included);
+5. subscription changes (`sp_changesubscription`, `sp_changesubscriber`), agent changes (`sp_change*_agent`, schedules, binding an agent to a profile through `distribution.dbo.sp_update_agent_profile`), the lifecycle of a shared distribution agent, distributor changes (`sp_changedistributiondb`, `sp_changedistpublisher`, `working_directory` included);
 6. pull subscriptions: creation, change, drop, and their agents;
 7. snapshot publications: the whole matrix;
 8. initialization by "replication support only", backup and LSN;
