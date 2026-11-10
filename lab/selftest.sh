@@ -22,6 +22,7 @@ fixtures=(
     "sqlvalue-error.sh uncaught"
     "exit-status.sh exit"
     "truncated.sql truncated"
+    "truncated-columns.sql truncated"
     "duplicate-ids.sql total"
     "restart.sh restart"
 )

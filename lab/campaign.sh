@@ -148,8 +148,13 @@ for script in "$@"; do
     dups=$(grep -E '^R\|' "$log" | grep -v -E '^R\|TOTAL\|' | cut -d'|' -f2 | sort | uniq -d | tr '\n' ' ')
     [ -z "$dups" ] || guard_failed total "$name printed these case ids more than once: $dups"
 
-    long=$(grep -E '^R\|' "$log" | awk 'length($0) == 256 { print substr($0, 1, 40) }' | head -n 3 | tr '\n' ' ')
-    [ -z "$long" ] || guard_failed truncated "$name: R| line of exactly 256 characters, an nvarchar(max) cut by sqlcmd (cast it to nvarchar(4000)): $long"
+    # sqlcmd cuts each max column at 256 characters: the whole line when the row is
+    # one concatenated column, a single |-separated field when it is several columns.
+    long=$(grep -E '^R\|' "$log" | awk -F'|' '{
+        hit = (length($0) == 256)
+        for (i = 1; i <= NF && !hit; i++) if (length($i) == 256) hit = 1
+        if (hit) print substr($0, 1, 40) }' | head -n 3 | tr '\n' ' ')
+    [ -z "$long" ] || guard_failed truncated "$name: R| line or field of exactly 256 characters, an nvarchar(max) cut by sqlcmd (cast it to nvarchar(4000)): $long"
 
     uncaught=$(grep -E '^Msg [0-9]+, Level (1[1-9]|2[0-5])|^Sqlcmd:' "$log" | head -n 3 | tr '\n' ' ')
     [ -z "$uncaught" ] || guard_failed uncaught "$name: $uncaught"

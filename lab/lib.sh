@@ -5,8 +5,13 @@
 # through (feed a script with `sql < file.sql`). No -b: sqlcmd then exits 0 on an
 # SQL error, which is why campaign.sh reads the output for Msg lines.
 # sqlcmd cuts an nvarchar(max) or varchar(max) column at 256 characters (-W cannot
-# be combined with -y 0). Cast the printed R| column to nvarchar(4000): campaign.sh
-# rejects any R| line of exactly 256 characters as truncated.
+# be combined with -y 0); campaign.sh rejects any R| line or |-separated field of
+# exactly 256 characters as truncated.
+# Authoring notes for campaign scripts:
+# - cast every printed column to nvarchar(4000), never leave it nvarchar(max);
+# - sql_value prints the server's Msg lines on stderr, which campaign.sh reads as an
+#   uncaught error: a call expected to fail must be wrapped (TRY...CATCH in the query,
+#   or its stderr discarded with 2>/dev/null and the failure handled in the script).
 sql() {
     podman exec -i -e SQLCMDPASSWORD="$MSSQL_SA_PASSWORD" repllab \
         /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -W -s '|' "$@"
