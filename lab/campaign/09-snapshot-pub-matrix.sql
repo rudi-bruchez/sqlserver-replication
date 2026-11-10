@@ -25,7 +25,7 @@
 -- subscriptions for the P cases; a value that differs between the four cells is shown as
 -- a/b. changed=c/n: of the n cells that returned ok, c changed the publication or article
 -- row (or the column count) inside the transaction, so a case on the stored value, a
--- no-op, shows c < n. The script asserts c = n on every row.
+-- no-op, shows c < n (immediate_sync_ready excluded, see the fingerprint). The script asserts c = n on every row.
 SET NOCOUNT ON;
 USE Sales;
 GO
@@ -98,7 +98,8 @@ INSERT @artprops (kind, art, prop, val) VALUES
  ('T', N'm_t1', N'upd_cmd', N'MCALL sp_MSupd_dbom_t1'),
  ('T', N'm_t1', N'del_cmd', N'NONE');
 INSERT @cases (pfx, pub, grp, label, stmt, art)
-SELECT t.pfx, t.pub, 'A', t.pub + N'.' + a.art + N' article ' + a.prop + N' = ' + REPLACE(a.val, N'{flt}', ISNULL(t.flt, N'')),
+SELECT t.pfx, t.pub, 'A', t.pub + N'.' + a.art + N' article ' + a.prop + N' = ' + REPLACE(a.val, N'{flt}', ISNULL(t.flt, N''))
+       + CASE WHEN a.prop = N'filter' THEN N' same value (a different procedure is not measurable: Msg 3624 / 14049)' ELSE N'' END,
        REPLACE(REPLACE(REPLACE(REPLACE(@ca, N'{pub}', t.pub), N'{art}', a.art), N'{prop}', a.prop), N'{val}', REPLACE(a.val, N'{flt}', ISNULL(t.flt, N''))), a.art
 FROM @targets t JOIN @artprops a ON a.kind = CASE WHEN t.kind = 'T' THEN 'T' ELSE '*' END
 ORDER BY t.ord, a.n;
@@ -140,13 +141,15 @@ BEGIN
                             JOIN dbo.syspublications p ON p.pubid = a.pubid
                             WHERE p.name = @pub AND s.srvid >= 0 AND (@art IS NULL OR a.name = @art)) x), N'none');
     -- Fingerprint of what the case may change: the publication row, the article row, the column count.
-    SET @fp0 = CONVERT(nvarchar(max), (SELECT * FROM dbo.syspublications WHERE name = @pub FOR XML RAW, BINARY BASE64))
+    -- immediate_sync_ready is left out: any call with @force_invalidate_snapshot = 1 flips it from 1 to 0
+    -- on an immediate_sync publication even when the call changes nothing else.
+    SET @fp0 = REPLACE(REPLACE(CONVERT(nvarchar(max), (SELECT * FROM dbo.syspublications WHERE name = @pub FOR XML RAW, BINARY BASE64)), N' immediate_sync_ready="1"', N''), N' immediate_sync_ready="0"', N'')
              + ISNULL(CONVERT(nvarchar(max), (SELECT a.* FROM dbo.sysarticles a JOIN dbo.syspublications p ON p.pubid = a.pubid WHERE p.name = @pub AND a.name = @art FOR XML RAW, BINARY BASE64)), N'')
              + ISNULL(CONVERT(nvarchar(20), (SELECT COUNT(*) FROM dbo.sysarticlecolumns c2 JOIN dbo.sysarticles a ON a.artid = c2.artid JOIN dbo.syspublications p ON p.pubid = a.pubid WHERE p.name = @pub AND a.name = @art)), N'');
     BEGIN TRY
         BEGIN TRAN;
         EXEC sp_executesql @stmt, N'@i bit, @r bit', @i = @i, @r = @r;
-        SET @fp1 = CONVERT(nvarchar(max), (SELECT * FROM dbo.syspublications WHERE name = @pub FOR XML RAW, BINARY BASE64))
+        SET @fp1 = REPLACE(REPLACE(CONVERT(nvarchar(max), (SELECT * FROM dbo.syspublications WHERE name = @pub FOR XML RAW, BINARY BASE64)), N' immediate_sync_ready="1"', N''), N' immediate_sync_ready="0"', N'')
              + ISNULL(CONVERT(nvarchar(max), (SELECT a.* FROM dbo.sysarticles a JOIN dbo.syspublications p ON p.pubid = a.pubid WHERE p.name = @pub AND a.name = @art FOR XML RAW, BINARY BASE64)), N'')
              + ISNULL(CONVERT(nvarchar(20), (SELECT COUNT(*) FROM dbo.sysarticlecolumns c2 JOIN dbo.sysarticles a ON a.artid = c2.artid JOIN dbo.syspublications p ON p.pubid = a.pubid WHERE p.name = @pub AND a.name = @art)), N'');
         ROLLBACK;
