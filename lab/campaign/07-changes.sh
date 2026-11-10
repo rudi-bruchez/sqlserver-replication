@@ -178,34 +178,40 @@ UNION ALL SELECT N'$1', N'snap_agents', $(hash "SELECT * FROM distribution.dbo.M
 UNION ALL SELECT N'$1', N'logreader', $(hash "SELECT * FROM distribution.dbo.MSlogreader_agents ORDER BY id FOR XML RAW, BINARY BASE64")
 UNION ALL SELECT N'$1', N'subscriber_info', $(hash "SELECT * FROM distribution.dbo.MSsubscriber_info ORDER BY publisher, subscriber FOR XML RAW, BINARY BASE64")
 UNION ALL SELECT N'$1', N'subscriber_sched', $(hash "SELECT * FROM distribution.dbo.MSsubscriber_schedule ORDER BY publisher, subscriber, agent_type FOR XML RAW, BINARY BASE64")
-UNION ALL SELECT N'$1', N'distributor', $(hash "SELECT d.*, p.name AS pname, p.distribution_db, p.security_mode, p.active, p.working_directory, p.trusted, p.login, p.password FROM msdb.dbo.MSdistributiondbs d CROSS JOIN msdb.dbo.MSdistpublishers p FOR XML RAW, BINARY BASE64")
+UNION ALL SELECT N'$1', N'distributor', $(hash "SELECT d.*, p.name AS pname, p.distribution_db, p.security_mode, p.active, p.working_directory, p.trusted, p.login FROM msdb.dbo.MSdistributiondbs d CROSS JOIN msdb.dbo.MSdistpublishers p FOR XML RAW, BINARY BASE64")
+UNION ALL SELECT N'$1', N'distpub_password', $(hash "SELECT p.password FROM msdb.dbo.MSdistpublishers p FOR XML RAW, BINARY BASE64")
 UNION ALL SELECT N'$1', N'jobs', $(hash "SELECT * FROM msdb.dbo.sysjobs WHERE job_id IN $JOBS ORDER BY job_id FOR XML RAW, BINARY BASE64")
 UNION ALL SELECT N'$1', N'schedules', $(hash "SELECT js.job_id, ss.freq_type, ss.freq_interval, ss.freq_subday_type, ss.freq_subday_interval, ss.freq_relative_interval, ss.freq_recurrence_factor, ss.active_start_date, ss.active_end_date, ss.active_start_time, ss.active_end_time, ss.enabled FROM msdb.dbo.sysjobschedules js JOIN msdb.dbo.sysschedules ss ON ss.schedule_id = js.schedule_id WHERE js.job_id IN $JOBS ORDER BY js.job_id, ss.schedule_id FOR XML RAW, BINARY BASE64")
 UNION ALL SELECT N'$1', N'steps', $(hash "SELECT job_id, step_id, step_name, subsystem, command, database_name, proxy_id, flags FROM msdb.dbo.sysjobsteps WHERE job_id IN $JOBS ORDER BY job_id, step_id FOR XML RAW, BINARY BASE64");
 SQL
 }
 
-# run_case ID TXN SET RESTORE READ [ALLOWED [NOTE]]
+# run_case ID TXN SET RESTORE READ [ALLOWED [NOTE [BASE]]]
+#   BASE (TXN 1 only): statements run inside the transaction before SET; changed_inside is
+#   then compared with the state after BASE (phase P), the rollback with the state before it.
 #   ALLOWED: fingerprints that may differ after a restore (TXN 0), default jobs (the
 #   second call bumps the job version); NOTE is appended to the row.
 #   TXN 1: SET runs in a transaction, rolled back in the same batch. TXN 0: SET is
 #   applied, then RESTORE (T-SQL using @vb, the value read before) puts it back.
 #   READ: a scalar expression for the setting itself (N'' when there is none).
 run_case() {
-    local id=$1 txn=$2 set=$3 restore=$4 read=${5:-N\'\'} allowed=${6:-jobs} note=${7:-} begin='' out line
+    local pfp id=$1 txn=$2 set=$3 restore=$4 read=${5:-N\'\'} allowed=${6:-jobs} note=${7:-} base=${8:-} begin='' out line
     want "$id" || return 0
     [ "$txn" = 1 ] && begin="BEGIN TRAN;"
+    if [ -n "$base" ]; then pfp="$(fp P) SET @vp = CONVERT(nvarchar(400), $read);"; else pfp="INSERT @f SELECT N'P', k, v FROM @f WHERE ph = N'B';"; fi
     [ -n "$restore" ] || restore="SET @rc = 0;"
     out=$(sql -h -1 -Q "$(cat <<SQL
 SET NOCOUNT ON;
 USE Sales;
 DECLARE @f TABLE (ph nchar(1), k nvarchar(20), v nvarchar(100));
-DECLARE @res nvarchar(20) = N'ok', @msg nvarchar(200) = N'', @rc int = 0, @vb nvarchar(400), @vi nvarchar(400) = N'', @va nvarchar(400),
+DECLARE @res nvarchar(20) = N'ok', @msg nvarchar(200) = N'', @rc int = 0, @vb nvarchar(400), @vp nvarchar(400) = N'', @vi nvarchar(400) = N'', @va nvarchar(400),
         @ch nvarchar(400), @rb nvarchar(400), @inside int = 0, @note nvarchar(200) = N'';
 $(fp B)
 SET @vb = CONVERT(nvarchar(400), $read);
 BEGIN TRY
     $begin
+    $base
+    $pfp
     $set
     IF @rc <> 0 SET @res = N'rc' + CONVERT(nvarchar(10), @rc);
     SET @inside = 1;
@@ -226,11 +232,11 @@ BEGIN CATCH
 END CATCH;
 $(fp A)
 SET @va = CONVERT(nvarchar(400), $read);
-SELECT @ch = ISNULL(STRING_AGG(CONVERT(nvarchar(4000), b.k), N','), N'') FROM @f b JOIN @f i ON i.k = b.k AND i.ph = N'I' WHERE b.ph = N'B' AND b.v <> i.v;
+SELECT @ch = ISNULL(STRING_AGG(CONVERT(nvarchar(4000), b.k), N','), N'') FROM @f b JOIN @f i ON i.k = b.k AND i.ph = N'I' WHERE b.ph = N'P' AND b.v <> i.v;
 SELECT @rb = ISNULL(STRING_AGG(CONVERT(nvarchar(4000), b.k), N','), N'') FROM @f b JOIN @f a ON a.k = b.k AND a.ph = N'A' WHERE b.ph = N'B' AND b.v <> a.v;
 SELECT CONVERT(nvarchar(4000), N'R|$id|' + @res + N'|' + CASE WHEN @inside = 1 THEN N'changed_inside=[' + @ch + N']' ELSE N'changed_inside=n/a(refused)' END
     + N' after_restore_differs=[' + @rb + N']'
-    + CASE WHEN LEN(@vb) > 0 OR LEN(@vi) > 0 THEN N' value_before=' + ISNULL(@vb, N'NULL') + N' inside=' + CASE WHEN @inside = 1 THEN ISNULL(@vi, N'NULL') ELSE N'n/a' END + N' after=' + ISNULL(@va, N'NULL') ELSE N'' END
+    + CASE WHEN LEN(@vb) > 0 OR LEN(@vi) > 0 THEN N' value_before=' + ISNULL(@vb, N'NULL') + CASE WHEN LEN(@vp) > 0 THEN N' after_base=' + @vp ELSE N'' END + N' inside=' + CASE WHEN @inside = 1 THEN ISNULL(@vi, N'NULL') ELSE N'n/a' END + N' after=' + ISNULL(@va, N'NULL') ELSE N'' END
     + CASE WHEN @res <> N'ok' THEN N' msg=' + @msg ELSE N'' END + @note);
 SQL
 )" </dev/null 2>&1) || { printf '%s\n' "$out" >&2; exit 1; }
@@ -247,7 +253,10 @@ SQL
     local rbd=${rdetail#*after_restore_differs=[}; rbd=${rbd%%]*}
     if [ "$txn" = 1 ] && [ -n "$rbd" ]; then echo "07-changes: $id: rolled back but state differs: $rbd" >&2; exit 1; fi
     if [ "$txn" = 0 ]; then
-        local x unexpected='' parts
+        local x unexpected='' parts vbf vaf
+        vbf=${rdetail#*value_before=}; vbf=${vbf%% inside=*}
+        vaf=${rdetail##* after=}; vaf=${vaf%% msg=*}; vaf=${vaf%% note=*}
+        [ "$vbf" = "$vaf" ] || { echo "07-changes: $id: value before '$vbf' differs from value after '$vaf'" >&2; exit 1; }
         IFS=',' read -ra parts <<<"$rbd"
         for x in "${parts[@]}"; do [ -z "$x" ] || [[ ",$allowed," == *",$x,"* ]] || unexpected+="$x "; done
         [ -z "$unexpected" ] || { echo "07-changes: $id: not restored: $rbd" >&2; exit 1; }
@@ -299,10 +308,10 @@ done
 # schedule daily (frequency_type 4, frequency_interval 1, start date unchanged, 99991231,
 # so it never fires), weekly (8) for frequency_recurrence_factor (ignored by a daily
 # schedule), or monthly relative (32) for frequency_relative_interval. Every row
-# reads schedule=<freq_type>:<interval>,<subday>,<subday_interval>,<relative>,<recurrence>.
+# reads schedule=<freq_type>:<interval>,<subday>,<subday_interval>,<relative>,<recurrence> dates=<start>-<end> times=<start>-<end>.
 sn() { echo "EXEC @rc = sys.sp_changepublication_snapshot @publication = N'm_p', @$1 = $2;"; }
 SNPUB="sys.sp_changepublication_snapshot @publication = N'm_p'"
-SCHREAD="(SELECT CONCAT(N'schedule=', ss.freq_type, N':', ss.freq_interval, N',', ss.freq_subday_type, N',', ss.freq_subday_interval, N',', ss.freq_relative_interval, N',', ss.freq_recurrence_factor) FROM msdb.dbo.sysschedules ss JOIN msdb.dbo.sysjobschedules js ON js.schedule_id = ss.schedule_id JOIN distribution.dbo.MSsnapshot_agents a ON js.job_id = CONVERT(uniqueidentifier, a.job_id) WHERE a.publication = N'm_p')"
+SCHREAD="(SELECT CONCAT(N'schedule=', ss.freq_type, N':', ss.freq_interval, N',', ss.freq_subday_type, N',', ss.freq_subday_interval, N',', ss.freq_relative_interval, N',', ss.freq_recurrence_factor, N' dates=', ss.active_start_date, N'-', ss.active_end_date, N' times=', ss.active_start_time, N'-', ss.active_end_time) FROM msdb.dbo.sysschedules ss JOIN msdb.dbo.sysjobschedules js ON js.schedule_id = ss.schedule_id JOIN distribution.dbo.MSsnapshot_agents a ON js.job_id = CONVERT(uniqueidentifier, a.job_id) WHERE a.publication = N'm_p')"
 for pv in frequency_type=4 frequency_interval=2 frequency_subday=8 frequency_subday_interval=20 frequency_relative_interval=2 \
           frequency_recurrence_factor=2 active_start_date=20300101 active_end_date=20400101 active_start_time_of_day=10000 \
           active_end_time_of_day=200000 snapshot_job_name=N\'m_job\' publisher_security_mode=0 publisher_login=N\'m_login\' \
@@ -317,7 +326,7 @@ for pv in frequency_type=4 frequency_interval=2 frequency_subday=8 frequency_sub
         frequency_subday|frequency_subday_interval) pre="EXEC @rc = $SNPUB, @frequency_type = 4, @frequency_interval = 1, @frequency_subday = 4, @frequency_subday_interval = 10; IF @rc <> 0 THROW 50001, N'base call refused', 1;" ;;
         frequency_relative_interval) pre="EXEC @rc = $SNPUB, @frequency_type = 32, @frequency_interval = 1, @frequency_relative_interval = 1, @frequency_recurrence_factor = 1; IF @rc <> 0 THROW 50001, N'base call refused', 1;" ;;
     esac
-    run_case "AGT.sp_changepublication_snapshot.$f" 1 "$pre $(sn "$f" "${pv#*=}")" "" "$rd"
+    run_case "AGT.sp_changepublication_snapshot.$f" 1 "$(sn "$f" "${pv#*=}")" "" "$rd" "" "" "$pre"
 done
 # frequency_type alone is refused (14278: the daily schedule needs an interval); both together:
 run_case AGT.sp_changepublication_snapshot.frequency_type+frequency_interval 1 \
@@ -381,7 +390,7 @@ run_case DST.sp_changedistributiondb.min_distretention 0 "$(db min_distretention
 run_case DST.sp_changedistributiondb.max_distretention 0 "$(db max_distretention N\'96\')" "$(db max_distretention @vb)" "$(dbread max_distretention)"
 run_case DST.sp_changedistributiondb.history_retention 0 "$(db history_retention N\'24\')" "$(db history_retention @vb)" "$(dbread history_retention)"
 run_case DST.sp_changedistpublisher.working_directory 0 "$(dp working_directory N\'/var/opt/mssql/data\')" "$(dp working_directory @vb)" "$(dpread working_directory)"
-run_case DST.sp_changedistpublisher.security_mode 0 "$(dp security_mode N\'0\')" "$(dp security_mode @vb)" "$(dpread security_mode)" jobs,distributor "expected: restoring security_mode = 1 regenerates the stored publisher password (sp_changedistpublisher), so the distributor fingerprint differs after the restore"
+run_case DST.sp_changedistpublisher.security_mode 0 "$(dp security_mode N\'0\')" "$(dp security_mode @vb)" "$(dpread security_mode)" distpub_password "expected: restoring security_mode = 1 regenerates the stored publisher password (sp_changedistpublisher), so only the distpub_password fingerprint differs after the restore; security_mode itself is asserted back"
 run_case DST.sp_changedistpublisher.trusted 0 "$(dp trusted N\'true\')" "DECLARE @t nvarchar(10) = CASE @vb WHEN N'1' THEN N'true' ELSE N'false' END; $(dp trusted @t)" "$(dpread trusted)"
 run_case DST.sp_changedistpublisher.active 0 "$(dp active N\'false\')" "DECLARE @t nvarchar(10) = CASE @vb WHEN N'1' THEN N'true' ELSE N'false' END; $(dp active @t)" "$(dpread active)"
 
