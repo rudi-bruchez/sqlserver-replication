@@ -1,12 +1,14 @@
 # sqlrepl plan and apply
 
-Design of the declarative engine of `sqlrepl`: describe a SQL Server replication in a file, see what it takes to get there, and get there. Written on 2026-11-10 from a conversation with Rudi; the parts marked "my call" are decisions taken while writing, to be checked.
+Design of the declarative engine of `sqlrepl`: describe a SQL Server replication in a file, see what it takes to get there, and get there. Written on 2026-11-10 from a conversation with Rudi, then revised the same day after a builder check and an external review panel (Mistral Large and GLM through Vibe, codex twice, a Claude reader), whose findings were run on the lab. The parts marked "my call" are decisions taken while writing, to be checked.
 
 Reference material this design relies on, and does not repeat:
 
 - `docs/analysis/step-1-analysis.md`: where the configuration lives, how it is coded, the measured impact matrix (section 5), the order of operations (section 6);
 - `lab/README.md`: the lab container and the measurements made on it (rows 1 to 12);
 - `CLAUDE.md`: the traps already paid for in the reader.
+
+Facts established by the review panel are cited as "panel", with the error number or the measurement; they are to be folded into `lab/` by the measurement campaign (see "Measurement campaign").
 
 ## Intent
 
@@ -33,26 +35,27 @@ The engine must be built so that the GUI is a front end on it, not a second impl
 - Create a complete replication from one file: distributor (local or remote), publication database, publications, articles, filters, subscriptions and their agents.
 - Change an existing replication by editing the file: add, change or drop any object the file describes.
 - Show, before anything runs, the exact operations, the exact T-SQL, and the cost of each operation.
-- Converge: after a successful `apply`, `plan` on the same file finds nothing to do.
+- Converge: after a successful `apply`, `plan` on the same file finds nothing to do, and the data at the subscriber is what the file describes.
 
 ## Scope
 
 In scope:
 
 - transactional publications and snapshot publications;
-- push and pull subscriptions;
+- push and pull subscriptions, initialized by snapshot, by "replication support only" (data already in place), from a backup, or from a log sequence number;
 - the distributor: creation if missing, local or remote, its retention and its snapshot working directory;
-- agents: log reader, snapshot, distribution (independent and shared), their schedules, profiles and security;
+- agents: log reader, snapshot, distribution (independent and shared), their schedules, profiles and security, including Windows job accounts;
 - user-defined agent profiles;
-- SQL Server 2019, 2022 and 2025, as publisher, distributor and subscriber. Other versions are refused with a clear message.
+- SQL Server 2019, 2022 and 2025, as publisher, distributor and subscriber. Other versions are refused with a clear message. The support claim for a version holds once the measurement campaign has run on it.
 
 Out of scope: merge replication, peer-to-peer, updatable subscriptions (immediate or queued), anonymous subscriptions, non-SQL Server publishers or subscribers. The export reports them under `warnings`; `plan` refuses a database that has any, rather than dropping what it cannot model.
 
 ## Non-goals
 
-- Uninstalling the distributor. The file never causes `sp_dropdistributor` or `sp_dropdistributiondb`; a distributor that is no longer needed is removed by hand. My call: the distributor serves other publication databases the file does not see.
+- Uninstalling the distributor. The file never causes `sp_dropdistributor` or `sp_dropdistributiondb`.
+- Moving a publication database to another distributor. A file that names a different distributor from the one in place, or a remote one where it is local, is refused by `plan` with the reason: the move means `sp_dropdistributor` at the publisher, which removes every publication. My call.
 - Creating or changing the schema of published tables, or the subscriber databases themselves. They must exist; `plan` checks it and says so.
-- Creating the snapshot folder on disk. `plan` cannot see the file system of a remote server; it checks what it can (`xp_fileexist` or equivalent at the distributor) and warns.
+- Creating the snapshot folder on disk. `plan` checks what it can (`xp_fileexist` or equivalent at the distributor) and warns.
 - Rolling back a partly applied plan (see "Apply").
 
 ## Anti-goals
@@ -60,50 +63,72 @@ Out of scope: merge replication, peer-to-peer, updatable subscriptions (immediat
 These four make `sqlrepl` a failure even if it works. Each is a hard rule for the builder, with the mechanism that enforces it.
 
 1. A hidden reinitialization or snapshot. Every operation that invalidates a snapshot, reinitializes subscriptions, or drops and re-adds subscriptions is marked in the plan, with the publications, articles and subscriptions it affects. `apply` repeats the count of such operations in its confirmation question.
-2. Opaque T-SQL. `plan` can print the exact T-SQL that `apply` will run, statement by statement and server by server, and `apply` logs each statement before running it. There is no other code path that changes the servers.
-3. Silent divergence between publisher and subscriber. The engine never generates a configuration known to diverge without error. Known case: a row filter given only as `sp_addarticle @filter_clause`, which filters the snapshot and not the changes (lab row 12); a filter is always created with `sp_articlefilter`, and the synchronization view with `sp_articleview`.
+2. Opaque T-SQL. `plan -sql` prints the T-SQL that `apply` will run, statement by statement and server by server, identical except for secret values (see "Secrets"), and `apply` logs each statement before running it. There is no other code path that changes the servers.
+3. Silent divergence between publisher and subscriber. The engine never generates a configuration known to diverge without error. Known cases, each with its rule in "Strategies": a row filter given only as `sp_addarticle @filter_clause` (lab row 12); a synchronization view left on an old filter or column list (panel); a subscription re-added with `@article = 'all'` that comes back active without its data (panel); a subscription dropped and re-added without snapshot initialization while changes were being made (panel).
 4. Unannounced loss of subscriber data. Operations that delete or replace data at the subscriber are marked as such: a reinitialization of an article whose `pre_creation_cmd` is `drop`, `delete` or `truncate`, and a change of `pre_creation_cmd` itself. Dropping an article or a subscription leaves the subscriber table in place, and the plan says so.
 
 ## The file
 
 ### Unit and format
 
-One file describes one publication database: its distributor, its publications, their articles and subscriptions, and its agents. Several databases are several files. The format is the YAML of the existing export (`internal/model`), extended for pull subscriptions and snapshot publications. `sqlrepl export` gives the starting file of an existing replication; for a new one, the user writes it (later, the GUI wizard writes it).
+One file describes one publication database: its distributor, its publications, their articles and subscriptions, and its agents. Several databases are several files. The format is the YAML of the existing export (`internal/model`), extended (see "Extending the model and the export"). `sqlrepl export` gives the starting file of an existing replication; for a new one, the user writes it (later, the GUI wizard writes it).
 
 ### The whole truth
 
-The file is the whole truth for its publication database. A publication, article, subscription, agent schedule or user profile that exists on the server and is not in the file is dropped by the plan. The plan marks drops like any other cost.
+The file is the whole truth for its publication database. A publication, article, subscription or agent schedule of that database that exists on the server and is not in the file is dropped by the plan, and the plan marks drops like any other cost. Objects shared with other databases follow the rules of "Shared distributor objects".
 
 ### Omitted properties
 
-A property left out of a declared object means the SQL Server default, the value the `sp_add*` procedure uses when the parameter is not passed. If the server holds another value, the plan changes it back. This keeps a hand-written file short while keeping "whole truth" true down to properties.
+A property left out of a declared object means the SQL Server default: the value the `sp_add*` procedure stores when the parameter is not passed. If the server holds another value, the plan changes it back.
 
-Consequences for the builder:
+Defaults are not one value per property. They depend on the context of the object, measured by the panel:
 
-- the model must tell "left out" from "false" or zero; a normalization step fills the defaults into the desired configuration before the comparison;
-- the defaults are a table in the code, one entry per property, each with its source: Learn, or a lab measurement where Learn is wrong (for example the default `schema_option` of a table article is `0x30073`, not Learn's `0x30F3`, lab row 2);
-- the export keeps writing every property, so that an exported file is explicit.
+| Object, context | Default measured (2022 CU27; same on 2019 CU32 and 2025 CU10 where checked) |
+|---|---|
+| table article, transactional publication, `native` or `concurrent` | `schema_option 0x30073`; commands `CALL [dbo].[sp_MSins_…]`, `SCALL [dbo].[sp_MSupd_…]`, `CALL [dbo].[sp_MSdel_…]`; destination owner `dbo` |
+| table article, transactional publication, `character` | `schema_option 0x30073`; commands `SQL`; destination owner NULL |
+| table article, snapshot publication | `schema_option 0x30071`; commands `SQL` |
+| schema-only article (view, procedure) | `schema_option 0x1` |
+| publication | `sync_method native`, `retention 336`, `independent_agent 0`, `immediate_sync 0`, `allow_push 1`, `allow_pull 0`, `status inactive` |
+
+So the builder's defaults table is keyed by object type and by the properties the default depends on (publication type, `sync_method`, article type), each entry with its source. Where a property requires another (`immediate_sync` needs `independent_agent`, analysis section 5), an omitted prerequisite takes the value the declared property requires, not the procedure default; otherwise a file saying only `immediate_sync: true` would normalize to a combination the server refuses. Whether `sp_addpublication` itself fills the prerequisite is measured by the campaign.
+
+Two properties have no default: `status` of a publication and `initialization` of a subscription must be written in the file. My call. The procedure default for `status` is `inactive`, and a short hand-written file applied to an active publication would deactivate it with a cost the plan would present as online (panel).
+
+The export keeps writing every property, so that an exported file is explicit.
 
 ### What is not compared
 
 - Names that replication generates: job names, generated synchronization views (`syncobj_0x…`), generated command procedures when the file does not name them.
 - Values derived from other properties: article status bits `0x8` and `0x20` when `schema_option` has `0x8` (lab row 3).
-- Runtime state: subscription status, `immediate_sync_ready`, history.
-- The agent command line (`command`). My call: the export shows it for information, the plan ignores it, and warns when it carries parameters beyond those the procedures generate; agent tuning belongs in profiles.
+- Runtime state: subscription status, `immediate_sync_ready`, history, and the `active` bit (`0x1`) of an article's status, which the snapshot sets once delivered and no procedure sets (panel).
+- Schedule dates and times set at creation (`start_date` is the creation day) when the file does not declare a schedule. A schedule left out of the file means the schedule the procedure creates (for example daily every 5 minutes for a snapshot agent on the lab), compared on its frequency fields only. A declared schedule is compared in full.
+- The agent command line (`command`). The export shows it for information, the plan ignores it, and warns when it carries parameters beyond those the procedures generate; agent tuning belongs in profiles. My call.
+- The `initialization` of an existing subscription. It is a creation parameter: it decides how the subscription is created, and how it is re-created when a plan must drop and re-add it. Changing it alone plans nothing, with a note.
 
 ### Names
 
-Server names are compared case-insensitively (`syssubscriptions.srvname` is stored in upper case). Stored commands are compared as stored: a procedure given without a schema is stored without one (analysis section 5).
+Server names are compared case-insensitively (`syssubscriptions.srvname` is stored in upper case). Command procedures are always written by the engine schema-qualified, in `sp_addarticle` and in `sp_changearticle` alike: the two procedures store an unqualified name differently (`sp_addarticle` qualifies it with `dbo`, `sp_changearticle` keeps it unqualified, panel, on 2022 and 2025), so passing the file's text through would never converge. Normalization qualifies an unqualified name in the file with the schema `sp_addarticle` would use (measured `dbo` for a `dbo` table; other schemas are measured by the campaign).
 
-### Secrets and connections
+## Shared distributor objects
 
-The file holds no secret. A password appears as a `password_secret` name. At `plan` and `apply` time, `sqlrepl` reads the value from the environment variable of that name, after loading an optional `.env` file (default `./.env`, `-env` flag), where the real environment wins. The loader is the stdlib-only `internal/dotenv` of `~/Sources/Repos/atelier/outils/sylloge/internal/dotenv/`, copied, not imported. `plan` reports every secret the plan needs and whether it is set; `apply` refuses to start while one is missing.
+The distributor serves other publication databases the file does not see. For the objects that belong to the distributor rather than to the database (Rudi's decision):
 
-Servers are named in the file by their SQL Server name (`@@SERVERNAME`), which is what replication stores and may not resolve from where `sqlrepl` runs (the lab's `REPLLAB`). How `sqlrepl` reaches each server, and with which credentials, is given at run time, never in the file: the builder chooses between flags (`-server REPLLAB=tcp:127.0.0.1,11980`) and a connections file kept outside the repository. `sqlrepl` connects to the publisher, the distributor, and each subscriber that has a pull subscription or whose database must be checked.
+- the distributor, the distribution database, its retention, the `MSdistributor` properties and user agent profiles can be created and changed by the file;
+- they are never dropped while something uses them. A user profile is dropped only when it is absent from the file and no agent of any database at that distributor uses it; which profile is the default of its agent type is a distributor-wide setting;
+- a change to a shared object is marked "shared" in the plan, with the list of the other publication databases the distributor serves. Two files that disagree on a shared value therefore each show the change as shared when they are planned; `plan` cannot see the other file, so it reports the conflict by showing that the server's value differs from what this file wants on a shared object. My call on the mechanism.
+
+The reader must read every profile of the distributor and which agents use it, not only those used by this database (today `collectProfiles` reads only the latter, panel).
 
 ## plan
 
-`sqlrepl plan -f desired.yaml` reads the current state (the export's reader), normalizes the desired file, compares them, and prints the plan. It runs only `SELECT` statements and read-only checks.
+`sqlrepl plan -f desired.yaml` reads the current state, normalizes the desired file, compares them, and prints the plan. It runs only `SELECT` statements and read-only checks.
+
+### Inputs
+
+The comparison takes three inputs: the desired configuration, the current configuration (the reader's `model.Config`), and the observed runtime facts the costs depend on: per subscription its status and the articles it actually covers, per publication whether a snapshot exists and whether it is ready (`immediate_sync_ready`). My call: the measured costs depend on these facts (analysis section 5), so they are an explicit input rather than a guess; the GUI supplies them the same way.
+
+The reader returns an empty current configuration for an instance with no distributor, or a database not enabled for publishing, instead of an error (today `readDistributor` fails when the publisher is not registered, panel). That is the starting point of every creation.
 
 ### What a plan is
 
@@ -112,47 +137,77 @@ A plan is an ordered list of operations. Each operation has:
 - the object it acts on (distributor, publication, article, subscription, agent, profile) and the kind of change (add, change, drop);
 - the property changes it carries, before and after;
 - the server and database it runs on;
-- the exact T-SQL;
-- its cost, one or more of: online, new snapshot, reinitialization of named subscriptions, drop and re-add of named subscriptions, subscriber data replaced, subscriber object left behind;
-- the reason for that cost, with its source (matrix row, lab row, Learn page);
+- the exact T-SQL, with secrets as named parameters;
+- its cost, one or more of: online, new snapshot, reinitialization of named subscriptions, drop and re-add of named subscriptions, subscriber data replaced, subscriber object left behind, shared object changed;
+- the reason for that cost, with its source (matrix row, lab row, panel measurement);
 - warnings.
 
-The plan as a whole also lists the secrets it needs, the preconditions it checked (subscriber database exists, published table exists and has a primary key for a transactional article, snapshot folder visible), and the agents `apply` will start.
+The plan as a whole also lists the secrets it needs and whether each is set, the preconditions it checked (subscriber database exists, published table exists and has a primary key for a transactional article, error 14088 otherwise, snapshot folder visible), and the agents `apply` will start.
 
-Output: a human summary (one line per operation with its cost, then the totals), `-sql` for the full T-SQL, and `-json` for the plan as data, which the GUI and the tests consume. My call: a plan is never saved to be applied later; `apply` always recomputes it (see "Apply").
+Output: a human summary (one line per operation with its cost, then the totals), `-sql` for the T-SQL, and `-json` for the plan as data, which the GUI and the tests consume. A plan is never saved to be applied later; `apply` always recomputes it. My call.
 
-### Costs
+### Costs and unmeasured changes
 
-The cost of each change comes from the measured matrix (analysis section 5), kept in the code as a table with the source of each entry. Where the matrix is measured on 2022 only, the builder reruns the lab measurements on 2019 and 2025 (`lab/measure-*.sql`, `lab/measure-*.sh`) before relying on them, and records the results per version. The cost of a change depends on the publication: on an `immediate_sync` publication a snapshot-affecting change needs `@force_invalidate_snapshot = 1`, on another it does not (measured).
+The cost of each change, and the flags it needs, come from a cost table in the code, one entry per change and context, each with its source. Only measured entries exist (Rudi's decision): a change that has no measured entry is refused by `plan` with "cost of <change> not measured", never guessed and never sent to the server to find out. The measurement campaign fills the table before the planner is written.
 
-The plan passes exactly the flags the matrix says are needed, never both by default.
+The plan passes exactly the flags the entry says are needed, never both by default.
 
 ### Strategies
 
-The engine chooses how to reach the desired state. The rules below are the ones known now; each comes from a measurement or a Learn statement cited in the analysis.
+The rules known now. Each comes from a measurement or a Learn statement cited in the analysis or the panel; the campaign confirms or replaces the entries marked "to confirm".
 
-- Add an article to an `immediate_sync` publication: `sp_addarticle` with `@force_invalidate_snapshot = 1`; existing subscriptions get it at once; the next snapshot is regenerated for the whole publication but only the new article is delivered (lab row 9). Cost: new snapshot, no reinitialization.
-- Add an article to another publication: `sp_addarticle` with no flag, then `sp_addsubscription @article` for each existing subscription (lab row 10). Cost: snapshot of the new article.
-- Row filter: `sp_articlefilter` with a filter name, then `sp_articleview`, never `@filter_clause` alone (anti-goal 3).
-- Drop an article: drop the subscriptions to that article (`sp_dropsubscription @article`), then the article. On an `immediate_sync` publication, a subscription to one article that is dropped cannot be added back unless all are (analysis section 5, structural operations): a plan that drops an article and adds it back there is turned into a full reinitialization of the affected subscriptions, announced.
+Articles:
+
+- Add an article to a publication that keeps its snapshot (`immediate_sync`): `sp_addarticle` with `@force_invalidate_snapshot = 1`; existing subscriptions get it at once; the next snapshot is regenerated for the whole publication but only the new article is delivered (lab row 9). Cost: new snapshot.
+- Add an article to a publication without `immediate_sync`, `native` or `character` sync: `sp_addarticle` with no flag, then `sp_addsubscription @article` for each existing subscription (lab row 10). Cost: snapshot of the new article.
+- Add an article to a publication without `immediate_sync`, `concurrent` or `concurrent_c` sync (the most common transactional configuration): `sp_addsubscription @article = '<name>'` is refused with 14100, "Specify all articles when subscribing to a publication using concurrent snapshot processing" (panel); the extension is `sp_addsubscription @article = 'all'`. Its cost, whether the already subscribed articles are sent again, is to confirm.
+- Drop an article: `sp_dropsubscription @article, @subscriber, @destination_db` for each subscription to it, then `sp_droparticle`. When the publication has a snapshot that must be invalidated, `sp_droparticle` needs `@force_invalidate_snapshot = 1` (error 20607 otherwise, panel, three readers); it was accepted without the flag on an `immediate_sync` publication that had no snapshot yet (panel), so the condition is the snapshot, to confirm. Cost: new snapshot where the flag is needed.
+- Drop an article and add it back in the same publication: `sp_droparticle` then `sp_addarticle`, both with the flags above; on an `immediate_sync` publication the existing subscriptions are extended to the re-added article automatically and it is delivered by the next snapshot (panel). Cost to confirm. The plan never re-adds the subscription alone with `@article = 'all'`: the article comes back active with no data delivered (panel).
+- Move an article between publications: drop from the source, add to the target, with the rules above (panel: executes).
+
+Filters and views. The synchronization view is what the snapshot reads; the filter procedure is what the log reader uses. The two must always carry the same clause and column list:
+
+- a row filter is created or changed by `sp_articlefilter @filter_name, @filter_clause`, immediately followed by `sp_articleview @view_name, @filter_clause` with the same clause;
+- a row filter is dropped by `sp_articlefilter @filter_clause = NULL`, immediately followed by `sp_articleview @view_name, @filter_clause = NULL`;
+- a column filter (`sp_articlecolumn`) is applied before the `sp_articleview` call, and any change to the columns of an article that has a synchronization view re-issues `sp_articleview` with the article's clause;
+- `sp_articleview` is never called without the article's clause: called without `@filter_clause`, it rebuilds the view unfiltered and also sets `sysarticles.filter_clause` to NULL, while the filter procedure keeps filtering the changes (verified after the panel: snapshot unfiltered, changes filtered, export showing no filter);
+- `sp_addarticle @filter_clause` is never generated alone (lab row 12).
+
+Measured on the lab: `sp_articlefilter` with a new clause, or with NULL, rewrites the procedure and `filter_clause` but leaves the view on the old clause (panel, verified). The reader warns when it finds a filter procedure with a NULL clause, or a view whose definition does not contain the article's clause.
+
+Subscriptions:
+
+- Push subscriptions (`sp_addsubscription`, `sp_addpushsubscription_agent`) run at the publisher, in the publication database, not at the distributor; the jobs they create live at the distributor (panel: in the distribution database, error 14013).
+- Pull subscriptions: `sp_addsubscription @subscription_type = N'pull'` at the publisher, then `sp_addpullsubscription` and `sp_addpullsubscription_agent` at the subscriber, with `@subscription_type = N'pull'` always passed: left out, `sp_addpullsubscription` creates an anonymous subscription, out of scope, while the publisher records a named pull (panel).
+- A subscription to a subset of articles (`articles:` in the file) is only possible on a publication without `immediate_sync` and with `native` or `character` sync. On the others, `plan` refuses the file: `sp_addsubscription @article` fails with 14122 on `immediate_sync` and 14100 on concurrent sync (panel).
+- Dropping a whole subscription is a loop of `sp_dropsubscription @article` calls, one per article (`@article` cannot be NULL, error 14043, panel). If an `apply` stops inside that loop, the subscription is left covering a subset of articles that cannot be completed again (14100). The plan recognizes that state from the observed coverage, on publications where a subset cannot exist, as an interrupted drop: it completes the drop and re-creates the subscription, announced as a reinitialization.
+- Drop and re-add of subscriptions (forced by `independent_agent`, `enabled_for_het_sub`, `allow_push = false`, see below): the subscriptions are re-added with snapshot initialization and the plan announces a reinitialization. For a subscription whose `initialization` is "replication support only", backup or LSN, re-adding it the same way would lose the changes made between the drop and the re-add (panel); the plan refuses, with the reason, and leaves it to the DBA. My call.
+
+Publication properties:
+
 - Property chains: `allow_anonymous` needs `immediate_sync` needs `independent_agent`; `compress_snapshot` needs `alt_snapshot_folder`; `enabled_for_internet` needs `ftp_address`; `replicate_partition_switch` needs `allow_partition_switch`. Enable from the bottom up, disable from the top down (measured).
-- `independent_agent` cannot change while the publication has subscriptions (error 20013): the plan drops the subscriptions, changes the property, and adds them back. Cost: drop and re-add, which reinitializes them.
-- Properties that no flag can change while subscriptions exist (`enabled_for_het_sub`, `allow_push = false` with push subscriptions): same treatment, or a refusal with the reason when the file asks for something impossible.
-- A change refused for any reason the engine does not model: the plan stops with the error the procedure would give, rather than guessing.
+- `independent_agent` cannot change while the publication has subscriptions (error 20013): the plan drops the subscriptions, sets `immediate_sync = false` first where it is true (21022 otherwise), changes `independent_agent`, and adds the subscriptions back with `@article = 'all'` and their agents (panel: executes). Cost: drop and re-add.
+- Properties no flag can change while subscriptions exist (`enabled_for_het_sub`, `allow_push = false` with push subscriptions): the same drop and re-add, or a refusal with the reason when the file asks for something impossible.
+
+Agents and profiles:
+
+- No `sp_add*_agent` procedure takes a profile (panel, from `sys.all_parameters` and the sources in `stored-procedures/`): an agent is created on the default profile of its type, then bound to the file's profile by `msdb.dbo.sp_update_agent_profile`. Profiles are created before the agents that use them.
 
 ### Order
 
-The order of section 6 of the analysis, extended for creation:
+The order of section 6 of the analysis, extended for creation and corrected by the panel:
 
-1. distributor: create or change (`sp_adddistributor`, `sp_adddistributiondb`, `sp_adddistpublisher`, `sp_changedistributiondb`, `sp_changedistpublisher`);
-2. publication database: `sp_replicationdboption publish`, log reader agent;
-3. drop subscriptions to removed articles, and subscriptions removed from the file;
-4. drop removed articles, then removed publications;
-5. change publication properties, in the order of the chains above;
-6. change kept articles;
-7. add publications and their snapshot agents, then articles, filters and views;
-8. add subscriptions and their agents (push at the distributor; pull at the subscriber and the publisher), or extend existing subscriptions to new articles;
-9. user profiles and agent schedules.
+1. distributor: create what is missing, skipping what exists (`sp_adddistributor` fails with 14099 when a distributor exists, panel), or change it (`sp_changedistributiondb`, `sp_changedistpublisher`);
+2. user profiles: create and change;
+3. publication database: `sp_replicationdboption publish` (idempotent, panel), log reader agent;
+4. drop subscriptions to removed articles, and subscriptions removed from the file;
+5. drop removed articles, then removed publications (`sp_droppublication` fails with 14005 while any subscription remains);
+6. change publication properties, in the order of the chains above;
+7. change kept articles: properties, then filters and columns, then views, as in "Filters and views";
+8. add publications and their snapshot agents, then articles, filters, columns and views;
+9. add subscriptions and their agents (push at the publisher; pull at the publisher and the subscriber), or extend existing subscriptions to new articles;
+10. bind agents to profiles, set agent schedules;
+11. drop user profiles no agent uses any more.
 
 The builder may refine it; the plan's tests must prove that the order satisfies every dependency measured.
 
@@ -162,20 +217,36 @@ The builder may refine it; the plan's tests must prove that the order satisfies 
 
 1. recomputes the plan against the live servers, so it never runs a stale plan;
 2. prints it, with the count of costly operations, and asks for `yes` (skipped with `-auto-approve`; refused when there is no terminal and no `-auto-approve`);
-3. runs the operations in order, each on its server, logging each statement before it runs;
-4. after each failed statement, checks `@@TRANCOUNT` and rolls back what the procedure left open (lab row 11), then stops;
+3. runs the operations in order, each on its server, logging each statement before it runs; all the statements for one server run on one pinned connection (`*sql.Conn`), never on the pool, because the transaction check below is session state;
+4. after a failed statement, checks `@@TRANCOUNT` on that same connection and rolls back what the procedure left open (lab row 11; a refused `sp_droparticle` leaves two levels open, panel), then stops;
 5. on success, starts the snapshot agent of each publication whose snapshot was invalidated or that has a new or reinitialized subscription, and reports it.
 
-On failure, `apply` reports what ran, what failed with the server's message, and what remains. It does not undo. Running `plan` again reads the server as it is and plans from there; the operations already done are no longer in it. This is why convergence ("plan after apply is empty") is a requirement, not a nicety.
+On failure, `apply` reports what ran, what failed with the server's message, and what remains. It does not undo. Running `plan` again reads the server as it is and plans from there; the operations already done are no longer in it, and an interrupted subscription drop is recognized (see "Subscriptions"). This is why convergence is a requirement.
 
-My call: `apply` does not wrap the operations in one transaction. Several procedures create jobs, databases or linked servers, some on other servers, and cannot all be undone by one rollback.
+`apply` does not wrap the operations in one transaction: several procedures create jobs, databases or linked servers, some on other servers, and `sp_addsubscription` refuses to run inside a transaction (error 15002, panel).
+
+The panel met a deadlock (1205) inside a subscription-drop loop and a "only one Log Reader Agent or log-related procedure" message (18752) during `sp_droppublication`. `apply` treats them as failures, stops, and lets the next `plan` resume; whether a bounded retry is safe is measured by the campaign. My call.
+
+## Secrets
+
+The file holds no secret. A password appears as a `password_secret` name. At `plan` and `apply` time, `sqlrepl` reads the value from the environment variable of that name, after loading an optional `.env` file (default `./.env`, `-env` flag), where the real environment wins. The loader is the stdlib-only `internal/dotenv` of `~/Sources/Repos/atelier/outils/sylloge/internal/dotenv/`, copied, not imported. `plan` reports every secret the plan needs and whether it is set; `apply` refuses to start while one is missing.
+
+The model gains a secret name for every password a generated call needs, which today it lacks (panel): the job account (`@job_login`, `@job_password`) of every agent, the distributor credentials of a pull agent (`@distributor_login`, `@distributor_password`), the `distributor_admin` password of a remote distributor (`sp_adddistributor @password`), the SQL login of `sp_adddistributiondb` when `@security_mode = 0` (error 21694 otherwise), and those already named (subscriber, publisher, `MSdistpublishers`, FTP).
+
+Secrets never appear in the T-SQL that is printed or logged. `apply` passes them as parameters of `sp_executesql`; `plan -sql` prints the same statement with the parameter names and a comment naming the secret, so the printed text is the executed text without the values. My call.
+
+Passwords are set when an object is created. `plan` cannot read them, so it never plans a password change; `apply -rotate-secret NAME` changes the password of every object that uses that secret, as an explicit action. My call.
+
+## Servers and connections
+
+Servers are named in the file by their SQL Server name (`@@SERVERNAME`), which is what replication stores and may not resolve from where `sqlrepl` runs (the lab's `REPLLAB`). How `sqlrepl` reaches each server, and with which credentials, is given at run time, never in the file: the builder chooses between flags (`-server REPLLAB=tcp:127.0.0.1,11980`) and a connections file kept outside the repository. `sqlrepl` connects to the publisher, the distributor, and each subscriber that has a pull subscription or whose database must be checked.
 
 ## Engine as a library
 
 The GUI will drive the same engine. Constraints on the builder:
 
-- the comparison and the plan are pure functions of two `model.Config` values and the cost table, with no database access, so that the GUI can recompute costs on every edit and the tests can cover them without a server;
-- reading the servers (the existing `internal/reader`), computing the plan, and executing it are separate packages;
+- the comparison and the plan are pure functions of the desired configuration, the current configuration, the observed runtime facts and the cost table, with no database access, so that the GUI can recompute costs on every edit and the tests can cover them without a server;
+- reading the servers, computing the plan, and executing it are separate packages;
 - the plan is a Go value that serializes to JSON without loss; `-json` and the GUI use the same serialization;
 - the CLI only parses flags and prints.
 
@@ -183,19 +254,43 @@ The GUI will drive the same engine. Constraints on the builder:
 
 `replcfg` becomes `sqlrepl`: the command (`cmd/sqlrepl`), its usage and messages, the environment variables (`SQLREPL_PASSWORD`, `SQLREPL_TEST_DSN`), and the documentation. The Go module path stays `github.com/rudi-bruchez/sqlserver-replication`, the repository's name. My call; the rename is the first task of the plan.
 
-## Extending the export
+## Extending the model and the export
+
+The model covers every parameter of the in-scope procedures (Rudi's decision), so that "whole truth" holds down to properties: among others `allow_partition_switch`, `replicate_partition_switch`, `enabled_for_het_sub`, `enabled_for_internet`, the distribution database file locations and sizes, the initialization parameters (backup device and location, LSN), the secret names above. The builder lists the parameters of each procedure from `sys.all_parameters` on each supported version and maps each to a field or to a documented exclusion.
 
 The export must read what the plan manages, since the plan compares against it:
 
-- pull subscriptions: today the export warns and skips them; it must read them at the publisher (`syssubscriptions.subscription_type = 1`) and their agents at the subscriber (`MSreplication_subscriptions`, the pull agent job);
+- an instance with no replication, as an empty configuration;
+- pull subscriptions: at the publisher (`syssubscriptions.subscription_type = 1`) and at the subscriber, where the agent's settings are in `MSsubscription_properties` and `MSreplication_subscriptions` is written by `sp_addpullsubscription`, not by the agent (panel); today the export warns and skips them, so no plan on a database that has one could converge (panel);
 - snapshot publications (`repl_freq = 1`): today reported under `warnings`;
-- whatever the normalization needs to tell a generated name from a chosen one.
+- every profile of the distributor and its use by the agents of every database;
+- the observed runtime facts the planner takes as input;
+- the definition of each synchronization view, enough to check it against the clause and the columns.
+
+## Measurement campaign
+
+The first block of the implementation plan, before the planner (Rudi's decision). Each item becomes a script under `lab/`, like `measure-matrix.sql`, run on 2019, 2022 and 2025, its results recorded per version in `lab/README.md` and in the cost table:
+
+1. what raises 20607: `immediate_sync`, the existence of a snapshot, or both (a new publication with no snapshot yet; after a snapshot is delivered; on a publication without `immediate_sync` whose snapshot is kept for a pending subscription);
+2. drops: `sp_droparticle`, `sp_dropsubscription` per article, `sp_droppublication`, their flags and costs, on each kind of publication;
+3. concurrent sync without `immediate_sync`: the cost of extending a subscription with `@article = 'all'`;
+4. dropping an article and adding it back, on each kind of publication;
+5. subscription changes (`sp_changesubscription`, `sp_changesubscriber`), agent changes (`sp_change*_agent`, schedules, `sp_update_agent_profile`), distributor changes (`sp_changedistributiondb`, `sp_changedistpublisher`, `working_directory` included);
+6. pull subscriptions: creation, change, drop, and their agents;
+7. snapshot publications: the whole matrix;
+8. initialization by "replication support only", backup and LSN;
+9. defaults in every context of the table above, unqualified procedure names in a non-`dbo` schema, and whether `sp_addpublication @immediate_sync = 'true'` fills `independent_agent`;
+10. transient errors during drops (1205, 18752) and whether a retry is safe;
+11. the filter and view rules above, as a regression measure.
+
+The lab container runs with `MSSQL_MEMORY_LIMIT_MB = 4096`: at 2048 it stopped under memory pressure (error 701) while five reviewers ran scenarios on it (panel). My call.
 
 ## Testing
 
 - Unit tests for the normalization, the comparison, the cost table and the ordering, with configurations built in Go; no server.
 - Integration tests on the lab container, gated by an environment variable like `TestQueriesParse`. The central scenario: start from an instance with no replication, apply a file, export, check that the export normalizes to the file and that `plan` is empty. Then a set of change scenarios, one per strategy above, each checking the plan's operations and costs before applying, and convergence after.
-- The lab runs on 2022 today. The integration tests must also run on 2019 and 2025 images before the support claim holds.
+- For every scenario that touches a filter or columns, the test also checks the data: after the snapshot and after changes made at the publisher, the subscriber holds exactly the rows and columns the file describes. The export cannot see a synchronization view out of step with its filter (panel), so convergence of the configuration alone does not prove it.
+- The integration tests run on the 2019, 2022 and 2025 images before the support claim holds.
 - Each strategy and each cost entry has a test that fails when the rule is broken. The builder breaks each rule once to watch its test fail.
 
 ## Left to the builder
