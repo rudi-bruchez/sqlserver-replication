@@ -179,9 +179,10 @@ The commands change online, but the procedure they name must exist at the subscr
 
 | Operation | Effect | Source |
 |---|---|---|
-| Add an article | new snapshot; `@force_invalidate_snapshot = 1` if a snapshot exists; only the new article is sent, the publication is not reinitialized | [L] *Add Articles to and Drop Articles from Existing Publications* |
-| Add an article, `immediate_sync = false` | `sp_addsubscription` must be called for each existing subscription | [L] `sp_addpublication`, `@immediate_sync` parameter |
-| Add an article, `immediate_sync = true` | snapshot of the article alone or of the whole publication | **[M]**, not measured yet |
+| Add an article, `immediate_sync = true` | `@force_invalidate_snapshot = 1` required; existing subscriptions are subscribed to it at once; the snapshot is regenerated for the whole publication, only the new article is delivered | [X] lab row 9 |
+| Add an article, `immediate_sync = false` | no flag; `sp_addsubscription @article` must be called for each existing subscription; the snapshot covers the new article alone | [L] `sp_addpublication`, `@immediate_sync` parameter; [X] lab row 10 |
+| A refused `sp_add*` / `sp_change*` call | leaves its transaction open: the caller must check `@@TRANCOUNT` and roll back | [X] lab row 11 |
+| Row filter given only as `sp_addarticle @filter_clause` | filters the snapshot, not the changes: never generate it; always use `sp_articlefilter` | [X] lab row 12 |
 | Drop an unsubscribed article | free; invalidates the snapshot | [L] |
 | Drop a subscribed article | not directly; drop the subscription to that article first (`sp_dropsubscription @article`) | [L] *Add Articles…*, *Manually remove replication* |
 | Drop the subscription to one article of an `immediate_sync` publication | it cannot be added back unless the subscriptions to **all** articles are dropped and re-added at once | [L] `sp_dropsubscription`, Remarks |
@@ -228,13 +229,13 @@ Method: on a publication with a valid snapshot and an active subscription, call 
 Priorities:
 
 1. ~~the effect of `immediate_sync`, `independent_agent` and `allow_anonymous`~~ done [X];
-2. the snapshot generated when an article is added, depending on `immediate_sync`: article alone or whole publication;
+2. ~~the snapshot generated when an article is added, depending on `immediate_sync`~~ done [X];
 3. ~~article `status` and `filter`, where the two Learn pages disagree~~ done [X];
 4. ~~`sp_articlecolumn` on a subscribed article~~ done [X];
 5. ~~decoding of `sysschemaarticles.pre_creation_cmd`~~ done [X];
 6. ~~the undocumented article properties of section 5~~ done [X], except `working_directory`;
-7. whether a filter clause stored by `sp_addarticle` without a filter procedure filters anything.
+7. ~~whether a filter clause stored by `sp_addarticle` without a filter procedure filters anything~~ done [X]: the snapshot only.
 
 ## 10. Next step
 
-Step 2, the export, can start without these measurements: it only reads the tables of section 3. The measurements of section 9 gate step 3, the plan.
+Steps 1 and 2 are done, and the measurements of section 9 that gate step 3 are made, except `working_directory`. Step 3, the plan, can start from sections 5 and 6.

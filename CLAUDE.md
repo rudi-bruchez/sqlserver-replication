@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Go tool, `replcfg`, that manages SQL Server transactional replication as a declarative file, on the Terraform model: export the current state, diff it against the desired state, generate the `sp_add*` / `sp_change*` / `sp_drop*` calls. The tool replaces the configuration layer only; Microsoft's replication engine (log reader, distribution) stays.
 
-Roadmap and status: step 1 (analysis, `docs/analysis/step-1-analysis.md`) and step 2 (read-only export) are done. Step 3 (plan) and step 4 (apply) are not started. The export has run against the lab replication of `lab/README.md` (SQL Server 2022 Developer in podman), which found and fixed the command parsing and the filter procedure and sync view rules.
+Roadmap and status: step 1 (analysis, `docs/analysis/step-1-analysis.md`) and step 2 (read-only export) are done. Step 3 (plan) and step 4 (apply) are not started; the measurements that gate step 3 are made. The export has run against the lab replication of `lab/README.md` (SQL Server 2022 Developer in podman), which found and fixed the command parsing and the filter procedure and sync view rules.
 
 Scope: transactional replication, push subscriptions, SQL Server publisher. Merge, peer-to-peer, updatable, pull and anonymous subscriptions and Oracle publishers are out of scope; the export reports them under `warnings` instead of modelling them.
 
@@ -60,6 +60,6 @@ Source of the SQL Server 2019 replication system procedures, as a reference, not
 
 ## Before step 3
 
-The impact matrix (which property change needs `@force_invalidate_snapshot` or `@force_reinit_subscription`) is measured on the lab (`lab/measure-matrix.sql`, section 5 of the analysis document). Microsoft Learn was wrong on several entries (commands and `status` change online; `sync_method` needs a reinitialization; `sp_articlecolumn` works on a subscribed article), and the snapshot flag is only ever asked by an `immediate_sync` publication. Take the plan logic from the measured tables, not from Learn. Still to measure before the plan handles added articles: section 9, items 2 and 7.
+The impact matrix (which property change needs `@force_invalidate_snapshot` or `@force_reinit_subscription`) is measured on the lab (`lab/measure-matrix.sql`, section 5 of the analysis document). Microsoft Learn was wrong on several entries (commands and `status` change online; `sync_method` needs a reinitialization; `sp_articlecolumn` works on a subscribed article), and the snapshot flag is only ever asked by an `immediate_sync` publication. Take the plan logic from the measured tables, not from Learn. The structural operations (adding an article with and without `immediate_sync`) and the traps of apply (a refused call leaves its transaction open) are measured too, `lab/README.md` rows 9 to 12.
 
 Oracles for verification: `Export-DbaReplServerSetting` (dbatools, wraps RMO `ReplicationServer.Script()`) for the export, and RMO with `SqlExecutionModes.CaptureSql` for generated T-SQL.

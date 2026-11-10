@@ -43,4 +43,13 @@ Stop the container when done (`SHUTDOWN` through sqlcmd, then `podman rm repllab
 
 Also seen while building the lab: SQL Server 2022 stores the generated command procedures schema-qualified (`CALL [dbo].[sp_MSins_dboCustomer]`), and the subscriber name in `syssubscriptions` is upper case (`REPLLAB`) while `@@SERVERNAME` is `repllab`. Server names must be compared without regard to case.
 
-Still to measure: whether an article with a filter clause and no filter procedure (row 4) is filtered at all, in the snapshot or in the log reader.
+`measure-matrix.sql` measures the impact matrix; the results are in section 5 of `docs/analysis/step-1-analysis.md`.
+
+`measure-add-article.sh` and `measure-filter-clause.sh`, same instance and day. They change the lab (articles `NewA`, `NewB`, `NewC`):
+
+| # | Measure | Result |
+|---|---|---|
+| 9 | add an article to `SalesPub` (`immediate_sync = 1`) | refused without `@force_invalidate_snapshot = 1` (20607); the existing subscription is subscribed to it at once; the next snapshot covers the 3 articles, only the new one is delivered |
+| 10 | add an article to `SalesRef` (`immediate_sync = 0`) | accepted with no flag; the subscription is not extended, `sp_addsubscription @article` is needed; the next snapshot covers the new article alone |
+| 11 | `sp_addarticle` refused inside `TRY` | the transaction it opened stays open in the `CATCH` (`@@TRANCOUNT = 1`): the caller must roll back, otherwise what follows runs in it and is lost when the session ends |
+| 12 | filter clause given to `sp_addarticle`, no `sp_articlefilter` | the snapshot is filtered, the changes are not: a row inserted later that fails the clause reaches the subscriber. The export warns about it |

@@ -178,6 +178,10 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 			a.Filter = &model.Filter{Clause: filterClause}
 			if filterName != "" {
 				a.Filter.Procedure = &model.ObjectName{Schema: filterSchema, Name: filterName}
+			} else if filterClause != "" {
+				// Measured (lab/measure-filter-clause.sh): such a clause
+				// filters the snapshot, not the log reader.
+				e.warn("article %s.%s: filter clause without a filter procedure (sp_articlefilter); it filters the snapshot only, changes are replicated unfiltered", p.Name, a.Name)
 			}
 		}
 		if syncObjID != 0 && syncObjID != objID && !strings.HasPrefix(syncName, "syncobj_0x") {
