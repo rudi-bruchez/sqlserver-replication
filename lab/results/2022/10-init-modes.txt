@@ -1,0 +1,11 @@
+# Microsoft SQL Server 2022 (RTM-CU27-GDR) (KB5126934) - 16.0.4305.5 (X64)
+R|I1.support-only.create|ok|sync_type=2 nosync_type=1 status=2 subscription_seqno=0x0000003600000D280008
+R|I1.support-only.delivered|yes|row=101 errors_since_insert=none missing=[] extra=[]
+R|I1.support-only.gap|g1=no,g2=yes|drop=ok agent_rows_after_drop=0 readd=ok rows=111/112 errors_after_readd=none missing=[111] extra=[] sync_type=2 nosync_type=1 status=2 subscription_seqno=0x0000003600000DC0000D00000001
+R|I2.backup.create|ok|sync_type=2 nosync_type=2 status=2 subscription_seqno=0x0000003600000DE80007
+R|I2.backup.delivered|yes|row=201 errors_since_insert=none missing=[] extra=[]
+R|I2.backup.gap|g1=no,g2=no|drop=ok agent_rows_after_drop=0 readd=ok rows=211/212 errors_after_readd=14151 first=Replication-Replication Distribution Subsystem: agent repllab-Sales-m_ip-repllab-3672 failed. Violation of PRIMARY KEY constraint 'PK__m_t1__3213E83F961A8CE0'. missing=[211,212] extra=[] sync_type=2 nosync_type=2 status=2 subscription_seqno=0x0000003600000D28000100000002
+R|I3.lsn.create|ok|sync_type=2 nosync_type=3 status=2 subscription_seqno=0x0000003600000EB00007 backup_last_lsn=54000000336800001 converted=0x0000003600000D280001 roundtrip=equal brief_formula=0x260D0001120700010600 equals_I2_seqno_prefix=yes
+R|I3.lsn.delivered|yes|row=301 errors_since_insert=none missing=[] extra=[]
+R|I3.lsn.gap|g1=no,g2=no|drop=ok agent_rows_after_drop=0 readd=ok rows=311/312 errors_after_readd=14151 first=Replication-Replication Distribution Subsystem: agent repllab-Sales-m_ip-repllab-3674 failed. Violation of PRIMARY KEY constraint 'PK__m_t1__3213E83F961A8CE0'. missing=[311,312] extra=[] sync_type=2 nosync_type=3 status=2 subscription_seqno=0x0000003600000D28000100000002
+R|TOTAL|9
