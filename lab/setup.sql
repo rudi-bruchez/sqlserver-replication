@@ -1,4 +1,4 @@
--- Lab replication for replcfg: local distributor, publisher and subscriber on one
+-- Lab replication for sqlrepl: local distributor, publisher and subscriber on one
 -- SQL Server Developer instance (Linux container, SQL Agent enabled).
 -- Run as sa. Idempotent only on a fresh instance; use teardown.sql to start over.
 SET NOCOUNT ON;

@@ -33,13 +33,13 @@ func TestQuoteName(t *testing.T) {
 
 // TestQueriesParse checks the syntax of every query with SET PARSEONLY, which
 // does not resolve object names: any SQL Server instance will do, even one
-// with no replication. Set REPLCFG_TEST_DSN to run it, for example
+// with no replication. Set SQLREPL_TEST_DSN to run it, for example
 // sqlserver://localhost/SQLEXPRESS, or lpc:localhost\SQLEXPRESS for a local
 // instance without TCP.
 func TestQueriesParse(t *testing.T) {
-	d := os.Getenv("REPLCFG_TEST_DSN")
+	d := os.Getenv("SQLREPL_TEST_DSN")
 	if d == "" {
-		t.Skip("REPLCFG_TEST_DSN not set")
+		t.Skip("SQLREPL_TEST_DSN not set")
 	}
 	db, err := sql.Open("sqlserver", d)
 	if err != nil {

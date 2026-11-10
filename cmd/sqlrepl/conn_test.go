@@ -38,7 +38,7 @@ func TestDSN(t *testing.T) {
 			t.Errorf("%s: password not preserved", s)
 		}
 		q := u.Query()
-		if q.Get("app name") != "replcfg" {
+		if q.Get("app name") != "sqlrepl" {
 			t.Errorf("%s: missing app name", s)
 		}
 		for k, v := range c.query {

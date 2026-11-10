@@ -5,17 +5,17 @@ Improving and managing SQL Server replication
 
 - `stored-procedures/`: source of the SQL Server 2019 replication system procedures, for reference.
 - `docs/analysis/step-1-analysis.md`: where the replication configuration lives, how to decode it, and which changes invalidate the snapshot or reinitialize subscriptions.
-- `cmd/replcfg`: a tool that manages transactional replication as a declarative file. Only the export is implemented.
+- `cmd/sqlrepl`: a tool that manages transactional replication as a declarative file. Only the export is implemented.
 
-## replcfg export
+## sqlrepl export
 
 Reads a publication database, its publications, articles, push subscriptions and agents, and writes them as YAML. It only runs `SELECT` statements, on the publisher and on the distributor.
 
 Scope: transactional replication, push subscriptions, SQL Server publisher. Anything else found (pull subscriptions, updatable subscriptions, peer-to-peer, snapshot publications) is reported under `warnings`.
 
 ```
-go build ./cmd/replcfg
-replcfg export -publisher PUBSRV -database Sales -o sales.yaml
+go build ./cmd/sqlrepl
+sqlrepl export -publisher PUBSRV -database Sales -o sales.yaml
 ```
 
 Options:
@@ -26,7 +26,7 @@ Options:
 | `-database` | publication database |
 | `-distributor` | distributor instance; by default, the distributor registered at the publisher |
 | `-publisher-name` | publisher name registered at the distributor, when it differs from `@@SERVERNAME` (publication database in an availability group) |
-| `-user` | SQL Server login, password in `REPLCFG_PASSWORD`; Windows authentication by default |
+| `-user` | SQL Server login, password in `SQLREPL_PASSWORD`; Windows authentication by default |
 | `-param key=value` | extra go-mssqldb connection parameter, repeatable (`-param encrypt=disable`) |
 | `-o` | output file; standard output by default |
 
@@ -40,10 +40,10 @@ Passwords are never exported. Where an agent uses SQL Server authentication, the
 go test ./...
 ```
 
-`TestQueriesParse` checks the syntax of every query against a real instance, with `SET PARSEONLY`, which does not need replication to be configured. It runs when `REPLCFG_TEST_DSN` is set:
+`TestQueriesParse` checks the syntax of every query against a real instance, with `SET PARSEONLY`, which does not need replication to be configured. It runs when `SQLREPL_TEST_DSN` is set:
 
 ```
-REPLCFG_TEST_DSN='server=lpc:localhost\SQLEXPRESS;encrypt=disable' go test ./...
+SQLREPL_TEST_DSN='server=lpc:localhost\SQLEXPRESS;encrypt=disable' go test ./...
 ```
 
 `lab/` builds a test replication in a SQL Server Developer container and holds the measurements made on it (`lab/README.md`).

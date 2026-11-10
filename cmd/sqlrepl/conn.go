@@ -41,7 +41,7 @@ func dsn(server, database string, p connParams) (string, error) {
 		u.User = url.UserPassword(p.User, p.Password)
 	}
 	q := url.Values{}
-	q.Set("app name", "replcfg")
+	q.Set("app name", "sqlrepl")
 	if database != "" {
 		q.Set("database", database)
 	}

@@ -18,7 +18,7 @@ lab/start.sh          # recreates the container repllab (127.0.0.1:11980) and ru
 Export it:
 
 ```
-REPLCFG_PASSWORD=$MSSQL_SA_PASSWORD replcfg export -publisher 'tcp:127.0.0.1,11980' \
+SQLREPL_PASSWORD=$MSSQL_SA_PASSWORD sqlrepl export -publisher 'tcp:127.0.0.1,11980' \
     -distributor 'tcp:127.0.0.1,11980' -database Sales -user sa -param encrypt=disable
 ```
 

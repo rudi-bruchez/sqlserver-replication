@@ -1,4 +1,4 @@
-// Command replcfg manages the configuration of SQL Server transactional
+// Command sqlrepl manages the configuration of SQL Server transactional
 // replication as a declarative file.
 //
 // Only the export is implemented: it reads a publication database, its
@@ -25,12 +25,12 @@ import (
 	"github.com/rudi-bruchez/sqlserver-replication/internal/reader"
 )
 
-const usage = `replcfg manages SQL Server transactional replication as a declarative file.
+const usage = `sqlrepl manages SQL Server transactional replication as a declarative file.
 
 Usage:
-  replcfg export -publisher SERVER -database DB [options]
+  sqlrepl export -publisher SERVER -database DB [options]
 
-Run "replcfg export -h" for the export options.
+Run "sqlrepl export -h" for the export options.
 `
 
 func main() {
@@ -53,7 +53,7 @@ func main() {
 		if errors.Is(err, flag.ErrHelp) {
 			return
 		}
-		fmt.Fprintln(os.Stderr, "replcfg:", err)
+		fmt.Fprintln(os.Stderr, "sqlrepl:", err)
 		os.Exit(1)
 	}
 }
@@ -78,7 +78,7 @@ func runExport(args []string, stdout io.Writer) error {
 	database := fs.String("database", "", "publication database")
 	distributor := fs.String("distributor", "", "distributor instance (default: the distributor registered at the publisher)")
 	publisherName := fs.String("publisher-name", "", "publisher name registered at the distributor (default: @@SERVERNAME of the publisher)")
-	user := fs.String("user", "", "SQL Server login; the password is read from REPLCFG_PASSWORD (default: Windows authentication)")
+	user := fs.String("user", "", "SQL Server login; the password is read from SQLREPL_PASSWORD (default: Windows authentication)")
 	output := fs.String("o", "", "output file (default: standard output)")
 	timeout := fs.Duration("timeout", 2*time.Minute, "overall timeout")
 	params := paramFlags{}
@@ -94,7 +94,7 @@ func runExport(args []string, stdout io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	cp := connParams{User: *user, Password: os.Getenv("REPLCFG_PASSWORD"), Extra: params}
+	cp := connParams{User: *user, Password: os.Getenv("SQLREPL_PASSWORD"), Extra: params}
 	pub, err := open(ctx, *publisher, *database, cp)
 	if err != nil {
 		return fmt.Errorf("publisher: %w", err)
