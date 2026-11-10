@@ -31,7 +31,7 @@
 # The script asserts the Step 3 controls (C1 leaves 0 rows on every kind; C4 on
 # nonimm-conc bulk copies m_t3 only and the marker survives) and exits 1 on a
 # mismatch, printing its rows on stderr as "row: ...". 20 rows.
-# Debugging only: M_ONLY='C3.imm-native C4.nonimm-conc' runs those rows alone (no controls).
+# Debugging only: M_ONLY='C3.imm-native C4.nonimm-conc' runs those rows alone (no controls, and the run exits 1 so that it is never accepted).
 set -euo pipefail
 shopt -s extglob
 . "$(dirname "$0")/../lib.sh"
@@ -140,8 +140,9 @@ sub_rows() { # all subscription rows of the publication
     sql_value "SELECT COUNT(*) FROM Sales.dbo.syssubscriptions s JOIN Sales.dbo.sysarticles a ON a.artid = s.artid JOIN Sales.dbo.syspublications p ON p.pubid = a.pubid WHERE p.name = N'$pub' AND s.srvid >= 0"
 }
 sub_count() { # TABLE : rows of the table at the subscriber, absent when it does not exist
-    sql_value "SELECT CASE WHEN OBJECT_ID(N'm_sub.dbo.$1') IS NULL THEN N'absent' ELSE N'present' END" \
-        | { read -r p; if [ "$p" = absent ]; then echo absent; else sql_value "SELECT COUNT(*) FROM m_sub.dbo.$1"; fi; }
+    local p
+    p=$(sql_value "SELECT CASE WHEN OBJECT_ID(N'm_sub.dbo.$1') IS NULL THEN N'absent' ELSE N'present' END") || return 1
+    if [ "$p" = absent ]; then echo absent; else sql_value "SELECT COUNT(*) FROM m_sub.dbo.$1"; fi
 }
 
 # Builds the publication of the kind with a delivered snapshot and an active push
@@ -196,27 +197,32 @@ c1() {
     r "C1.$kind" "$res" "ready=$rd flags=none rows_left=$left_rows agent_rows_left=$agents agent_job_left=$jobs"
 }
 
-# The drop of m_t2 shared by C2 and C3: prints "<ready> <art_status> <dropsub result> <ready before droparticle> <inv> <droparticle result>".
+# Fails the run when a variable named in the arguments is empty: errexit does not reach
+# into a $(...) that feeds a read, so an empty field must be refused here.
+need() { local v; for v in "$@"; do [ -n "${!v}" ] || { echo "06-structural: empty field $v" >&2; exit 1; }; done; }
+
+# The drop of m_t2 shared by C2 and C3; sets the globals rd st d rd2 inv d2: ready,
+# art_status, dropsub result, ready before droparticle, flag passed, droparticle result.
 drop_m_t2() {
-    local rd st d rd2 d2 inv
     rd=$(ready); st=$(art_status m_t2)
     d=$(try "EXEC sp_dropsubscription @publication = N'$pub', @article = N'm_t2', @subscriber = @@SERVERNAME, @destination_db = N'm_sub';")
     rd2=$(ready); inv=$rd2; [ "$inv" = none ] && inv=0
     d2=$(try "EXEC sp_droparticle @publication = N'$pub', @article = N'm_t2', @force_invalidate_snapshot = $inv;")
-    echo "$rd $st $d $rd2 $inv $d2"
+    need rd st d rd2 inv d2
 }
 
 c2() {
-    local rd st d rd2 inv d2 arts subs
-    read -r rd st d rd2 inv d2 <<<"$(drop_m_t2)"
+    local arts subs
+    drop_m_t2
     arts=$(sql_value "SELECT COUNT(*) FROM Sales.dbo.sysarticles a JOIN Sales.dbo.syspublications p ON p.pubid = a.pubid WHERE p.name = N'$pub'")
     subs=$(sub_rows)
     r "C2.$kind" "dropsub=$d,droparticle=$d2" "ready=$rd art_status=$st ready_before_droparticle=$rd2 flags=sp_droparticle:inv=$inv articles_left=$arts subscription_rows_left=$subs"
 }
 
 c3() {
-    local rd st d rd2 inv d2 mark add ext rd3 inv3 st_after bulk before after marker
-    read -r rd st d rd2 inv d2 <<<"$(drop_m_t2)"
+    local mark add ext rd3 inv3 st_after st_end bulk before after marker pub_rows
+    sql -Q "SET NOCOUNT ON; INSERT m_sub.dbo.m_t1 VALUES (99, 99)" </dev/null
+    drop_m_t2
     if [ "$d" != ok ] || [ "$d2" != ok ]; then
         r "C3.$kind" "dropsub=$d,droparticle=$d2" "ready=$rd art_status=$st ready_before_droparticle=$rd2 flags=sp_droparticle:inv=$inv not re-added"
         return
@@ -233,7 +239,10 @@ c3() {
     snapshot_and_wait "$mark"
     bulk=$(bulk_tables "$mark")
     after=$(sub_count m_t2)
-    r "C3.$kind" "dropsub=$d,droparticle=$d2,addarticle=$add,extend=$ext" "ready=$rd art_status=$st flags=sp_droparticle:inv=$inv,sp_addarticle:inv=$inv3 ready_before_addarticle=$rd3 m_t2_status_before_snapshot=$st_after bulk=[$bulk] m_t2_status_after=$(art_status m_t2) subscriber_m_t2_rows=$before then $after (publisher has 2)"
+    st_end=$(art_status m_t2)
+    marker=$(sql_value "SELECT COUNT(*) FROM m_sub.dbo.m_t1 WHERE id = 99")
+    pub_rows=$(sql_value "SELECT COUNT(*) FROM Sales.dbo.m_t2")
+    r "C3.$kind" "dropsub=$d,droparticle=$d2,addarticle=$add,extend=$ext" "ready=$rd art_status=$st flags=sp_droparticle:inv=$inv,sp_addarticle:inv=$inv3 ready_before_addarticle=$rd3 m_t2_status_before_snapshot=$st_after bulk=[$bulk] m_t2_status_after=$st_end subscriber_m_t2_rows=$before then $after (publisher has $pub_rows) m_t1_marker_survived=$marker"
 }
 
 c4() {
@@ -255,8 +264,9 @@ c4() {
 }
 
 c5() {
-    local rd d out drop err seen left agents jobs
+    local rd d out drop err seen left agents jobs job djob
     rd=$(ready)
+    job=$(sql_value "SELECT CONVERT(varchar(36), CONVERT(uniqueidentifier, a.job_id)) FROM distribution.dbo.MSdistribution_agents a WHERE $(agent_pred)")
     d=$(try "EXEC sp_dropsubscription @publication = N'$pub', @article = N'all', @subscriber = N'all';")
     # The output of sp_droppublication is read as text: an 18752 raised as an error is
     # caught, one printed as a message has no number, so its text is looked for.
@@ -271,7 +281,8 @@ SELECT N'RESULT=' + @e" </dev/null 2>&1)
     left=$(sql_value "SELECT COUNT(*) FROM Sales.dbo.syspublications WHERE name = N'$pub'")
     agents=$(sql_value "SELECT COUNT(*) FROM distribution.dbo.MSdistribution_agents a WHERE a.publication IN (N'$pub', N'ALL') AND a.subscriber_db = N'm_sub'")
     jobs=$(sql_value "SELECT COUNT(*) FROM msdb.dbo.sysjobs WHERE name LIKE N'%-$pub-%'")
-    r "C5.$kind" "dropsub=$d,droppublication=$drop" "ready=$rd flags=none 18752_seen=$seen publication_left=$left agent_rows_left=$agents jobs_left=$jobs"
+    djob=$(sql_value "SELECT COUNT(*) FROM msdb.dbo.sysjobs WHERE job_id = '$job'")
+    r "C5.$kind" "dropsub=$d,droppublication=$drop" "ready=$rd flags=none 18752_seen=$seen (one attempt; Sales keeps its other publications) publication_left=$left agent_rows_left=$agents dist_job_left_by_id=$djob jobs_named_after_publication_left=$jobs"
 }
 
 for c in $cases; do
@@ -293,10 +304,16 @@ if [ -z "${M_ONLY:-}" ]; then
     [ "${#rows[@]}" = 20 ] || control "${#rows[@]} rows, expected 20"
     for k in $kinds; do
         [[ $(field "C1.$k" 4) == *" rows_left=0 "* ]] || control "C1.$k does not leave 0 rows: $(field "C1.$k" 4)"
-        [[ $(field "C4.$k" 3) == addarticle=ok,extend=@(ok|none) ]] || control "C4.$k: $(field "C4.$k" 3)"
+        case $k in imm-*) want_ext=none ;; *) want_ext=ok ;; esac
+        [[ $(field "C4.$k" 3) == "addarticle=ok,extend=$want_ext" ]] || control "C4.$k: $(field "C4.$k" 3), expected extend=$want_ext"
     done
     [[ $(field C4.nonimm-conc 4) == *" bulk=[m_t3] "* ]] || control "C4.nonimm-conc does not bulk copy m_t3 only: $(field C4.nonimm-conc 4)"
     [[ $(field C4.nonimm-conc 4) == *" marker_survived=1 "* ]] || control "the marker does not survive on C4.nonimm-conc: $(field C4.nonimm-conc 4)"
+fi
+if [ -n "${M_ONLY:-}" ]; then
+    for row in "${rows[@]}"; do echo "row: $row" >&2; done
+    echo "06-structural: debug run (M_ONLY set), results not accepted" >&2
+    exit 1
 fi
 if [ "$bad" != 0 ]; then
     for row in "${rows[@]}"; do echo "row: $row" >&2; done
