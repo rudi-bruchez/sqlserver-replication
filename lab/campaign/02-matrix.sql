@@ -1,15 +1,18 @@
--- Impact matrix (docs/analysis/step-1-analysis.md, section 5), run after setup.sql
--- once both snapshots have been delivered. Each case runs inside a transaction
+-- Impact matrix (docs/analysis/step-1-analysis.md, section 5), run through
+-- lab/campaign.sh on the lab in its setup state (both snapshots delivered).
+-- Measures SalesPub and SalesRef, which it only touches inside transactions that
+-- are rolled back. Each case runs inside a transaction
 -- that is rolled back, so every case starts from the same state: valid
 -- snapshot, active subscription. It is run four times, with
 -- (@force_invalidate_snapshot, @force_reinit_subscription) = (0,0), (1,0),
--- (0,1), (1,1); a cell is "ok" or the error number.
+-- (0,1), (1,1); a cell is "ok" or the error number. One result row per case:
+-- R|<group><n>|f00=..,f10=..,f01=..,f11=..|<label>[; error text] (immediate_sync_ready=n).
 --   20607: needs @force_invalidate_snapshot = 1
 --   20608: needs @force_reinit_subscription = 1
 SET NOCOUNT ON;
 USE Sales;
 GO
-DECLARE @cases TABLE (id int IDENTITY, label nvarchar(200), stmt nvarchar(max));
+DECLARE @cases TABLE (id int IDENTITY, grp char(1), label nvarchar(200), stmt nvarchar(max), pub sysname);
 DECLARE @cp nvarchar(max) = N'EXEC sp_changepublication @publication = N''{pub}'', @property = N''{prop}'', @value = N''{val}'', @force_invalidate_snapshot = @i, @force_reinit_subscription = @r';
 DECLARE @ca nvarchar(max) = N'EXEC sp_changearticle @publication = N''{pub}'', @article = N''{art}'', @property = N''{prop}'', @value = N''{val}'', @force_invalidate_snapshot = @i, @force_reinit_subscription = @r';
 
@@ -40,9 +43,9 @@ INSERT @pubprops VALUES
  (N'SalesPub', N'enabled_for_internet', N'true'),
  (N'SalesPub', N'enabled_for_het_sub', N'true'),
  (N'SalesPub', N'ftp_address', N'ftp.example.com');
-INSERT @cases (label, stmt)
-SELECT pub + N' publication ' + prop + N' = ' + val,
-       REPLACE(REPLACE(REPLACE(@cp, N'{pub}', pub), N'{prop}', prop), N'{val}', val)
+INSERT @cases (grp, label, stmt, pub)
+SELECT 'P', pub + N' publication ' + prop + N' = ' + val,
+       REPLACE(REPLACE(REPLACE(@cp, N'{pub}', pub), N'{prop}', prop), N'{val}', val), pub
 FROM @pubprops;
 
 -- Article properties. Orders (SalesPub): no filter, custom commands.
@@ -66,25 +69,25 @@ INSERT @artprops VALUES
  (N'SalesPub', N'Orders', N'type', N'logbased manualfilter'),
  (N'SalesPub', N'Customer', N'filter', N'FLTR_Customer'),
  (N'SalesPub', N'Customer', N'description', N'changed');
-INSERT @cases (label, stmt)
-SELECT pub + N'.' + art + N' article ' + prop + N' = ' + val,
-       REPLACE(REPLACE(REPLACE(REPLACE(@ca, N'{pub}', pub), N'{art}', art), N'{prop}', prop), N'{val}', val)
+INSERT @cases (grp, label, stmt, pub)
+SELECT 'A', pub + N'.' + art + N' article ' + prop + N' = ' + val,
+       REPLACE(REPLACE(REPLACE(REPLACE(@ca, N'{pub}', pub), N'{art}', art), N'{prop}', prop), N'{val}', val), pub
 FROM @artprops;
 
 -- Filters on subscribed articles.
-INSERT @cases (label, stmt) VALUES
- (N'SalesPub.Orders add row filter (sp_articlefilter)',
-  N'EXEC sp_articlefilter @publication = N''SalesPub'', @article = N''Orders'', @filter_name = N''FLTR_Orders'', @filter_clause = N''Amount > 0'', @force_invalidate_snapshot = @i, @force_reinit_subscription = @r'),
- (N'SalesPub.Customer change row filter clause (sp_articlefilter)',
-  N'EXEC sp_articlefilter @publication = N''SalesPub'', @article = N''Customer'', @filter_name = N''FLTR_Customer'', @filter_clause = N''Country = ''''DE'''''', @force_invalidate_snapshot = @i, @force_reinit_subscription = @r'),
- (N'SalesPub.Customer drop row filter (sp_articlefilter NULL clause)',
-  N'EXEC sp_articlefilter @publication = N''SalesPub'', @article = N''Customer'', @filter_name = N''FLTR_Customer'', @filter_clause = NULL, @force_invalidate_snapshot = @i, @force_reinit_subscription = @r'),
- (N'SalesPub.Orders drop column (sp_articlecolumn)',
-  N'EXEC sp_articlecolumn @publication = N''SalesPub'', @article = N''Orders'', @column = N''Amount'', @operation = N''drop'', @force_invalidate_snapshot = @i, @force_reinit_subscription = @r'),
- (N'SalesPub.Customer add column back (sp_articlecolumn)',
-  N'EXEC sp_articlecolumn @publication = N''SalesPub'', @article = N''Customer'', @column = N''Notes'', @operation = N''add'', @force_invalidate_snapshot = @i, @force_reinit_subscription = @r'),
- (N'SalesRef.Product drop column (sp_articlecolumn)',
-  N'EXEC sp_articlecolumn @publication = N''SalesRef'', @article = N''Product'', @column = N''Label'', @operation = N''drop'', @force_invalidate_snapshot = @i, @force_reinit_subscription = @r');
+INSERT @cases (grp, label, stmt, pub) VALUES
+ ('F', N'SalesPub.Orders add row filter (sp_articlefilter)',
+  N'EXEC sp_articlefilter @publication = N''SalesPub'', @article = N''Orders'', @filter_name = N''FLTR_Orders'', @filter_clause = N''Amount > 0'', @force_invalidate_snapshot = @i, @force_reinit_subscription = @r', N'SalesPub'),
+ ('F', N'SalesPub.Customer change row filter clause (sp_articlefilter)',
+  N'EXEC sp_articlefilter @publication = N''SalesPub'', @article = N''Customer'', @filter_name = N''FLTR_Customer'', @filter_clause = N''Country = ''''DE'''''', @force_invalidate_snapshot = @i, @force_reinit_subscription = @r', N'SalesPub'),
+ ('F', N'SalesPub.Customer drop row filter (sp_articlefilter NULL clause)',
+  N'EXEC sp_articlefilter @publication = N''SalesPub'', @article = N''Customer'', @filter_name = N''FLTR_Customer'', @filter_clause = NULL, @force_invalidate_snapshot = @i, @force_reinit_subscription = @r', N'SalesPub'),
+ ('F', N'SalesPub.Orders drop column (sp_articlecolumn)',
+  N'EXEC sp_articlecolumn @publication = N''SalesPub'', @article = N''Orders'', @column = N''Amount'', @operation = N''drop'', @force_invalidate_snapshot = @i, @force_reinit_subscription = @r', N'SalesPub'),
+ ('F', N'SalesPub.Customer add column back (sp_articlecolumn)',
+  N'EXEC sp_articlecolumn @publication = N''SalesPub'', @article = N''Customer'', @column = N''Notes'', @operation = N''add'', @force_invalidate_snapshot = @i, @force_reinit_subscription = @r', N'SalesPub'),
+ ('F', N'SalesRef.Product drop column (sp_articlecolumn)',
+  N'EXEC sp_articlecolumn @publication = N''SalesRef'', @article = N''Product'', @column = N''Label'', @operation = N''drop'', @force_invalidate_snapshot = @i, @force_reinit_subscription = @r', N'SalesRef');
 
 DECLARE @flags TABLE (k int, i bit, r bit);
 INSERT @flags VALUES (0, 0, 0), (1, 1, 0), (2, 0, 1), (3, 1, 1);
@@ -110,13 +113,19 @@ BEGIN
     FETCH c INTO @id, @stmt, @k, @i, @r;
 END;
 
-SELECT c.id, c.label,
-       MAX(CASE WHEN r.k = 0 THEN r.cell END) AS f00,
-       MAX(CASE WHEN r.k = 1 THEN r.cell END) AS f10,
-       MAX(CASE WHEN r.k = 2 THEN r.cell END) AS f01,
-       MAX(CASE WHEN r.k = 3 THEN r.cell END) AS f11,
-       MAX(r.msg) AS other_error
+DECLARE @out TABLE (rn int IDENTITY, line nvarchar(4000));
+INSERT @out (line)
+SELECT CAST(N'R|' + c.grp + RIGHT(N'00' + CONVERT(nvarchar(10), ROW_NUMBER() OVER (PARTITION BY c.grp ORDER BY c.id)), 2) + N'|'
+       + N'f00=' + ISNULL(MAX(CASE WHEN r.k = 0 THEN r.cell END), N'?')
+       + N',f10=' + ISNULL(MAX(CASE WHEN r.k = 1 THEN r.cell END), N'?')
+       + N',f01=' + ISNULL(MAX(CASE WHEN r.k = 2 THEN r.cell END), N'?')
+       + N',f11=' + ISNULL(MAX(CASE WHEN r.k = 3 THEN r.cell END), N'?')
+       + N'|' + REPLACE(c.label, N'|', N'/')
+       + ISNULL(N'; ' + REPLACE(REPLACE(MAX(r.msg), N'|', N'/'), CHAR(10), N' '), N'')
+       + N' (immediate_sync_ready=' + CONVERT(nvarchar(2), (SELECT immediate_sync_ready FROM dbo.syspublications WHERE name = c.pub)) + N')' AS nvarchar(4000))
 FROM @cases AS c JOIN @res AS r ON r.id = c.id
-GROUP BY c.id, c.label
+GROUP BY c.id, c.grp, c.label, c.pub
 ORDER BY c.id;
+SELECT line FROM @out ORDER BY rn;
+SELECT 'R|TOTAL|' + CONVERT(varchar(10), COUNT(*)) FROM @out;
 GO

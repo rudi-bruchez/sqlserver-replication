@@ -1,0 +1,10 @@
+# Microsoft SQL Server 2022 (RTM-CU27-GDR) (KB5126934) - 16.0.4305.5 (X64)
+R|A1.snapshot-agent-row|0|job missing
+R|A2.default-schema-option|0x0000000000030073|status=16
+R|A3.schema-option-0x8|status=56|schema_option=0x000000000003007B
+R|A4.filter-clause-only|filter_proc=none|filter_clause=a > 0 type=1
+R|A5.named-filter-and-view|type=1|filter_proc=m_FLTR_t4 sync_object=m_V_t4
+R|A6.column-drop|unchanged|type 1 to 1, status 16 to 16
+R|A7.expected-errors|14043,15251|sp_articlefilter without filter_name, then upd_cmd SCALL without a procedure
+R|A8.schema-article-drop|1|article vCustomerFR
+R|TOTAL|8

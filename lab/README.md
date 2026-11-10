@@ -28,7 +28,7 @@ Stop the container when done (`SHUTDOWN` through sqlcmd, then `podman rm repllab
 
 ## Measured
 
-`measure-articles.sql`, SQL Server 2022 CU27, 2026-11-10:
+`lab/campaign/01-articles.sql`, SQL Server 2022 CU27, 2026-11-10:
 
 | # | Measure | Result |
 |---|---|---|
@@ -43,9 +43,9 @@ Stop the container when done (`SHUTDOWN` through sqlcmd, then `podman rm repllab
 
 Also seen while building the lab: SQL Server 2022 stores the generated command procedures schema-qualified (`CALL [dbo].[sp_MSins_dboCustomer]`), and the subscriber name in `syssubscriptions` is upper case (`REPLLAB`) while `@@SERVERNAME` is `repllab`. Server names must be compared without regard to case.
 
-`measure-matrix.sql` measures the impact matrix; the results are in section 5 of `docs/analysis/step-1-analysis.md`.
+`lab/campaign/02-matrix.sql` measures the impact matrix; the results are in section 5 of `docs/analysis/step-1-analysis.md`.
 
-`measure-add-article.sh` and `measure-filter-clause.sh`, same instance and day. They change the lab (articles `NewA`, `NewB`, `NewC`):
+`lab/campaign/03-add-article.sh` and `lab/campaign/04-filter-clause.sh`, same instance and day. They change the lab (articles `NewA`, `NewB`, `NewC`):
 
 | # | Measure | Result |
 |---|---|---|
