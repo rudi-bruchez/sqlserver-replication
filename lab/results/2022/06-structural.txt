@@ -1,0 +1,22 @@
+# Microsoft SQL Server 2022 (RTM-CU27-GDR) (KB5126934) - 16.0.4305.5 (X64)
+R|C1.imm-conc|ok|ready=1 flags=none rows_left=0 agent_rows_left=0 agent_job_left=0
+R|C1.imm-native|ok|ready=1 flags=none rows_left=0 agent_rows_left=0 agent_job_left=0
+R|C1.nonimm-conc|ok|ready=0 flags=none rows_left=0 agent_rows_left=0 agent_job_left=0
+R|C1.nonimm-native|ok|ready=0 flags=none rows_left=0 agent_rows_left=0 agent_job_left=0
+R|C2.imm-conc|dropsub=ok,droparticle=ok|ready=1 art_status=2 ready_before_droparticle=1 flags=sp_droparticle:inv=1 articles_left=1 subscription_rows_left=1
+R|C2.imm-native|dropsub=ok,droparticle=ok|ready=1 art_status=2 ready_before_droparticle=1 flags=sp_droparticle:inv=1 articles_left=1 subscription_rows_left=1
+R|C2.nonimm-conc|dropsub=ok,droparticle=ok|ready=0 art_status=2 ready_before_droparticle=0 flags=sp_droparticle:inv=0 articles_left=1 subscription_rows_left=1
+R|C2.nonimm-native|dropsub=ok,droparticle=ok|ready=0 art_status=2 ready_before_droparticle=0 flags=sp_droparticle:inv=0 articles_left=1 subscription_rows_left=1
+R|C3.imm-conc|dropsub=ok,droparticle=ok,addarticle=ok,extend=none|ready=1 art_status=2 flags=sp_droparticle:inv=1,sp_addarticle:inv=0 ready_before_addarticle=0 m_t2_status_before_snapshot=1 bulk=[m_t2] m_t2_status_after=2 subscriber_m_t2_rows=1 then 2 (publisher has 2)
+R|C3.imm-native|dropsub=ok,droparticle=ok,addarticle=ok,extend=none|ready=1 art_status=2 flags=sp_droparticle:inv=1,sp_addarticle:inv=0 ready_before_addarticle=0 m_t2_status_before_snapshot=1 bulk=[m_t2] m_t2_status_after=2 subscriber_m_t2_rows=1 then 2 (publisher has 2)
+R|C3.nonimm-conc|dropsub=ok,droparticle=ok,addarticle=ok,extend=ok|ready=0 art_status=2 flags=sp_droparticle:inv=0,sp_addarticle:inv=0 ready_before_addarticle=0 m_t2_status_before_snapshot=1 bulk=[m_t2] m_t2_status_after=2 subscriber_m_t2_rows=1 then 2 (publisher has 2)
+R|C3.nonimm-native|dropsub=ok,droparticle=ok,addarticle=ok,extend=ok|ready=0 art_status=2 flags=sp_droparticle:inv=0,sp_addarticle:inv=0 ready_before_addarticle=0 m_t2_status_before_snapshot=1 bulk=[m_t2] m_t2_status_after=2 subscriber_m_t2_rows=1 then 2 (publisher has 2)
+R|C4.imm-conc|addarticle=ok,extend=none|ready=1 flags=sp_addarticle:inv=1 m_t3_status_after_add=1 m_t3_status_after_extension=1 bulk=[m_t3] marker_survived=1 subscriber_m_t3_rows=1
+R|C4.imm-native|addarticle=ok,extend=none|ready=1 flags=sp_addarticle:inv=1 m_t3_status_after_add=1 m_t3_status_after_extension=1 bulk=[m_t3] marker_survived=1 subscriber_m_t3_rows=1
+R|C4.nonimm-conc|addarticle=ok,extend=ok|ready=0 flags=sp_addarticle:inv=0 m_t3_status_after_add=none m_t3_status_after_extension=1 bulk=[m_t3] marker_survived=1 subscriber_m_t3_rows=1
+R|C4.nonimm-native|addarticle=ok,extend=ok|ready=0 flags=sp_addarticle:inv=0 m_t3_status_after_add=none m_t3_status_after_extension=1 bulk=[m_t3] marker_survived=1 subscriber_m_t3_rows=1
+R|C5.imm-conc|dropsub=ok,droppublication=ok|ready=1 flags=none 18752_seen=no publication_left=0 agent_rows_left=0 jobs_left=0
+R|C5.imm-native|dropsub=ok,droppublication=ok|ready=1 flags=none 18752_seen=no publication_left=0 agent_rows_left=0 jobs_left=0
+R|C5.nonimm-conc|dropsub=ok,droppublication=ok|ready=0 flags=none 18752_seen=no publication_left=0 agent_rows_left=0 jobs_left=0
+R|C5.nonimm-native|dropsub=ok,droppublication=ok|ready=0 flags=none 18752_seen=no publication_left=0 agent_rows_left=0 jobs_left=0
+R|TOTAL|20
