@@ -11,7 +11,7 @@ cleaned=0
 cleanup() {
     [ "$cleaned" = 1 ] && return
     cleaned=1
-    sql >/dev/null 2>&1 <<'SQL' || true
+    sql >&2 <<'SQL' || true
 SET NOCOUNT ON;
 USE Sales;
 BEGIN TRY IF EXISTS (SELECT 1 FROM dbo.syspublications WHERE name = N'm_fc')
@@ -25,11 +25,21 @@ BEGIN
     DROP DATABASE m_fc_sub;
 END
 SQL
-    podman exec repllab find /var/opt/mssql/data/ReplData/unc -mindepth 1 -maxdepth 1 -iname '*_m_*' -exec rm -rf {} + >/dev/null 2>&1 || true
+    podman exec repllab find /var/opt/mssql/data/ReplData/unc -mindepth 1 -maxdepth 1 -iname '*_m_*' -exec rm -rf {} + >&2 || true
 }
 trap cleanup EXIT
 
-cleanup; cleaned=0
+# Leftovers of an earlier run are not absorbed: they fail this run (the exit guard),
+# and the trap removes them.
+left=$(sql_value "SELECT (SELECT COUNT(*) FROM Sales.dbo.syspublications WHERE name = N'm_fc') + (SELECT COUNT(*) FROM sys.databases WHERE name = N'm_fc_sub') + (SELECT COUNT(*) FROM Sales.sys.objects WHERE name LIKE N'm\_%' ESCAPE N'\')") \
+    || exit 1
+left_files=$(podman exec repllab find /var/opt/mssql/data/ReplData/unc -mindepth 1 -maxdepth 1 -iname '*_m_*')
+if [ "$left" != 0 ] || [ -n "$left_files" ]; then
+    echo "04-filter-clause: leftovers of an earlier run (objects=$left files=$left_files); removing them and failing" >&2
+    exit 1
+fi
+
+mark0=$(sql_value "SELECT CONVERT(varchar(23), SYSDATETIME(), 121)")
 
 sql <<'SQL'
 SET NOCOUNT ON;
@@ -54,7 +64,9 @@ EXEC sp_startpublication_snapshot @publication = N'm_fc';
 GO
 SQL
 
-wait_until 180 "SELECT CASE WHEN OBJECT_ID(N'm_fc_sub.dbo.m_fc_t') IS NOT NULL THEN 1 ELSE 0 END" \
+# The table exists once the schema script ran, before the data is copied: wait for
+# the distribution agent of m_fc_sub to report the delivery of the snapshot.
+wait_until 180 "SELECT CASE WHEN EXISTS (SELECT 1 FROM distribution.dbo.MSdistribution_history h JOIN distribution.dbo.MSdistribution_agents a ON a.id = h.agent_id WHERE a.subscriber_db = N'm_fc_sub' AND h.time >= '$mark0' AND h.comments LIKE N'Delivered snapshot%') THEN 1 ELSE 0 END" \
     || { echo "snapshot not delivered" >&2; exit 1; }
 snap_rows=$(sql_value "SELECT ISNULL(STRING_AGG(CONVERT(nvarchar(10), id), ',') WITHIN GROUP (ORDER BY id), 'none') FROM m_fc_sub.dbo.m_fc_t")
 

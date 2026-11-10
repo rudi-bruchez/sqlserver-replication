@@ -104,8 +104,12 @@ END TRY BEGIN CATCH SET @e1 = ERROR_NUMBER(); IF @@TRANCOUNT > 0 ROLLBACK; END C
 BEGIN TRY
     EXEC sp_changearticle @publication = N'm_probe', @article = N'm_t1', @property = N'upd_cmd', @value = N'SCALL';
 END TRY BEGIN CATCH SET @e2 = ERROR_NUMBER(); IF @@TRANCOUNT > 0 ROLLBACK; END CATCH;
-INSERT @r VALUES ('A7.expected-errors', CONVERT(varchar(10), @e1) + ',' + CONVERT(varchar(10), @e2),
-       'sp_articlefilter without filter_name, then upd_cmd SCALL without a procedure');
+BEGIN TRY
+    INSERT @r VALUES ('A7.expected-errors', CONVERT(varchar(10), @e1) + ',' + CONVERT(varchar(10), @e2),
+           'sp_articlefilter without filter_name, then upd_cmd SCALL without a procedure');
+END TRY BEGIN CATCH
+    INSERT @r VALUES ('A7.expected-errors', CONVERT(varchar(10), ERROR_NUMBER()), LEFT(ERROR_MESSAGE(), 400));
+END CATCH;
 
 -- 8. sysschemaarticles.pre_creation_cmd for the default 'drop': 1, as in sysarticles
 --    (read only, on the lab's own schema article).
@@ -117,15 +121,15 @@ END TRY BEGIN CATCH
     INSERT @r VALUES ('A8.schema-article-drop', CONVERT(varchar(10), ERROR_NUMBER()), LEFT(ERROR_MESSAGE(), 400));
 END CATCH;
 
--- Cleanup, before the rows are printed.
+SELECT CAST('R|' + id + '|' + result + '|' + detail AS nvarchar(4000)) FROM @r
+UNION ALL SELECT 'R|TOTAL|' + CONVERT(varchar(10), COUNT(*)) FROM @r;
+GO
+-- Cleanup, in its own batch so that it runs even when the cases batch aborts.
+USE Sales;
 BEGIN TRY
     EXEC sp_droppublication @publication = N'm_probe';
 END TRY BEGIN CATCH
-    INSERT @r VALUES ('CLEANUP.droppublication', CONVERT(varchar(10), ERROR_NUMBER()), LEFT(ERROR_MESSAGE(), 400));
     IF @@TRANCOUNT > 0 ROLLBACK;
 END CATCH;
 DROP TABLE IF EXISTS dbo.m_t1, dbo.m_t2, dbo.m_t3, dbo.m_t4, dbo.m_t5;
-
-SELECT CAST('R|' + id + '|' + result + '|' + detail AS nvarchar(4000)) FROM @r
-UNION ALL SELECT 'R|TOTAL|' + CONVERT(varchar(10), COUNT(*)) FROM @r;
 GO
