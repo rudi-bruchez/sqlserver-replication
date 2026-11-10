@@ -73,10 +73,10 @@ Interfaces:
 
 ```
 go build ./cmd/sqlrepl && go vet ./... && test -z "$(gofmt -l .)" && go test ./... && \
-left=$(git grep -n -I -e replcfg -e REPLCFG -- . ':!docs/superpowers/') && test -z "$left" && echo RENAME-OK
+{ left=$(git grep -n -I -e replcfg -e REPLCFG -- . ':!docs/superpowers/'); test -z "$left"; } && echo RENAME-OK
 ```
 
-Expected: the last line printed is `RENAME-OK`. `git grep` searches every tracked text file; `docs/superpowers/` keeps the old name where the spec and plans describe the rename. If anything remains, `$left` is printed by rerunning `git grep` and the step is not done.
+Expected: the last line printed is `RENAME-OK`. `git grep` exits 1 when nothing matches, hence the braces. It searches every tracked text file; `docs/superpowers/` keeps the old name where the spec and plans describe the rename. If anything remains, `$left` is printed by rerunning `git grep` and the step is not done.
 - [ ] Step 6: Commit.
 
 ### Task 2: Campaign runner and its self-test
