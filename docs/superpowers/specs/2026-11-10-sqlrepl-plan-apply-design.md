@@ -275,7 +275,7 @@ The export must read what the plan manages, since the plan compares against it:
 
 ## Measurement campaign
 
-The first block of the implementation plan, before the planner (Rudi's decision). Each item becomes a script under `lab/`, like `measure-matrix.sql`, run on 2019, 2022 and 2025, its results recorded per version in `lab/README.md` and in the cost table:
+The first block of the implementation plan, before the planner (Rudi's decision). Each item becomes a script under `lab/`, like `measure-matrix.sql`, written so that it runs unchanged on every supported version. The campaign runs on 2022 first, and the engine is built on those results; the scripts are then replayed on 2019 and 2025, and the support claim for those versions holds once they have run and their differences are in the cost table (Rudi's decision). Results are recorded per version in `lab/README.md` and in the cost table:
 
 1. the 20607 condition (`immediate_sync` with a generated snapshot, measured on 2022 for `sp_addarticle` and `sp_droparticle`) for every procedure that takes the flag, on each version;
 2. drops: `sp_droparticle`, `sp_dropsubscription` per article, `sp_droppublication`, their flags and costs, on each kind of publication;
