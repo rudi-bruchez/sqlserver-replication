@@ -17,7 +17,8 @@
 #   truncated no R| line of exactly 256 characters (sqlcmd's cut of a max column);
 #   uncaught  no "Msg n, Level 11-25" or "Sqlcmd:" line in the output (stderr included);
 #   residue   no m_ object, schema, type, index, login, linked server, publication,
-#             agent, profile, job, snapshot folder or file left;
+#             agent, profile, job, snapshot folder or file left, and no msdb job of a
+#             replication agent category that no agent table references;
 #   export    sqlrepl export of Sales identical before and after.
 # restart comes first: after a restart every other check reads a different instance.
 set -uo pipefail
@@ -68,6 +69,14 @@ lab_export() {
 }
 
 # Prints the residue found, as name=count pairs, or fails when a query fails.
+# sysjobs catches the jobs named after an m_ publication; orphan_agent_jobs catches
+# the others: a shared distribution agent's job is <publisher>-<db>-<subscriber>-N, with
+# no publication in the name, so an orphan (agent row gone, job left in msdb) escapes
+# the name test. It counts jobs of the three agent categories that none of the
+# MSlogreader_agents, MSsnapshot_agents, MSdistribution_agents tables references.
+# Pull-subscription agent jobs (Task 7, not yet measured) may be referenced differently
+# (the job lives on the subscriber, or MSdistribution_agents.job_id is another value):
+# Task 7 must check this guard against them before relying on it.
 # The m_ prefix is matched with an escaped LIKE: an unescaped _ matches master, model, msdb.
 residue() {
     local counts files
@@ -94,7 +103,13 @@ SELECT CONCAT(
   ' MSdistribution_agents=',  (SELECT COUNT(*) FROM distribution.dbo.MSdistribution_agents
                                 WHERE publication LIKE @p ESCAPE N'\' OR subscriber_db LIKE @p ESCAPE N'\'),
   ' MSagent_profiles=',       (SELECT COUNT(*) FROM msdb.dbo.MSagent_profiles WHERE profile_name LIKE @p ESCAPE N'\'),
-  ' sysjobs=',                (SELECT COUNT(*) FROM msdb.dbo.sysjobs WHERE name LIKE N'%-m\_%' ESCAPE N'\'))") || return 1
+  ' sysjobs=',                (SELECT COUNT(*) FROM msdb.dbo.sysjobs WHERE name LIKE N'%-m\_%' ESCAPE N'\'),
+  ' orphan_agent_jobs=',      (SELECT COUNT(*) FROM msdb.dbo.sysjobs j
+                                 JOIN msdb.dbo.syscategories c ON c.category_id = j.category_id
+                                WHERE c.name IN (N'REPL-LogReader', N'REPL-Snapshot', N'REPL-Distribution')
+                                  AND j.job_id NOT IN (SELECT job_id FROM distribution.dbo.MSlogreader_agents WHERE job_id IS NOT NULL)
+                                  AND j.job_id NOT IN (SELECT job_id FROM distribution.dbo.MSsnapshot_agents WHERE job_id IS NOT NULL)
+                                  AND j.job_id NOT IN (SELECT job_id FROM distribution.dbo.MSdistribution_agents WHERE job_id IS NOT NULL)))") || return 1
     # Snapshot folders are named <PUBLISHER>_<DATABASE>_<PUBLICATION>, upper case;
     # matched in any case all the same, as are files at any depth under data.
     files=$(podman exec repllab find /var/opt/mssql/data/ReplData/unc -iname '*_m_*' 2>&1) || {
