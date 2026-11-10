@@ -124,35 +124,56 @@ The article `type` does not say whether the filter procedure or the synchronizat
 
 This matrix matters because of how the procedures behave. A `sp_change*` call with `@force_invalidate_snapshot = 0` and `@force_reinit_subscription = 0` fails without changing anything when the change requires either flag [L]. The plan must know in advance which flags to pass, and say so.
 
+The tables below are measured [X] by `lab/measure-matrix.sql`, on SQL Server 2022 CU27, 2026-11-10. Each case runs four times, once per combination of the two flags, inside a transaction that is rolled back, from the same state: snapshot delivered, push subscription active. Two publications are measured, because the result depends on `immediate_sync`:
+
+- `SalesPub`: `immediate_sync = 1` (`immediate_sync_ready = 1`), independent agent;
+- `SalesRef`: `immediate_sync = 0`, shared agent.
+
+The procedures raise two errors: 20607 asks for `@force_invalidate_snapshot = 1`, 20608 for `@force_reinit_subscription = 1`. Only `SalesPub` ever raised 20607. On `SalesRef`, a change that only affects the snapshot is accepted with no flag, and a change that needs a reinitialization needs that flag alone. Whether a kept snapshot (`immediate_sync`) is the condition, or the existence of snapshot files, has not been separated.
+
+Checked outside a transaction for one accepted case (`ins_cmd`) and one refused case (`pre_creation_cmd`): same result.
+
+Legend: "snapshot" = needs `@force_invalidate_snapshot = 1`; "reinit" = needs `@force_reinit_subscription = 1`; "online" = accepted with both flags at 0; "refused" = no flag combination is accepted, the error says why.
+
 ### Publication properties (`sp_changepublication`)
 
-| Property | New snapshot | Reinitialization | Source |
+| Property | `immediate_sync = 1` | `immediate_sync = 0` | Learn said |
 |---|---|---|---|
-| `sync_method` | yes | — | [L] *Change Publication and Article Properties*; the `sp_changepublication` page says `sync_mode`, which is the merge property name |
-| `alt_snapshot_folder`, `snapshot_in_defaultfolder`, `compress_snapshot` | yes | — | [L] both pages |
-| `enabled_for_internet`, `ftp_*` | yes | — | [L]; `enabled_for_internet` only appears on the *Change…* page |
-| `pre_snapshot_script`, `post_snapshot_script` | yes | needed to apply the script at the subscriber | [L] *Change…* |
-| `enabled_for_het_sub` | yes | — | [L]; not possible while subscriptions exist |
-| `working_directory` (`sp_changedistpublisher`) | yes | — | [L] *Change…* |
-| `description`, `retention`, `replicate_ddl`, `allow_push`, `allow_pull`, `allow_initialize_from_backup`, `allow_subscription_copy`, `allow_partition_switch`, `replicate_partition_switch`, `allow_drop`, `status` | not documented | not documented | presumed online **[M]** |
-| `immediate_sync`, `independent_agent`, `allow_anonymous` | not documented | not documented | **[M]**, first priority: these three change how an added article is initialized |
+| `description`, `retention`, `replicate_ddl`, `allow_pull`, `allow_initialize_from_backup`, `allow_partition_switch`, `allow_drop`, `status` | online | online | not documented |
+| `sync_method` | snapshot + reinit | reinit | snapshot only |
+| `alt_snapshot_folder`, `snapshot_in_defaultfolder`, `pre_snapshot_script`, `post_snapshot_script`, `ftp_address` | snapshot | online | snapshot; reinit for the scripts |
+| `compress_snapshot` | refused while no `alt_snapshot_folder` (21157) | | snapshot |
+| `enabled_for_internet` | refused while `ftp_address` is null (21158) | | snapshot |
+| `enabled_for_het_sub` | refused while subscriptions exist (20640) | | snapshot, and the same restriction |
+| `allow_push = false` | refused while push subscriptions exist (20012, with `(null)` in the message) | | not documented |
+| `allow_subscription_copy = true` | online | refused, needs `immediate_sync` (21210) | not documented |
+| `replicate_partition_switch = true` | refused while `allow_partition_switch` is false (21866) | | not documented |
+| `immediate_sync` | `false`: online | `true`: refused while `independent_agent` is false (21022) | not documented |
+| `independent_agent` | `false`: refused while `immediate_sync` is true (21022) | `true`: refused while subscriptions exist (20013) | not documented |
+| `allow_anonymous = true` | online | refused while `immediate_sync` is false (20011) | not documented |
 
-Dependencies between properties [L]: `allow_anonymous = true` requires `immediate_sync = true`, which in turn requires `independent_agent = true`. The plan must order changes accordingly: enable from the bottom of the chain up, disable from the top down [I].
+Consequences for the plan:
+
+- The dependency chain of Learn is confirmed: `allow_anonymous` needs `immediate_sync`, which needs `independent_agent`. Disabling goes from the top down, each step online.
+- `independent_agent` cannot change while the publication has subscriptions, in either direction. Enabling `immediate_sync` on a shared-agent publication with subscriptions therefore means dropping the subscriptions, changing `independent_agent`, then `immediate_sync`, and adding the subscriptions back, which reinitializes them. The plan must show it as such, not as two property changes.
+- `alt_snapshot_folder` must be set before `compress_snapshot`, `ftp_address` before `enabled_for_internet`, `allow_partition_switch` before `replicate_partition_switch`.
+- `working_directory` (`sp_changedistpublisher`) is not measured yet.
 
 ### Article properties (`sp_changearticle` and related procedures)
 
-| Property | Snapshot | Reinit. | Source |
+| Property or operation | `immediate_sync = 1` | `immediate_sync = 0` | Learn said |
 |---|---|---|---|
-| `description` | — | — | [L] the only property changeable in P2P along with the commands, so presumed online |
-| `schema_option` | yes | — | [L] both pages; writing replaces the whole mask instead of applying it bitwise, so the plan must send the complete value |
-| `pre_creation_cmd` | yes | — | [L] both pages |
-| `ins_cmd`, `upd_cmd`, `del_cmd` | yes | yes | [L] both pages |
-| `dest_table`, `destination_owner` | yes | yes | [L] both pages |
-| `status` | *Change…*: yes | `sp_changearticle`: yes | **contradiction [M]** |
-| `filter` | *Change…*: yes | yes | `sp_changearticle` only asks for reinitialization **[M]** |
-| row filter (`sp_articlefilter`, add, change, drop) | yes | yes | [L] *Change…* |
-| column filter (`sp_articlecolumn`) | yes | yes | [L] *Change…*; the `sp_articlecolumn` page adds that only an unsubscribed article can be filtered **[M]** |
-| `creation_script`, `fire_triggers_on_snapshot`, `sync_object`, `type`, `identity_range`, `threshold` | not documented | not documented | **[M]** |
+| `description`, `ins_cmd`, `upd_cmd`, `del_cmd`, `fire_triggers_on_snapshot` | online | online | commands: snapshot + reinit |
+| `status` (`include column names`, `string literals`) | online | online | contradiction between the two pages |
+| `status = owner qualified` | refused, "no longer supported" (21023) | | |
+| `dest_table`, `destination_owner`, `pre_creation_cmd`, `schema_option`, `type`, `filter` | snapshot + reinit | reinit | `pre_creation_cmd`, `schema_option`: snapshot only |
+| `creation_script`, `sync_object` | snapshot | | not documented |
+| row filter (`sp_articlefilter`): add, change the clause, drop (NULL clause) | snapshot + reinit | | snapshot + reinit |
+| column filter (`sp_articlecolumn`), drop or add a column, on a subscribed article | snapshot + reinit | reinit | the `sp_articlecolumn` page says only an unsubscribed article can be filtered: wrong |
+
+Empty cells were not measured. `identity_range` and `threshold` concern updatable subscriptions and are out of scope.
+
+The commands change online, but the procedure they name must exist at the subscriber: the plan cannot check that from the publisher, and must say so when it changes a command to a CALL form. A procedure name given without a schema is stored without one (`CALL [sp_MSins_dboOrders]`), unlike the generated ones (`CALL [dbo].[sp_MSins_dboOrders]`); the plan must compare commands as stored.
 
 ### Structural operations
 
@@ -160,7 +181,7 @@ Dependencies between properties [L]: `allow_anonymous = true` requires `immediat
 |---|---|---|
 | Add an article | new snapshot; `@force_invalidate_snapshot = 1` if a snapshot exists; only the new article is sent, the publication is not reinitialized | [L] *Add Articles to and Drop Articles from Existing Publications* |
 | Add an article, `immediate_sync = false` | `sp_addsubscription` must be called for each existing subscription | [L] `sp_addpublication`, `@immediate_sync` parameter |
-| Add an article, `immediate_sync = true` | snapshot of the article alone or of the whole publication | **[M]** |
+| Add an article, `immediate_sync = true` | snapshot of the article alone or of the whole publication | **[M]**, not measured yet |
 | Drop an unsubscribed article | free; invalidates the snapshot | [L] |
 | Drop a subscribed article | not directly; drop the subscription to that article first (`sp_dropsubscription @article`) | [L] *Add Articles…*, *Manually remove replication* |
 | Drop the subscription to one article of an `immediate_sync` publication | it cannot be added back unless the subscriptions to **all** articles are dropped and re-added at once | [L] `sp_dropsubscription`, Remarks |
@@ -176,7 +197,7 @@ Proposed order for apply, inferred from the constraints above [I]:
 
 1. drop subscriptions to removed articles;
 2. drop removed articles;
-3. change publication properties, in the order imposed by the `allow_anonymous` → `immediate_sync` → `independent_agent` chain;
+3. change publication properties, in the order imposed by the `allow_anonymous` → `immediate_sync` → `independent_agent` chain and by the prerequisites of section 5 (`alt_snapshot_folder` before `compress_snapshot`…); a change of `independent_agent` is a drop and re-add of the subscriptions [X];
 4. change kept articles;
 5. add articles;
 6. add subscriptions, or subscriptions to the new articles when `immediate_sync = false`;
@@ -202,16 +223,17 @@ Proposed order for apply, inferred from the constraints above [I]:
 
 SQL Server Express can be a push subscriber, since the agent runs at the distributor, but neither a publisher nor a distributor [L] (tutorial *Prepare SQL Server for replication*). The measurements run on the lab of `lab/README.md`: one SQL Server 2022 Developer container, distributor, publisher and subscriber at once.
 
-Method: on a publication with a valid snapshot and an active subscription, call each `sp_change*` with both flags at 0. If the call fails, record the message; if it succeeds, the property changes online. Then replay with `@force_invalidate_snapshot = 1` alone. This yields the real matrix, property by property, in a few dozen scripted calls.
+Method: on a publication with a valid snapshot and an active subscription, call each `sp_change*` with the four combinations of the two flags, each in a transaction rolled back (`lab/measure-matrix.sql`). The export taken before and after the script must be identical, which checks that the rollbacks leave nothing behind.
 
 Priorities:
 
-1. the effect of `immediate_sync`, `independent_agent` and `allow_anonymous`;
+1. ~~the effect of `immediate_sync`, `independent_agent` and `allow_anonymous`~~ done [X];
 2. the snapshot generated when an article is added, depending on `immediate_sync`: article alone or whole publication;
-3. article `status` and `filter`, where the two Learn pages disagree;
-4. `sp_articlecolumn` on a subscribed article;
+3. ~~article `status` and `filter`, where the two Learn pages disagree~~ done [X];
+4. ~~`sp_articlecolumn` on a subscribed article~~ done [X];
 5. ~~decoding of `sysschemaarticles.pre_creation_cmd`~~ done [X];
-6. the undocumented article properties of section 5.
+6. ~~the undocumented article properties of section 5~~ done [X], except `working_directory`;
+7. whether a filter clause stored by `sp_addarticle` without a filter procedure filters anything.
 
 ## 10. Next step
 

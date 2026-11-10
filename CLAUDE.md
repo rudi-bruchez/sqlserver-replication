@@ -60,6 +60,6 @@ Source of the SQL Server 2019 replication system procedures, as a reference, not
 
 ## Before step 3
 
-The impact matrix (which property change needs `@force_invalidate_snapshot` or `@force_reinit_subscription`) comes from Microsoft Learn, which contradicts itself on several properties and documents nothing for `immediate_sync`, `independent_agent` and `allow_anonymous`. Measure it on the lab (`lab/`, method in section 9 of the analysis document) before writing the plan logic, and record in the matrix where each entry came from.
+The impact matrix (which property change needs `@force_invalidate_snapshot` or `@force_reinit_subscription`) is measured on the lab (`lab/measure-matrix.sql`, section 5 of the analysis document). Microsoft Learn was wrong on several entries (commands and `status` change online; `sync_method` needs a reinitialization; `sp_articlecolumn` works on a subscribed article), and the snapshot flag is only ever asked by an `immediate_sync` publication. Take the plan logic from the measured tables, not from Learn. Still to measure before the plan handles added articles: section 9, items 2 and 7.
 
 Oracles for verification: `Export-DbaReplServerSetting` (dbatools, wraps RMO `ReplicationServer.Script()`) for the export, and RMO with `SqlExecutionModes.CaptureSql` for generated T-SQL.
