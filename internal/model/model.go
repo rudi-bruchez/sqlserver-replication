@@ -6,20 +6,35 @@
 // exported, only the name of the secret that will provide it at apply time.
 package model
 
-// FormatVersion is the version of the file format written by this package.
-const FormatVersion = 1
+// FormatVersion is the version of the file format written and read by this
+// package.
+const FormatVersion = 2
+
+// Ptr returns a pointer to v. Properties are pointers so that a loaded file
+// tells an omitted property (nil) from a zero value.
+func Ptr[T any](v T) *T { return &v }
 
 // Config is the root of the configuration file. It describes one publication
 // database and everything attached to it.
 type Config struct {
 	Version       int            `yaml:"version"`
 	Publisher     Publisher      `yaml:"publisher"`
-	Distributor   Distributor    `yaml:"distributor"`
+	Distributor   *Distributor   `yaml:"distributor,omitempty"`
 	Publications  []Publication  `yaml:"publications"`
 	AgentProfiles []AgentProfile `yaml:"agent_profiles,omitempty"`
 	// Warnings lists what the export found but cannot represent faithfully:
 	// out-of-scope features, undecoded bits, inconsistent rows.
 	Warnings []string `yaml:"warnings,omitempty"`
+	// Findings lists what the export found and how plan 3 must treat it,
+	// each with the path of the element concerned.
+	Findings []Finding `yaml:"findings,omitempty"`
+}
+
+// Finding is one observation of the export about a path of the model.
+type Finding struct {
+	Kind    string `yaml:"kind"`
+	Path    string `yaml:"path"`
+	Message string `yaml:"message"`
 }
 
 // Publisher identifies the published database.
@@ -48,43 +63,45 @@ type Distributor struct {
 	Server   string `yaml:"server"`
 	Database string `yaml:"database"`
 	// Retention of the distribution database, in hours (MSdistributiondbs).
-	MinRetentionHours     int `yaml:"min_retention_hours"`
-	MaxRetentionHours     int `yaml:"max_retention_hours"`
-	HistoryRetentionHours int `yaml:"history_retention_hours"`
+	MinRetentionHours     *int `yaml:"min_retention_hours,omitempty"`
+	MaxRetentionHours     *int `yaml:"max_retention_hours,omitempty"`
+	HistoryRetentionHours *int `yaml:"history_retention_hours,omitempty"`
 	// WorkingDirectory is the default snapshot folder for this publisher.
-	WorkingDirectory string `yaml:"working_directory"`
+	WorkingDirectory *string `yaml:"working_directory,omitempty"`
 	// PublisherConnection is how the distributor connects to the publisher
 	// (MSdistpublishers.security_mode, login, password).
-	PublisherConnection Connection `yaml:"publisher_connection"`
-	Trusted             bool       `yaml:"trusted"`
+	PublisherConnection *Connection `yaml:"publisher_connection,omitempty"`
+	Trusted             *bool       `yaml:"trusted,omitempty"`
 	// Properties holds msdb.dbo.MSdistributor as key/value pairs.
 	Properties map[string]string `yaml:"properties,omitempty"`
 }
 
 // Connection describes how an agent authenticates to a server.
 type Connection struct {
-	Security string `yaml:"security"` // windows or sql
-	Login    string `yaml:"login,omitempty"`
+	Security *string `yaml:"security,omitempty"` // windows or sql
+	Login    *string `yaml:"login,omitempty"`
 	// PasswordSecret names the secret holding the password, for SQL Server
 	// authentication. The export proposes a name; the value never leaves the
 	// server.
-	PasswordSecret string `yaml:"password_secret,omitempty"`
+	PasswordSecret *string `yaml:"password_secret,omitempty"`
 }
 
 // Agent describes a replication agent and its SQL Server Agent job.
 type Agent struct {
-	JobName string `yaml:"job_name,omitempty"`
+	JobName *string `yaml:"job_name,omitempty"`
 	// Profile is the name of the agent profile, empty when the agent uses
 	// the default profile of its type.
-	Profile string `yaml:"profile,omitempty"`
+	Profile *string `yaml:"profile,omitempty"`
 	// RunAs is the credential identity of the job step proxy, empty when the
 	// step runs as the SQL Server Agent service account.
-	RunAs      string      `yaml:"run_as,omitempty"`
+	RunAs      *string     `yaml:"run_as,omitempty"`
 	Connection *Connection `yaml:"connection,omitempty"`
-	Schedules  []Schedule  `yaml:"schedules,omitempty"`
+	// Schedules is compared as a list: a declared schedule is compared in
+	// full, so its own fields are plain values.
+	Schedules *[]Schedule `yaml:"schedules,omitempty"`
 	// Command is the agent command line of the job step, with password
 	// arguments masked. It can override profile parameters.
-	Command string `yaml:"command,omitempty"`
+	Command *string `yaml:"command,omitempty"`
 }
 
 // Schedule mirrors msdb.dbo.sysschedules. Dates are yyyymmdd and times
@@ -106,24 +123,24 @@ type Schedule struct {
 
 // Publication mirrors syspublications for one publication.
 type Publication struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description,omitempty"`
-	Type        string `yaml:"type"`   // transactional or snapshot
-	Status      string `yaml:"status"` // active or inactive
-	SyncMethod  string `yaml:"sync_method"`
+	Name        string  `yaml:"name"`
+	Description *string `yaml:"description,omitempty"`
+	Type        *string `yaml:"type,omitempty"`   // transactional or snapshot
+	Status      *string `yaml:"status,omitempty"` // active or inactive
+	SyncMethod  *string `yaml:"sync_method,omitempty"`
 	// RetentionHours is the subscription expiration period.
-	RetentionHours            int  `yaml:"retention_hours"`
-	IndependentAgent          bool `yaml:"independent_agent"`
-	ImmediateSync             bool `yaml:"immediate_sync"`
-	AllowPush                 bool `yaml:"allow_push"`
-	AllowPull                 bool `yaml:"allow_pull"`
-	AllowAnonymous            bool `yaml:"allow_anonymous"`
-	AllowSubscriptionCopy     bool `yaml:"allow_subscription_copy"`
-	AllowInitializeFromBackup bool `yaml:"allow_initialize_from_backup"`
-	ReplicateDDL              bool `yaml:"replicate_ddl"`
-	AllowDrop                 bool `yaml:"allow_drop"`
+	RetentionHours            *int  `yaml:"retention_hours,omitempty"`
+	IndependentAgent          *bool `yaml:"independent_agent,omitempty"`
+	ImmediateSync             *bool `yaml:"immediate_sync,omitempty"`
+	AllowPush                 *bool `yaml:"allow_push,omitempty"`
+	AllowPull                 *bool `yaml:"allow_pull,omitempty"`
+	AllowAnonymous            *bool `yaml:"allow_anonymous,omitempty"`
+	AllowSubscriptionCopy     *bool `yaml:"allow_subscription_copy,omitempty"`
+	AllowInitializeFromBackup *bool `yaml:"allow_initialize_from_backup,omitempty"`
+	ReplicateDDL              *bool `yaml:"replicate_ddl,omitempty"`
+	AllowDrop                 *bool `yaml:"allow_drop,omitempty"`
 
-	Snapshot      Snapshot       `yaml:"snapshot"`
+	Snapshot      *Snapshot      `yaml:"snapshot,omitempty"`
 	SnapshotAgent *Agent         `yaml:"snapshot_agent,omitempty"`
 	Articles      []Article      `yaml:"articles"`
 	Subscriptions []Subscription `yaml:"subscriptions,omitempty"`
@@ -131,22 +148,22 @@ type Publication struct {
 
 // Snapshot groups the snapshot-related publication properties.
 type Snapshot struct {
-	InDefaultFolder bool   `yaml:"in_default_folder"`
-	AltFolder       string `yaml:"alt_folder,omitempty"`
-	Compress        bool   `yaml:"compress"`
-	PreScript       string `yaml:"pre_script,omitempty"`
-	PostScript      string `yaml:"post_script,omitempty"`
-	FTP             *FTP   `yaml:"ftp,omitempty"`
+	InDefaultFolder *bool   `yaml:"in_default_folder,omitempty"`
+	AltFolder       *string `yaml:"alt_folder,omitempty"`
+	Compress        *bool   `yaml:"compress,omitempty"`
+	PreScript       *string `yaml:"pre_script,omitempty"`
+	PostScript      *string `yaml:"post_script,omitempty"`
+	FTP             *FTP    `yaml:"ftp,omitempty"`
 }
 
 // FTP holds the snapshot FTP settings, present when enabled_for_internet is
 // set.
 type FTP struct {
-	Address        string `yaml:"address,omitempty"`
-	Port           int    `yaml:"port,omitempty"`
-	Subdirectory   string `yaml:"subdirectory,omitempty"`
-	Login          string `yaml:"login,omitempty"`
-	PasswordSecret string `yaml:"password_secret,omitempty"`
+	Address        *string `yaml:"address,omitempty"`
+	Port           *int    `yaml:"port,omitempty"`
+	Subdirectory   *string `yaml:"subdirectory,omitempty"`
+	Login          *string `yaml:"login,omitempty"`
+	PasswordSecret *string `yaml:"password_secret,omitempty"`
 }
 
 // ObjectName is a schema-qualified object name.
@@ -157,34 +174,43 @@ type ObjectName struct {
 
 // Article mirrors one row of sysarticles or sysschemaarticles.
 type Article struct {
-	Name        string     `yaml:"name"`
-	Type        string     `yaml:"type"`
-	Source      ObjectName `yaml:"source"`
-	Destination ObjectName `yaml:"destination"`
-	Description string     `yaml:"description,omitempty"`
+	Name        string      `yaml:"name"`
+	Type        *string     `yaml:"type,omitempty"`
+	Source      ObjectName  `yaml:"source"`
+	Destination Destination `yaml:"destination"`
+	Description *string     `yaml:"description,omitempty"`
 
-	PreCreationCmd string   `yaml:"pre_creation_cmd"`
-	SchemaOptions  []string `yaml:"schema_options"`
-	CreationScript string   `yaml:"creation_script,omitempty"`
+	PreCreationCmd *string `yaml:"pre_creation_cmd,omitempty"`
+	// SchemaOptions lists the schema option names: an empty list is "no
+	// option", an omitted one is the default.
+	SchemaOptions  *[]string `yaml:"schema_options,omitempty"`
+	CreationScript *string   `yaml:"creation_script,omitempty"`
 
-	// The fields below only apply to table articles (sysarticles).
-	Active                 bool        `yaml:"active,omitempty"`
-	InsertColumnNames      bool        `yaml:"insert_column_names,omitempty"`
-	Parameterized          bool        `yaml:"parameterized,omitempty"`
+	// The fields below only apply to table articles (sysarticles). The
+	// active bit of sysarticles.status is runtime state and is not modelled.
+	InsertColumnNames      *bool       `yaml:"insert_column_names,omitempty"`
+	Parameterized          *bool       `yaml:"parameterized,omitempty"`
 	Commands               *Commands   `yaml:"commands,omitempty"`
 	Filter                 *Filter     `yaml:"filter,omitempty"`
 	SyncObject             *ObjectName `yaml:"sync_object,omitempty"`
-	FireTriggersOnSnapshot bool        `yaml:"fire_triggers_on_snapshot,omitempty"`
+	FireTriggersOnSnapshot *bool       `yaml:"fire_triggers_on_snapshot,omitempty"`
 	// Columns lists the published columns, only when the article is
-	// vertically filtered. Empty means every column is published.
+	// vertically filtered. Omitted and empty both mean every column.
 	Columns []string `yaml:"columns,omitempty"`
+}
+
+// Destination is the destination object of an article. Schema "" is a NULL
+// dest_owner.
+type Destination struct {
+	Schema *string `yaml:"schema,omitempty"`
+	Name   *string `yaml:"name,omitempty"`
 }
 
 // Commands holds how inserts, updates and deletes are propagated.
 type Commands struct {
-	Insert Command `yaml:"insert"`
-	Update Command `yaml:"update"`
-	Delete Command `yaml:"delete"`
+	Insert *Command `yaml:"insert,omitempty"`
+	Update *Command `yaml:"update,omitempty"`
+	Delete *Command `yaml:"delete,omitempty"`
 }
 
 // Command is one decoded ins_cmd, upd_cmd or del_cmd.
@@ -207,8 +233,8 @@ type Subscription struct {
 	// Articles lists the subscribed articles, only when the subscription
 	// does not cover every article of the publication.
 	Articles          []string `yaml:"articles,omitempty"`
-	Initialization    string   `yaml:"initialization"`
-	LoopbackDetection bool     `yaml:"loopback_detection,omitempty"`
+	Initialization    *string  `yaml:"initialization,omitempty"`
+	LoopbackDetection *bool    `yaml:"loopback_detection,omitempty"`
 	// DistributionAgent is set when the publication has an independent
 	// agent. Otherwise the subscription uses the shared agent of its
 	// subscriber database, listed under publisher.shared_distribution_agents.
@@ -218,15 +244,15 @@ type Subscription struct {
 // DistributionAgent extends Agent with the distribution-specific settings.
 type DistributionAgent struct {
 	Agent               `yaml:",inline"`
-	SubscriptionStreams int  `yaml:"subscription_streams,omitempty"`
-	MemoryOptimized     bool `yaml:"memory_optimized,omitempty"`
+	SubscriptionStreams *int  `yaml:"subscription_streams,omitempty"`
+	MemoryOptimized     *bool `yaml:"memory_optimized,omitempty"`
 }
 
 // AgentProfile is a user-defined agent profile (MSagent_profiles.type = 1).
 type AgentProfile struct {
 	Name        string            `yaml:"name"`
 	AgentType   string            `yaml:"agent_type"`
-	Description string            `yaml:"description,omitempty"`
-	Default     bool              `yaml:"default,omitempty"`
+	Description *string           `yaml:"description,omitempty"`
+	Default     *bool             `yaml:"default,omitempty"`
 	Parameters  map[string]string `yaml:"parameters"`
 }

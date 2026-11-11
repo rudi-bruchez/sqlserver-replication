@@ -23,20 +23,19 @@ type agentRow struct {
 // line and schedules. secret names the password secret when the agent uses
 // SQL Server authentication.
 func (e *exporter) agent(label string, r agentRow, secret string) (model.Agent, error) {
-	a := model.Agent{Profile: e.profileName(r.profileID)}
-	conn := model.Connection{Security: decode.SecurityMode(r.securityMode), Login: r.login}
+	a := model.Agent{Profile: model.Ptr(e.profileName(r.profileID))}
+	a.Connection = &model.Connection{Security: model.Ptr(decode.SecurityMode(r.securityMode)), Login: model.Ptr(r.login)}
 	if r.securityMode == 0 {
-		conn.PasswordSecret = secret
+		a.Connection.PasswordSecret = model.Ptr(secret)
 	}
-	a.Connection = &conn
 
 	if r.jobID == "" {
 		e.warn("%s: no SQL Server Agent job recorded", label)
 		return a, nil
 	}
-	var command string
+	var jobName, runAs, command string
 	var stepFound int
-	err := e.src.Distributor.QueryRowContext(e.ctx, qJob, r.jobID, r.stepUID).Scan(&a.JobName, &a.RunAs, &command, &stepFound)
+	err := e.src.Distributor.QueryRowContext(e.ctx, qJob, r.jobID, r.stepUID).Scan(&jobName, &runAs, &command, &stepFound)
 	if err == sql.ErrNoRows {
 		e.warn("%s: job %s recorded by replication no longer exists in msdb", label, r.jobID)
 		return a, nil
@@ -44,16 +43,21 @@ func (e *exporter) agent(label string, r agentRow, secret string) (model.Agent, 
 	if err != nil {
 		return a, err
 	}
+	a.JobName = model.Ptr(jobName)
 	if stepFound == 0 {
-		e.warn("%s: job %s has no replication step; command and run-as account not exported", label, a.JobName)
+		e.warn("%s: job %s has no replication step; command and run-as account not exported", label, jobName)
 	}
-	a.Command = maskPasswords(strings.TrimSpace(command))
+	a.RunAs = model.Ptr(runAs)
+	a.Command = model.Ptr(maskPasswords(strings.TrimSpace(command)))
 
 	rows, err := e.src.Distributor.QueryContext(e.ctx, qJobSchedules, r.jobID)
 	if err != nil {
 		return a, err
 	}
 	defer rows.Close()
+	// The job was read: no schedule is an empty list, not an omitted one.
+	schedules := []model.Schedule{}
+	a.Schedules = &schedules
 	for rows.Next() {
 		var s model.Schedule
 		var enabled, freqType, subdayType int
@@ -73,7 +77,7 @@ func (e *exporter) agent(label string, r agentRow, secret string) (model.Agent, 
 		} else {
 			s.Interval, s.SubdayInterval, s.RelativeInterval, s.RecurrenceFactor = 0, 0, 0, 0
 		}
-		a.Schedules = append(a.Schedules, s)
+		schedules = append(schedules, s)
 	}
 	return a, rows.Err()
 }
@@ -188,8 +192,8 @@ func (e *exporter) readDistributionAgents() error {
 		a, err := e.agent(label, f.row, "subscriber/"+subscriber+"/"+database)
 		return model.DistributionAgent{
 			Agent:               a,
-			SubscriptionStreams: f.streams,
-			MemoryOptimized:     f.memoryOptimized != 0,
+			SubscriptionStreams: model.Ptr(f.streams),
+			MemoryOptimized:     model.Ptr(f.memoryOptimized != 0),
 		}, err
 	}
 
@@ -201,7 +205,7 @@ func (e *exporter) readDistributionAgents() error {
 		for j := range p.Subscriptions {
 			s := &p.Subscriptions[j]
 			label := fmt.Sprintf("publication %s, subscription %s.%s", p.Name, s.Subscriber, s.Database)
-			if p.IndependentAgent {
+			if *p.IndependentAgent {
 				f := find(p.Name, s.Subscriber, s.Database)
 				if f == nil {
 					e.warn("%s: no push distribution agent found at the distributor", label)

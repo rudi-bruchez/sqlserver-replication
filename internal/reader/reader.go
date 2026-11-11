@@ -122,16 +122,17 @@ func (e *exporter) distQuery(q string) string {
 }
 
 func (e *exporter) readDistributor() error {
-	d := &e.cfg.Distributor
+	d := &model.Distributor{}
+	e.cfg.Distributor = d
 	db := e.src.Distributor
 	if err := db.QueryRowContext(e.ctx, qServerName).Scan(&d.Server); err != nil {
 		return err
 	}
 
 	var security, trusted int
-	var publisherType string
+	var workingDirectory, login, publisherType string
 	err := db.QueryRowContext(e.ctx, qDistPublisher, e.cfg.Publisher.Server).Scan(
-		&d.Database, &d.WorkingDirectory, &security, &d.PublisherConnection.Login, &trusted, &publisherType)
+		&d.Database, &workingDirectory, &security, &login, &trusted, &publisherType)
 	if err == sql.ErrNoRows {
 		return fmt.Errorf("publisher %q is not registered in msdb.dbo.MSdistpublishers at %s; "+
 			"if the publication database is in an availability group, pass the original publisher name",
@@ -140,21 +141,26 @@ func (e *exporter) readDistributor() error {
 	if err != nil {
 		return fmt.Errorf("msdb.dbo.MSdistpublishers at %s (is it a distributor?): %w", d.Server, err)
 	}
-	d.PublisherConnection.Security = decode.SecurityMode(security)
+	d.WorkingDirectory = model.Ptr(workingDirectory)
+	d.PublisherConnection = &model.Connection{Security: model.Ptr(decode.SecurityMode(security)), Login: model.Ptr(login)}
 	if security == 0 {
-		d.PublisherConnection.PasswordSecret = "publisher/" + e.cfg.Publisher.Server
+		d.PublisherConnection.PasswordSecret = model.Ptr("publisher/" + e.cfg.Publisher.Server)
 	}
-	d.Trusted = trusted != 0
+	d.Trusted = model.Ptr(trusted != 0)
 	if publisherType != "" && !strings.EqualFold(publisherType, "MSSQLSERVER") {
 		e.warn("publisher type %s is out of scope", publisherType)
 	}
 	e.dist = quoteName(d.Database)
 
+	var minRetention, maxRetention, historyRetention int
 	err = db.QueryRowContext(e.ctx, qDistributionDB, d.Database).Scan(
-		&d.MinRetentionHours, &d.MaxRetentionHours, &d.HistoryRetentionHours)
+		&minRetention, &maxRetention, &historyRetention)
 	if err != nil {
 		return fmt.Errorf("msdb.dbo.MSdistributiondbs: %w", err)
 	}
+	d.MinRetentionHours = model.Ptr(minRetention)
+	d.MaxRetentionHours = model.Ptr(maxRetention)
+	d.HistoryRetentionHours = model.Ptr(historyRetention)
 
 	rows, err := db.QueryContext(e.ctx, qDistributorProperties)
 	if err != nil {
@@ -259,8 +265,8 @@ func (e *exporter) collectProfiles() error {
 		e.cfg.AgentProfiles = append(e.cfg.AgentProfiles, model.AgentProfile{
 			Name:        p.name,
 			AgentType:   decode.AgentType(p.agentType),
-			Description: p.description,
-			Default:     p.isDefault,
+			Description: model.Ptr(p.description),
+			Default:     model.Ptr(p.isDefault),
 			Parameters:  params[id],
 		})
 	}

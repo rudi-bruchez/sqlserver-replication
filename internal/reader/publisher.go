@@ -23,38 +23,49 @@ func (e *exporter) readPublications() error {
 			independent, immediate, internet, push, pull, anonymous          int
 			syncTran, queuedTran, dts, subCopy, fromBackup, ddl              int
 			inDefault, compress                                              int
+			description, altFolder, preScript, postScript                    string
+			ftpAddress, ftpSubdirectory, ftpLogin                            string
 			p                                                                model.Publication
-			ftp                                                              model.FTP
 		)
-		err := rows.Scan(&pubid, &p.Name, &p.Description,
+		err := rows.Scan(&pubid, &p.Name, &description,
 			&replFreq, &status, &syncMethod, &retention,
 			&independent, &immediate, &internet, &push, &pull, &anonymous,
 			&syncTran, &queuedTran, &dts, &subCopy, &fromBackup, &ddl,
 			&options, &inDefault,
-			&p.Snapshot.AltFolder, &p.Snapshot.PreScript, &p.Snapshot.PostScript, &compress,
-			&ftp.Address, &ftpPort, &ftp.Subdirectory, &ftp.Login)
+			&altFolder, &preScript, &postScript, &compress,
+			&ftpAddress, &ftpPort, &ftpSubdirectory, &ftpLogin)
 		if err != nil {
 			return err
 		}
-		p.Type = decode.PublicationType(replFreq)
-		p.Status = decode.PublicationStatus(status)
-		p.SyncMethod = decode.SyncMethod(syncMethod)
-		p.RetentionHours = retention
-		p.IndependentAgent = independent != 0
-		p.ImmediateSync = immediate != 0
-		p.AllowPush = push != 0
-		p.AllowPull = pull != 0
-		p.AllowAnonymous = anonymous != 0
-		p.AllowSubscriptionCopy = subCopy != 0
-		p.AllowInitializeFromBackup = fromBackup != 0
-		p.ReplicateDDL = ddl != 0
-		p.AllowDrop = options&decode.PubOptionAllowDrop != 0
-		p.Snapshot.InDefaultFolder = inDefault != 0
-		p.Snapshot.Compress = compress != 0
+		p.Description = model.Ptr(description)
+		p.Type = model.Ptr(decode.PublicationType(replFreq))
+		p.Status = model.Ptr(decode.PublicationStatus(status))
+		p.SyncMethod = model.Ptr(decode.SyncMethod(syncMethod))
+		p.RetentionHours = model.Ptr(retention)
+		p.IndependentAgent = model.Ptr(independent != 0)
+		p.ImmediateSync = model.Ptr(immediate != 0)
+		p.AllowPush = model.Ptr(push != 0)
+		p.AllowPull = model.Ptr(pull != 0)
+		p.AllowAnonymous = model.Ptr(anonymous != 0)
+		p.AllowSubscriptionCopy = model.Ptr(subCopy != 0)
+		p.AllowInitializeFromBackup = model.Ptr(fromBackup != 0)
+		p.ReplicateDDL = model.Ptr(ddl != 0)
+		p.AllowDrop = model.Ptr(options&decode.PubOptionAllowDrop != 0)
+		p.Snapshot = &model.Snapshot{
+			InDefaultFolder: model.Ptr(inDefault != 0),
+			AltFolder:       model.Ptr(altFolder),
+			Compress:        model.Ptr(compress != 0),
+			PreScript:       model.Ptr(preScript),
+			PostScript:      model.Ptr(postScript),
+		}
 		if internet != 0 {
-			ftp.Port = ftpPort
-			ftp.PasswordSecret = "ftp/" + p.Name
-			p.Snapshot.FTP = &ftp
+			p.Snapshot.FTP = &model.FTP{
+				Address:        model.Ptr(ftpAddress),
+				Port:           model.Ptr(ftpPort),
+				Subdirectory:   model.Ptr(ftpSubdirectory),
+				Login:          model.Ptr(ftpLogin),
+				PasswordSecret: model.Ptr("ftp/" + p.Name),
+			}
 		}
 
 		if replFreq != 0 {
@@ -135,15 +146,16 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 			schemaOption                                                                         []byte
 			insCmd, updCmd, delCmd, filterClause, filterSchema, filterName                       string
 			syncSchema, syncName                                                                 string
+			t                                                                                    articleText
 			a                                                                                    model.Article
 		)
 		err := rows.Scan(&pubid, &artid, &a.Name, &typ, &status, &preCreation, &schemaOption,
-			&a.Description, &a.Source.Schema, &a.Source.Name,
-			&a.Destination.Schema, &a.Destination.Name,
+			&t.description, &a.Source.Schema, &a.Source.Name,
+			&t.destSchema, &t.destName,
 			&insCmd, &updCmd, &delCmd,
 			&filterClause, &filterSchema, &filterName,
 			&syncObjID, &objID, &syncSchema, &syncName,
-			&a.CreationScript, &fireTriggers, &tableColumns)
+			&t.creationScript, &fireTriggers, &tableColumns)
 		if err != nil {
 			return err
 		}
@@ -152,13 +164,12 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 			e.warn("article %s: publication id %d not found", a.Name, pubid)
 			continue
 		}
-		if err := e.fillCommon(&a, p.Name, typ, preCreation, schemaOption); err != nil {
+		if err := e.fillCommon(&a, p.Name, typ, preCreation, schemaOption, t); err != nil {
 			return err
 		}
 
-		a.Active = status&decode.ArticleStatusActive != 0
-		a.InsertColumnNames = status&decode.ArticleStatusInsertColumnNames != 0
-		a.Parameterized = status&decode.ArticleStatusParameterized != 0
+		a.InsertColumnNames = model.Ptr(status&decode.ArticleStatusInsertColumnNames != 0)
+		a.Parameterized = model.Ptr(status&decode.ArticleStatusParameterized != 0)
 		if u := decode.ArticleStatusUnknownBits(status); u != 0 {
 			e.warn("article %s.%s: undecoded bits in sysarticles.status: 0x%X", p.Name, a.Name, u)
 		}
@@ -187,7 +198,7 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 		if syncObjID != 0 && syncObjID != objID && !strings.HasPrefix(syncName, "syncobj_0x") {
 			a.SyncObject = &model.ObjectName{Schema: syncSchema, Name: syncName}
 		}
-		a.FireTriggersOnSnapshot = fireTriggers != 0
+		a.FireTriggersOnSnapshot = model.Ptr(fireTriggers != 0)
 
 		// sysarticlecolumns lists the published columns; the article is
 		// vertically filtered when it lists fewer columns than the table has.
@@ -210,11 +221,12 @@ func (e *exporter) readSchemaArticles() error {
 		var (
 			pubid, artid, typ, preCreation int
 			schemaOption                   []byte
+			t                              articleText
 			a                              model.Article
 		)
 		err := rows.Scan(&pubid, &artid, &a.Name, &typ, &preCreation, &schemaOption,
-			&a.Description, &a.Source.Schema, &a.Source.Name,
-			&a.Destination.Schema, &a.Destination.Name, &a.CreationScript)
+			&t.description, &a.Source.Schema, &a.Source.Name,
+			&t.destSchema, &t.destName, &t.creationScript)
 		if err != nil {
 			return err
 		}
@@ -223,7 +235,7 @@ func (e *exporter) readSchemaArticles() error {
 			e.warn("article %s: publication id %d not found", a.Name, pubid)
 			continue
 		}
-		if err := e.fillCommon(&a, p.Name, typ, preCreation, schemaOption); err != nil {
+		if err := e.fillCommon(&a, p.Name, typ, preCreation, schemaOption, t); err != nil {
 			return err
 		}
 		p.Articles = append(p.Articles, a)
@@ -231,23 +243,33 @@ func (e *exporter) readSchemaArticles() error {
 	return rows.Err()
 }
 
-func (e *exporter) fillCommon(a *model.Article, pub string, typ, preCreation int, schemaOption []byte) error {
-	a.Type = decode.ArticleType(typ)
-	a.PreCreationCmd = decode.PreCreationCmd(preCreation)
+// articleText holds the string columns shared by sysarticles and
+// sysschemaarticles, scanned before they are set as properties.
+type articleText struct {
+	description, destSchema, destName, creationScript string
+}
+
+func (e *exporter) fillCommon(a *model.Article, pub string, typ, preCreation int, schemaOption []byte, t articleText) error {
+	a.Type = model.Ptr(decode.ArticleType(typ))
+	a.Description = model.Ptr(t.description)
+	a.Destination = model.Destination{Schema: model.Ptr(t.destSchema), Name: model.Ptr(t.destName)}
+	a.CreationScript = model.Ptr(t.creationScript)
+	a.PreCreationCmd = model.Ptr(decode.PreCreationCmd(preCreation))
 	v, err := decode.SchemaOptionBytes(schemaOption)
 	if err != nil {
 		return fmt.Errorf("article %s.%s: %w", pub, a.Name, err)
 	}
-	a.SchemaOptions = decode.SchemaOptionNames(v)
+	// An empty list is written [], "no option"; nil would be "omitted".
+	a.SchemaOptions = model.Ptr(append([]string{}, decode.SchemaOptionNames(v)...))
 	if a.Source.Name == "" {
 		e.warn("article %s.%s: source object not found", pub, a.Name)
 	}
 	return nil
 }
 
-func command(s string) model.Command {
+func command(s string) *model.Command {
 	c := decode.ParseCommand(s)
-	m := model.Command{Mode: c.Mode}
+	m := &model.Command{Mode: c.Mode}
 	if c.Procedure != "" {
 		m.Procedure = &model.ObjectName{Schema: c.Schema, Name: c.Procedure}
 	}
@@ -322,8 +344,8 @@ func (e *exporter) readSubscriptions() error {
 		sub := model.Subscription{
 			Subscriber:        k.subscriber,
 			Database:          k.database,
-			Initialization:    decode.Initialization(s.syncType, s.nosync),
-			LoopbackDetection: s.loopback,
+			Initialization:    model.Ptr(decode.Initialization(s.syncType, s.nosync)),
+			LoopbackDetection: model.Ptr(s.loopback),
 		}
 		sort.Strings(s.articles)
 		if !slices.Equal(s.articles, e.articleNames[k.pubid]) {

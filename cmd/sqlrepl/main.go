@@ -20,8 +20,8 @@ import (
 	_ "github.com/microsoft/go-mssqldb"
 	_ "github.com/microsoft/go-mssqldb/namedpipe"
 	_ "github.com/microsoft/go-mssqldb/sharedmemory"
-	"gopkg.in/yaml.v3"
 
+	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/reader"
 )
 
@@ -124,7 +124,7 @@ func runExport(args []string, stdout io.Writer) error {
 		return err
 	}
 
-	out, err := yaml.Marshal(cfg)
+	out, err := model.Marshal(cfg)
 	if err != nil {
 		return err
 	}
