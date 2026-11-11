@@ -20,7 +20,7 @@ The tool is a single Go binary, `sqlrepl`. It replaces the configuration layer o
 
 ## Where this sits in sqlrepl
 
-`sqlrepl` is meant to analyze, plan, apply and monitor. This design covers the engine: `export` (exists), `plan` and `apply`. Each of the following gets its own design later, in this order:
+`sqlrepl` is meant to analyze, plan, apply and monitor. This design covers the engine: `export` (exists), `plan`, `apply`, and `snapshot` with its report (see "Snapshot runs and their report"). Each of the following gets its own design later, in this order:
 
 1. a local web GUI, served by `sqlrepl` on localhost: creation wizard, editing of an existing configuration with the cost of each change shown while editing, review and apply of a plan, monitoring view;
 2. monitoring: agent status, latency (tracer tokens), undistributed commands, agent errors;
@@ -166,6 +166,7 @@ Articles:
 - Add an article to a publication that keeps its snapshot (`immediate_sync`): `sp_addarticle` with `@force_invalidate_snapshot = 1`; existing subscriptions get it at once; the next snapshot is regenerated for the whole publication but only the new article is delivered (lab row 9). Cost: new snapshot.
 - Add an article to a publication without `immediate_sync`, `native` or `character` sync: `sp_addarticle` with no flag, then `sp_addsubscription @article` for each existing subscription (lab row 10). Cost: snapshot of the new article.
 - Add an article to a publication without `immediate_sync`, `concurrent` or `concurrent_c` sync (the most common transactional configuration): `sp_addsubscription @article = '<name>'` is refused with 14100, "Specify all articles when subscribing to a publication using concurrent snapshot processing" (panel); the extension is `sp_addsubscription @article = 'all'`. Measured: only the new article is delivered, existing articles are not sent again (panel, second round). Cost: snapshot of the new article.
+- Add an article to an `immediate_sync` publication without regenerating every table (Rudi's request, 2026-11-11). The rule above regenerates the snapshot of the whole publication: every published table is read again, under the locks its `sync_method` takes, even though only the new article is delivered. `plan -defer-full-snapshot` replaces it with: `sp_changepublication` `allow_anonymous` to false when it is true, then `immediate_sync` to false; `sp_addarticle` and the extension of the existing subscriptions by the rules for a publication without `immediate_sync`; the snapshot agent started for the new article only; then `immediate_sync` and `allow_anonymous` restored. The full generation is not avoided but deferred: with `immediate_sync` back on, the next snapshot (for a new subscriber or a reinitialization) covers every article again, and the plan says so. Which tables each step generates, the flags each step needs, and what a subscriber added after the restore receives are campaign item 12; until measured, `plan` refuses the option with "cost of deferred snapshot not measured". The default stays the rule above. My call: an option of `plan`, not a property of the file, because it is a choice of path, not of end state.
 - Drop an article: `sp_dropsubscription @article, @subscriber, @destination_db` for each subscription to it, then `sp_droparticle`. `sp_droparticle` needs `@force_invalidate_snapshot = 1` exactly when the publication has `immediate_sync` and its snapshot has been generated (`immediate_sync_ready = 1`): measured refused with 20607 there, accepted without the flag on an `immediate_sync` publication with no snapshot yet and on a publication without `immediate_sync` whose snapshot was delivered (panel, second round, consistent with analysis section 5). The same condition governs `sp_addarticle` and the `sp_change*` flags; the campaign confirms it per version. Cost: new snapshot where the flag is needed. A subscribed article is refused with 14046: the subscriptions to it are dropped first.
 - Drop an article and add it back in the same publication: `sp_droparticle` then `sp_addarticle`, both with the flags above; on an `immediate_sync` publication the existing subscriptions are extended to the re-added article automatically and it is delivered by the next snapshot (panel). The plan never re-adds the subscription alone with `@article = 'all'` after dropping it for one article: the article comes back active with no data delivered (panel).
 - Move an article between publications: drop from the source, add to the target, with the rules above (panel: executes).
@@ -233,6 +234,34 @@ On failure, `apply` reports what ran, what failed with the server's message, and
 
 The panel met a deadlock (1205) during a sequence of subscription drops and a "only one Log Reader Agent or log-related procedure" message (18752) during `sp_droppublication`. `apply` treats them as failures, stops, and lets the next `plan` resume; whether a bounded retry is safe is measured by the campaign. My call.
 
+## Snapshot runs and their report
+
+Rudi's request, 2026-11-11: a snapshot that does not block the publisher, and a report of each snapshot that can be exported.
+
+### Blocking
+
+How long a snapshot blocks writers on the published tables is decided by the publication's `sync_method`, which the file already carries:
+
+- `native` and `character` hold a shared lock on each table while it is copied, so writers to that table wait for the whole copy;
+- `concurrent` and `concurrent_c` lock only briefly at the start and the end of the generation (transactional publications only; refused on a snapshot publication with 22547, campaign row `SNAP.P12`);
+- `database snapshot` and `database snapshot character` read a database snapshot and take no lock on the published tables; they need the Enterprise or Developer edition, which `plan` checks as a precondition.
+
+`plan` warns when a transactional publication of the file uses `native` or `character`, with the cost of changing it: on an existing publication `sync_method` needs a reinitialization (analysis section 5). The omitted value stays the SQL Server default (`native`), per "Omitted properties". My call: a warning, not a changed default, because the file is the whole truth and a silent default would contradict the export.
+
+### The report
+
+Every snapshot that `apply` starts (step 5), and every snapshot started by `sqlrepl snapshot -publication <name>`, produces a report. The command `sqlrepl snapshot` starts the snapshot agent of one publication, waits like `apply` (`-wait`), and writes the report; it changes no configuration, so it needs no plan. The report is written as one self-contained HTML file (no external script, style or font, so it can be mailed or attached) next to a JSON file with the same data, which the GUI reads later. Option `-report <path>`; by default `snapshot-<publication>-<UTC timestamp>.html` in the current directory.
+
+What the report holds, and where each value comes from:
+
+- the run: publication, `sync_method`, the edition, start and end of the generation and of each subscription's delivery (snapshot and distribution agent history after a mark taken before the start);
+- per article: rows bulk copied and the time it took at each subscriber (distribution history, the "Bulk copied data into table" lines the campaign already reads), and the files generated with their size;
+- total size of the snapshot folder of this run, read on the distributor with `sys.dm_os_enumerate_filesystem` for the default folder; an alternate or UNC folder the distributor cannot list is reported as not readable, never guessed;
+- blocking: the sessions that waited on a lock held by the snapshot agent, and the sessions the agent waited on, with the object, the wait type and the longest wait. They are sampled from `sys.dm_os_waiting_tasks` and `sys.dm_exec_requests` on the publisher every second during the generation, for sessions whose blocker or blocked session is the snapshot agent's (identified by its `program_name`). A wait shorter than the sampling interval can be missed, and the report says so. My call: sampling rather than the `blocked_process_report` event, which needs the server option `blocked process threshold`; `sqlrepl` never changes a server option for a report. When that option is already set, the report also reads the event from a session it creates and drops for the run;
+- agent errors and retries during the run (agent history, `MSrepl_errors` after the mark).
+
+The report is read-only for the servers except for the snapshot itself and the sampling. What each source returns on each `sync_method`, and whether the sampling sees the blocking that a writer measures, are campaign item 13.
+
 ## Secrets
 
 The file holds no secret. A password appears as a `password_secret` name. At `plan` and `apply` time, `sqlrepl` reads the value from the environment variable of that name, after loading an optional `.env` file (default `./.env`, `-env` flag), where the real environment wins. The loader is the stdlib-only `internal/dotenv` of `~/Sources/Repos/atelier/outils/sylloge/internal/dotenv/`, copied, not imported. `plan` reports every secret the plan needs and whether it is set; `apply` refuses to start while one is missing.
@@ -288,6 +317,8 @@ The first block of the implementation plan, before the planner (Rudi's decision)
 9. the complete defaults of every parameter of every in-scope procedure, in every context, unqualified procedure names in a non-`dbo` schema, and the server and database each procedure must run in;
 10. transient errors during drops (1205, 18752) and whether a retry is safe;
 11. the filter and view rules above, as a regression measure, including whether `sp_articlecolumn` rebuilds an existing view.
+12. the scope of a snapshot generation after an article is added, for each combination of `immediate_sync` and `sync_method`: which tables the snapshot agent generates files for (files in the folder, snapshot history), which existing tables it locks and for how long (a writer on an existing table, timed, during the generation), and the duration; then the `-defer-full-snapshot` sequence: the flags of each step, what it generates, and what a subscriber added after `immediate_sync` is restored receives;
+13. the sources of the snapshot report: what the snapshot and distribution histories and `sys.dm_os_enumerate_filesystem` return on each `sync_method`, and whether one-second sampling of the waiting tasks sees the blocking a timed writer measures, under `native`, `concurrent` and `database snapshot`.
 
 Items that add subscriptions (3, 6, 8 among others) cannot be measured inside a rolled-back transaction, since `sp_addsubscription` refuses to run in one (15002): they run on objects of their own, created and removed by the script.
 

@@ -274,6 +274,18 @@ Files:
 - [ ] Step 3: Run both. Expected: exit 0; `F2` leaves the view on the old clause and `F4` sets `filter_clause` to NULL, as measured twice by the review; `F6` shows the view without `b` (the last review round saw `sp_articlecolumn` rebuild the view itself).
 - [ ] Step 4: Commit.
 
+### Task 11b: Snapshot scope and the sources of the snapshot report (campaign items 12, 13)
+
+Added on 2026-11-11 with the spec section "Snapshot runs and their report" and the `-defer-full-snapshot` strategy.
+
+Files:
+- Create: `lab/campaign/15-snapshot-scope.sh`, `lab/campaign/16-snapshot-report-sources.sh`, their results under `lab/results/2022/`
+
+- [ ] Step 1: Write `15-snapshot-scope.sh`. Six publications `m_sc_<imm|non>_<native|conc|dbsnap>` with tables `m_t1`, `m_t2` (enough rows that a copy lasts several seconds), a push subscription each, snapshot delivered. For each: add `m_t3`, extend the subscription by the rules of the spec, start the snapshot, and record which tables got files (snapshot folder of this run) and history lines, the generation time, and, from a writer that updates `m_t1` in a loop during the generation, the longest time one update waited. Then on the `imm` publications the `-defer-full-snapshot` sequence of the spec, step by step: the flags each step needs (read the state before, flag rule of `05-snapshot-flag`), the tables generated, and what a subscription added after `immediate_sync` is restored receives. One row per publication and step.
+- [ ] Step 2: Write `16-snapshot-report-sources.sh`. Under `native`, `concurrent` and `database snapshot`: what `MSsnapshot_history`, `MSdistribution_history` and `sys.dm_os_enumerate_filesystem` on the run's folder return (sizes, counts, times), and whether sampling `sys.dm_os_waiting_tasks` / `sys.dm_exec_requests` every second for sessions blocked by or blocking the snapshot agent's `program_name` sees the waits the timed writer measures. One row per source and `sync_method`.
+- [ ] Step 3: Run both through `campaign.sh 2022`; assert what can be predicted (no file generated for `m_t1`/`m_t2` on the `non` publications; `database snapshot` writer wait under one second) and report any contradiction. Break one assertion per script (the check, not the lab).
+- [ ] Step 4: Commit.
+
 ### Task 12: Fold the results into the documentation
 
 Files:
