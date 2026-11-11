@@ -398,3 +398,65 @@ func TestDistributorConnection(t *testing.T) {
 		}
 	}
 }
+
+const syncCustomer = "create view [dbo].[SYNC_Customer]as select  [CustomerID],[Name],[Country]  from  [dbo].[Customer]  where HAS_PERMS_BY_NAME('[dbo].[Customer]', 'OBJECT', 'SELECT')= 1  and (Country = 'FR')"
+
+const syncOrders = "create view [dbo].[syncobj_0x3939303644423539]as select  [OrderID],[CustomerID],[Amount]  from  [dbo].[Orders]  where HAS_PERMS_BY_NAME('[dbo].[Orders]', 'OBJECT', 'SELECT')= 1 "
+
+func TestCheckSyncView(t *testing.T) {
+	cust := []string{"CustomerID", "Name", "Country"}
+	withClause := func(c string) string {
+		return strings.Replace(syncCustomer, "and (Country = 'FR')", "and ("+c+")", 1)
+	}
+	tests := []struct {
+		name       string
+		def, claus string
+		cols       []string
+		generated  bool
+		problems   int
+	}{
+		{"match", syncCustomer, "Country = 'FR'", cust, true, 0},
+		{"other clause", syncCustomer, "Country = 'DE'", cust, true, 1},
+		{"fewer columns", syncCustomer, "Country = 'FR'", []string{"CustomerID", "Name"}, true, 1},
+		{"column order", syncCustomer, "Country = 'FR'", []string{"Name", "CustomerID", "Country"}, true, 1},
+		{"no clause", syncOrders, "", []string{"OrderID", "CustomerID", "Amount"}, true, 0},
+		{"clause missing in view", syncOrders, "Amount > 0", []string{"OrderID", "CustomerID", "Amount"}, true, 1},
+		{"clause missing in article", syncCustomer, "", cust, true, 1},
+		{"not a view", "not a view", "", nil, false, 0},
+		{"user view", "create view [dbo].[v] as select a from dbo.t where a > 0", "", []string{"a"}, false, 0},
+		{"flag = 1", withClause("flag = 1"), "flag = 1", cust, true, 0},
+		{"id = 10", withClause("Amount = 10"), "Amount = 10", cust, true, 0},
+		{"whitespace outside literals", withClause("Country   =\n 'FR'"), "Country = 'FR'", cust, true, 0},
+		{"whitespace in literal", withClause("City = 'New  York'"), "City = 'New York'", cust, true, 1},
+		{"quote in literal", withClause("City = 'L''Aigle'"), "City = 'L''Aigle'", cust, true, 0},
+		{"bracketed names", strings.Replace(syncCustomer, "[CustomerID],[Name],[Country]", "[a from b],[c,d]", 1), "Country = 'FR'", []string{"a from b", "c,d"}, true, 0},
+		{"bracket with ]]", strings.Replace(syncCustomer, "[CustomerID],[Name],[Country]", "[a]]b],[c]", 1), "Country = 'FR'", []string{"a]b", "c"}, true, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			generated, problems := checkSyncView(tt.def, tt.claus, tt.cols)
+			if generated != tt.generated || len(problems) != tt.problems {
+				t.Errorf("generated %v, problems %q; want %v, %d problems", generated, problems, tt.generated, tt.problems)
+			}
+		})
+	}
+}
+
+func TestSubsetAllowed(t *testing.T) {
+	pub := func(method string, immediate bool) *model.Publication {
+		return &model.Publication{SyncMethod: model.Ptr(method), ImmediateSync: model.Ptr(immediate)}
+	}
+	if subsetAllowed(pub("native", true)) {
+		t.Error("immediate_sync: a subset cannot exist")
+	}
+	for _, m := range []string{"concurrent", "concurrent_c"} {
+		if subsetAllowed(pub(m, false)) {
+			t.Errorf("%s: a subset cannot exist", m)
+		}
+	}
+	for _, m := range []string{"native", "character", "database_snapshot", "database_snapshot_character"} {
+		if !subsetAllowed(pub(m, false)) {
+			t.Errorf("%s: a subset can exist", m)
+		}
+	}
+}

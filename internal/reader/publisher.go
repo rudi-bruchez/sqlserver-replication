@@ -147,7 +147,9 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 		var (
 			pubid, artid, typ, status, preCreation, syncObjID, objID, fireTriggers, tableColumns int
 			schemaOption                                                                         []byte
-			insCmd, updCmd, delCmd, filterClause, filterSchema, filterName                       string
+			insCmd, updCmd, delCmd, filterSchema, filterName                                     string
+			filterClauseNull, syncDefinition                                                     sql.NullString
+			hasSyncView                                                                          int
 			syncSchema, syncName                                                                 string
 			t                                                                                    articleText
 			a                                                                                    model.Article
@@ -156,9 +158,9 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 			&t.description, &a.Source.Schema, &a.Source.Name,
 			&t.destSchema, &t.destName,
 			&insCmd, &updCmd, &delCmd,
-			&filterClause, &filterSchema, &filterName,
+			&filterClauseNull, &filterSchema, &filterName,
 			&syncObjID, &objID, &syncSchema, &syncName,
-			&t.creationScript, &fireTriggers, &tableColumns)
+			&t.creationScript, &fireTriggers, &tableColumns, &syncDefinition, &hasSyncView)
 		if err != nil {
 			return err
 		}
@@ -188,6 +190,7 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 		// before any sp_articlefilter call. The synchronization view is
 		// generated as syncobj_0x<hex> unless sp_articleview or a manual
 		// view type named it. Measured on SQL Server 2022 (lab/README.md).
+		filterClause := filterClauseNull.String
 		if filterClause != "" || filterName != "" {
 			a.Filter = &model.Filter{Clause: filterClause}
 			if filterName != "" {
@@ -196,6 +199,11 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 				// Measured (lab/campaign/04-filter-clause.sh, case F1): such a clause
 				// filters the snapshot, not the log reader.
 				e.find(model.FindingIncomplete, model.Join(articlePath(p.Name, a.Name), "filter"), "article %s.%s: filter clause without a filter procedure (sp_articlefilter); it filters the snapshot only, changes are replicated unfiltered", p.Name, a.Name)
+			}
+			if filterName != "" && !filterClauseNull.Valid {
+				// The synchronization view of such an article has no filter,
+				// so the export cannot say which rows the procedure keeps.
+				e.find(model.FindingIncomplete, model.Join(articlePath(p.Name, a.Name), "filter"), "article %s.%s: filter procedure %s.%s has no filter clause (filter_clause is NULL); the rows it keeps are not exported", p.Name, a.Name, filterSchema, filterName)
 			}
 		}
 		if syncObjID != 0 && syncObjID != objID && !strings.HasPrefix(syncName, "syncobj_0x") {
@@ -207,6 +215,22 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 		// vertically filtered when it lists fewer columns than the table has.
 		if c := columns[artid]; len(c) > 0 && len(c) < tableColumns {
 			a.Columns = c
+		}
+
+		// The synchronization view must filter like the article does. A
+		// definition that is not the form sp_articleview writes is the user's
+		// own view and cannot be checked.
+		if hasSyncView != 0 {
+			path := model.Join(articlePath(p.Name, a.Name), "sync_object")
+			if !syncDefinition.Valid {
+				e.find(model.FindingUnreadable, path, "article %s.%s: definition of synchronization view %s.%s is not visible", p.Name, a.Name, syncSchema, syncName)
+			} else if c := columns[artid]; len(c) > 0 {
+				if generated, problems := checkSyncView(syncDefinition.String, filterClause, c); generated {
+					for _, pr := range problems {
+						e.find(model.FindingIncomplete, path, "article %s.%s: synchronization view %s.%s disagrees with the article: %s", p.Name, a.Name, syncSchema, syncName, pr)
+					}
+				}
+			}
 		}
 
 		p.Articles = append(p.Articles, a)
@@ -355,6 +379,9 @@ func (e *exporter) readSubscriptions() error {
 		sort.Strings(s.articles)
 		if !slices.Equal(s.articles, e.articleNames[k.pubid]) {
 			sub.Articles = s.articles
+			if !subsetAllowed(p) {
+				e.find(model.FindingIncomplete, model.Join(subscriptionPath(p.Name, k.subscriber, k.database), "articles"), "%s: lists %d of the %d articles of the publication, but a subset cannot exist with immediate_sync or sync_method concurrent, concurrent_c", label, len(s.articles), len(e.articleNames[k.pubid]))
+			}
 		}
 		p.Subscriptions = append(p.Subscriptions, sub)
 	}

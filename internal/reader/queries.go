@@ -72,13 +72,16 @@ SELECT a.pubid, a.artid, a.name, a.type, a.status, a.pre_creation_cmd, a.schema_
        ISNULL(OBJECT_SCHEMA_NAME(a.objid), N''), ISNULL(OBJECT_NAME(a.objid), N''),
        ISNULL(a.dest_owner, N''), ISNULL(a.dest_table, N''),
        ISNULL(a.ins_cmd, N''), ISNULL(a.upd_cmd, N''), ISNULL(a.del_cmd, N''),
-       ISNULL(CAST(a.filter_clause AS nvarchar(max)), N''),
+       CAST(a.filter_clause AS nvarchar(max)),
        ISNULL(OBJECT_SCHEMA_NAME(NULLIF(a.filter, 0)), N''), ISNULL(OBJECT_NAME(NULLIF(a.filter, 0)), N''),
        ISNULL(a.sync_objid, 0), a.objid,
        ISNULL(OBJECT_SCHEMA_NAME(NULLIF(a.sync_objid, 0)), N''), ISNULL(OBJECT_NAME(NULLIF(a.sync_objid, 0)), N''),
        ISNULL(a.creation_script, N''),
        CAST(ISNULL(a.fire_triggers_on_snapshot, 0) AS int),
-       (SELECT COUNT(*) FROM sys.columns AS c WHERE c.object_id = a.objid)
+       (SELECT COUNT(*) FROM sys.columns AS c WHERE c.object_id = a.objid),
+       CASE WHEN a.sync_objid IS NULL OR a.sync_objid = 0 OR a.sync_objid = a.objid THEN NULL
+            ELSE OBJECT_DEFINITION(a.sync_objid) END,
+       CASE WHEN a.sync_objid IS NULL OR a.sync_objid = 0 OR a.sync_objid = a.objid THEN 0 ELSE 1 END
 FROM dbo.sysarticles AS a`
 
 	qSchemaArticles = `

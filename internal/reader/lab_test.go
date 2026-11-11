@@ -368,3 +368,34 @@ func TestReadLabAgents(t *testing.T) {
 		}
 	}
 }
+
+func TestReadLabArticles(t *testing.T) {
+	cfg := labRead(t).Config
+	for _, f := range cfg.Findings {
+		t.Errorf("unexpected finding %s %s: %s", f.Kind, f.Path, f.Message)
+	}
+	tables := 0
+	var all []model.Article
+	for _, p := range cfg.Publications {
+		all = append(all, p.Articles...)
+	}
+	for _, a := range all {
+		if a.Filter == nil && a.Commands == nil {
+			continue // a schema article
+		}
+		tables++
+		if a.Destination.Schema == nil || *a.Destination.Schema != "dbo" {
+			t.Errorf("%s: destination.schema = %v, want dbo", a.Name, a.Destination.Schema)
+		}
+		if a.Name == "Customer" {
+			if a.SyncObject == nil || a.SyncObject.Schema != "dbo" || a.SyncObject.Name != "SYNC_Customer" {
+				t.Errorf("Customer sync_object = %+v, want dbo.SYNC_Customer", a.SyncObject)
+			}
+		} else if a.SyncObject != nil {
+			t.Errorf("%s: sync_object = %+v, want none (generated view)", a.Name, a.SyncObject)
+		}
+	}
+	if tables < 3 {
+		t.Errorf("table articles = %d, want at least 3", tables)
+	}
+}
