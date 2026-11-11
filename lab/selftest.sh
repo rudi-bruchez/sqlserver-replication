@@ -26,6 +26,7 @@ fixtures=(
     "truncated.sql truncated"
     "truncated-columns.sql truncated"
     "duplicate-ids.sql total"
+    "dead-lab.sh alive"
     "restart.sh restart"
 )
 
@@ -34,6 +35,22 @@ fixtures=(
 cleanup() {
     local query
     case $1 in
+        dead-lab.sh)
+            # Revives the SalesPub distribution agent, then waits for a fresh token to arrive,
+            # so that later fixtures see a live lab. Tokens posted while it was dead are
+            # delivered too; only the new one is waited on.
+            local out
+            out=$( . "$lab/lib.sh"
+                job=$(sql_value "SELECT TOP (1) CONVERT(nvarchar(36), j.job_id) FROM distribution.dbo.MSdistribution_agents a
+                    JOIN msdb.dbo.sysjobs j ON j.job_id = a.job_id WHERE a.publication = N'SalesPub' AND a.subscriber_db = N'SalesSub'") &&
+                sql -Q "SET NOCOUNT ON; EXEC msdb.dbo.sp_update_job @job_id = '$job', @enabled = 1;
+                    IF NOT EXISTS (SELECT 1 FROM msdb.dbo.sysjobactivity ja WHERE ja.job_id = '$job' AND ja.start_execution_date IS NOT NULL AND ja.stop_execution_date IS NULL
+                                     AND ja.session_id = (SELECT MAX(session_id) FROM msdb.dbo.syssessions))
+                        EXEC msdb.dbo.sp_start_job @job_id = '$job';" >/dev/null &&
+                id=$(sql_value "DECLARE @id int; EXEC Sales.dbo.sp_posttracertoken @publication = N'SalesPub', @tracer_token_id = @id OUTPUT; SELECT @id") &&
+                wait_until 120 "SELECT CASE WHEN EXISTS (SELECT 1 FROM distribution.dbo.MStracer_history WHERE parent_tracer_id = $id AND subscriber_commit IS NOT NULL) THEN 1 ELSE 0 END" 2>&1 ) \
+                || { echo "cleanup failed: lab not replicating again: $out"; return; }
+            return ;;
         residue.sql) query="DROP TABLE IF EXISTS Sales.dbo.m_left;
             SELECT COUNT(*) FROM Sales.sys.objects WHERE name = N'm_left';" ;;
         residue-job.sh) query="IF EXISTS (SELECT * FROM msdb.dbo.sysjobs WHERE name = N'REPLLAB-Sales-m_ghost-1')

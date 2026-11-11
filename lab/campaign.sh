@@ -9,6 +9,8 @@
 #
 # Guards, checked after each script; the first that fails stops the run with
 # "GUARD <name> failed: <detail>" and a non-zero exit:
+#   alive     before and after each script, a tracer token posted on SalesPub and on
+#             SalesRef reaches the subscriber within 90 s (the lab replicates);
 #   restart   tempdb create_date and sqlserver_start_time unchanged (no restart);
 #   exit      the script (sqlcmd for a .sql file) exited 0;
 #   results   at least one R| line other than TOTAL;
@@ -121,6 +123,33 @@ SELECT CONCAT(
     printf '%s files=[%s]\n' "$counts" "$files"
 }
 
+# alive: the lab replicates. Posts a tracer token on each of the lab's publications and
+# waits until every subscription of that publication has a subscriber_commit for it.
+# Added after a failed break step wrote a bogus LSN into MSrepl_transactions: the idle
+# distribution agents moved their watermark past it and Sales stopped replicating to
+# SalesSub, with every other guard silent (the export compares configuration only).
+# Tracer rows stay in MStracer_tokens and MStracer_history: accepted residue, the
+# distribution cleanup job removes them. Both tokens arrive in about 10 s.
+# Usage: alive WHEN (before|after) NAME; fails the run through guard_failed.
+alive() {
+    local pub id out
+    for pub in SalesPub SalesRef; do
+        id=$(sql_value "DECLARE @id int; EXEC Sales.dbo.sp_posttracertoken @publication = N'$pub', @tracer_token_id = @id OUTPUT; SELECT @id" 2>&1) \
+            || guard_failed alive "$pub: cannot post a tracer token $1 $2: $id"
+        [[ $id =~ ^-?[0-9]+$ ]] || guard_failed alive "$pub: no tracer token id $1 $2: $id"
+        if ! out=$(wait_until 90 "
+SELECT CASE WHEN
+    (SELECT COUNT(*) FROM distribution.dbo.MStracer_history h WHERE h.parent_tracer_id = $id AND h.subscriber_commit IS NOT NULL)
+      = (SELECT COUNT(DISTINCT CONCAT(s.subscriber_id, N'|', s.subscriber_db)) FROM distribution.dbo.MSsubscriptions s
+           JOIN distribution.dbo.MSpublications p ON p.publication_id = s.publication_id
+          WHERE p.publication = N'$pub' AND s.subscriber_id >= 0 AND s.subscriber_db <> N'virtual')
+    AND NOT EXISTS (SELECT 1 FROM distribution.dbo.MStracer_history h WHERE h.parent_tracer_id = $id AND h.subscriber_commit IS NULL)
+  THEN 1 ELSE 0 END" 2>&1); then
+            guard_failed alive "$pub token $id not delivered within 90 s ($1 $2)"
+        fi
+    done
+}
+
 for script in "$@"; do
     [ -f "$script" ] || die "no such script: $script"
     name=$(basename "$script"); name=${name%.*}
@@ -132,6 +161,7 @@ for script in "$@"; do
     # Two empty or truncated exports would compare equal: require the lab's publications.
     grep -q -- '- name: SalesPub$' "$work/before.yaml" && grep -q -- '- name: SalesRef$' "$work/before.yaml" \
         || die "the export before $name does not show SalesPub and SalesRef: the lab is not in its setup state"
+    alive before "$name"
 
     case $script in
         *.sql) sql < "$script" >"$log" 2>&1 ;;
@@ -179,6 +209,9 @@ for script in "$@"; do
     if [[ $found =~ =[1-9] ]] || [[ $found != *"files=[]" ]]; then
         guard_failed residue "$name left: $found"
     fi
+
+    # Before the export comparison: a dead lab explains a differing export.
+    alive after "$name"
 
     lab_export "$work/after.yaml" \
         || guard_failed export "export after $name failed: $(cat "$work/after.yaml.err")"
