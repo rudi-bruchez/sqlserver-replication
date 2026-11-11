@@ -15,36 +15,85 @@ import (
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
 )
 
-// Source groups the two connections an export needs.
+// Source groups the connections a read needs.
 type Source struct {
 	// Publisher is connected to the publication database.
 	Publisher *sql.DB
-	// Distributor is connected to the distributor instance, any database.
+	// Distributor is connected to the distributor instance, any database. It
+	// may be nil when the probe finds no distributor.
 	Distributor *sql.DB
 	// Database is the publication database name.
 	Database string
 	// PublisherName overrides the publisher name used to look the publisher
 	// up at the distributor. Empty means @@SERVERNAME of the publisher.
 	PublisherName string
+	// Probe is the result of Probe on the publisher.
+	Probe PublisherProbe
 }
 
-// DistributorName returns the distributor registered at the publisher.
-func DistributorName(ctx context.Context, publisher *sql.DB) (string, error) {
-	var name string
-	err := publisher.QueryRowContext(ctx, qDistributorName).Scan(&name)
+// PublisherProbe is what the publisher says about itself and the publication
+// database, before any connection to the database or the distributor.
+type PublisherProbe struct {
+	Distributor string
+	State       string
+	Standby     bool
+	Published   bool
+	// MergePublished is true when the database is published for merge
+	// replication.
+	MergePublished bool
+}
+
+// Probe queries the publisher, through a connection to its master database.
+func Probe(ctx context.Context, publisher *sql.DB, database string) (PublisherProbe, error) {
+	var p PublisherProbe
+	err := publisher.QueryRowContext(ctx, qProbe, database).Scan(
+		&p.Distributor, &p.State, &p.Standby, &p.Published, &p.MergePublished)
 	if err == sql.ErrNoRows {
-		return "", fmt.Errorf("the publisher has no distributor configured")
+		return p, fmt.Errorf("database %q not found at the publisher", database)
 	}
-	return name, err
+	return p, err
 }
 
-// Export reads the whole configuration of the publication database.
-func Export(ctx context.Context, src Source) (*model.Config, error) {
+// Start decides what the export is. It returns an error when the database
+// cannot be read, empty when the export is the empty configuration, and the
+// findings that say why.
+func (p PublisherProbe) Start() (empty bool, findings []model.Finding, err error) {
+	if p.State != "ONLINE" {
+		return false, nil, fmt.Errorf("database is %s", strings.ToLower(p.State))
+	}
+	if p.Standby {
+		return false, nil, fmt.Errorf("database is in standby")
+	}
+	switch {
+	case p.Distributor == "":
+		empty = true
+		findings = append(findings, model.Finding{Kind: model.FindingNote, Path: "distributor",
+			Message: "no distributor is configured at the publisher"})
+	case !p.Published:
+		empty = true
+		findings = append(findings, model.Finding{Kind: model.FindingNote, Path: "publications",
+			Message: "the database is not enabled for transactional or snapshot publishing"})
+	}
+	if empty && p.MergePublished {
+		findings = append(findings, model.Finding{Kind: model.FindingOutOfScope,
+			Message: "the database is published for merge replication"})
+	}
+	return empty, findings, nil
+}
+
+// Result is what Read returns.
+type Result struct {
+	Config *model.Config
+}
+
+// Read reads the whole configuration of the publication database, or the
+// empty configuration when the probe says there is nothing to read.
+func Read(ctx context.Context, src Source) (*Result, error) {
 	e := &exporter{ctx: ctx, src: src}
 	if err := e.run(); err != nil {
 		return nil, err
 	}
-	return e.cfg, nil
+	return &Result{Config: e.cfg}, nil
 }
 
 type exporter struct {
@@ -119,11 +168,27 @@ func (e *exporter) run() error {
 	}
 	e.cfg.Publisher = model.Publisher{Server: name, Database: e.src.Database}
 
+	empty, findings, err := e.src.Probe.Start()
+	if err != nil {
+		return err
+	}
+	for _, f := range findings {
+		e.find(f.Kind, f.Path, "%s", f.Message)
+	}
+	if empty {
+		if e.src.Probe.Distributor != "" && e.src.Distributor != nil {
+			if err := e.readDistributor(true); err != nil {
+				return fmt.Errorf("reading distributor: %w", err)
+			}
+		}
+		return nil
+	}
+
 	steps := []struct {
 		what string
 		fn   func() error
 	}{
-		{"distributor", e.readDistributor},
+		{"distributor", func() error { return e.readDistributor(false) }},
 		{"agent profiles", e.readProfiles},
 		{"publications", e.readPublications},
 		{"articles", e.readArticles},
@@ -146,7 +211,9 @@ func (e *exporter) distQuery(q string) string {
 	return strings.NewReplacer("{dist}", e.dist, "{servers}", e.servers).Replace(q)
 }
 
-func (e *exporter) readDistributor() error {
+// readDistributor reads the distributor section. With lenient, a publisher
+// that the distributor does not know gives the server name and a note.
+func (e *exporter) readDistributor(lenient bool) error {
 	d := &model.Distributor{}
 	e.cfg.Distributor = d
 	db := e.src.Distributor
@@ -158,6 +225,10 @@ func (e *exporter) readDistributor() error {
 	var workingDirectory, login, publisherType string
 	err := db.QueryRowContext(e.ctx, qDistPublisher, e.cfg.Publisher.Server).Scan(
 		&d.Database, &workingDirectory, &security, &login, &trusted, &publisherType)
+	if err == sql.ErrNoRows && lenient {
+		e.find(model.FindingNote, "distributor", "publisher %q is not registered at the distributor", e.cfg.Publisher.Server)
+		return nil
+	}
 	if err == sql.ErrNoRows {
 		return fmt.Errorf("publisher %q is not registered in msdb.dbo.MSdistpublishers at %s; "+
 			"if the publication database is in an availability group, pass the original publisher name",

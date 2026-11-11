@@ -95,6 +95,20 @@ func runExport(args []string, stdout io.Writer) error {
 	defer cancel()
 
 	cp := connParams{User: *user, Password: os.Getenv("SQLREPL_PASSWORD"), Extra: params}
+	// The probe runs on master: a connection to an offline or restoring
+	// publication database fails before any query.
+	master, err := open(ctx, *publisher, "master", cp)
+	if err != nil {
+		return fmt.Errorf("publisher: %w", err)
+	}
+	defer master.Close()
+	probe, err := reader.Probe(ctx, master, *database)
+	if err != nil {
+		return err
+	}
+	if _, _, err := probe.Start(); err != nil {
+		return err
+	}
 	pub, err := open(ctx, *publisher, *database, cp)
 	if err != nil {
 		return fmt.Errorf("publisher: %w", err)
@@ -102,27 +116,28 @@ func runExport(args []string, stdout io.Writer) error {
 	defer pub.Close()
 
 	if *distributor == "" {
-		name, err := reader.DistributorName(ctx, pub)
+		*distributor = probe.Distributor
+	}
+	var dist *sql.DB
+	if *distributor != "" {
+		dist, err = open(ctx, *distributor, "", cp)
 		if err != nil {
-			return err
+			return fmt.Errorf("distributor: %w", err)
 		}
-		*distributor = name
+		defer dist.Close()
 	}
-	dist, err := open(ctx, *distributor, "", cp)
-	if err != nil {
-		return fmt.Errorf("distributor: %w", err)
-	}
-	defer dist.Close()
 
-	cfg, err := reader.Export(ctx, reader.Source{
+	res, err := reader.Read(ctx, reader.Source{
 		Publisher:     pub,
 		Distributor:   dist,
 		Database:      *database,
 		PublisherName: *publisherName,
+		Probe:         probe,
 	})
 	if err != nil {
 		return err
 	}
+	cfg := res.Config
 
 	out, err := model.Marshal(cfg)
 	if err != nil {

@@ -11,11 +11,16 @@ package reader
 const (
 	qServerName = `SELECT @@SERVERNAME`
 
-	// Distributor registered at the publisher (sp_helpdistributor.sql:115-120).
+	// What the publisher says about itself and the publication database: the
+	// distributor registered at the publisher, then the state of the database.
 	// The linked server is always named repl_distributor; the distributor
 	// instance is its datasource (sp_adddistributor.sql:148-154,
-	// sp_helpdistributor.sql:115-120).
-	qDistributorName = `SELECT datasource FROM master.dbo.sysservers WHERE srvstatus & 8 <> 0`
+	// sp_helpdistributor.sql:115-120). Run on master: a connection to an
+	// offline or restoring database fails before any query.
+	qProbe = `
+SELECT ISNULL((SELECT TOP (1) datasource FROM master.dbo.sysservers WHERE srvstatus & 8 <> 0), N''),
+       state_desc, is_in_standby, is_published, is_merge_published
+FROM sys.databases WHERE name = @p1`
 
 	qPublications = `
 SELECT p.pubid, p.name, ISNULL(p.description, N''),

@@ -39,23 +39,28 @@ func labDB(t *testing.T, database string) *sql.DB {
 	return db
 }
 
-// labRead exports the Sales publication of the lab, publisher and
+// labRead reads the Sales publication of the lab, publisher and
 // distributor being the same instance.
-func labRead(t *testing.T) *model.Config {
+func labRead(t *testing.T) *Result {
 	t.Helper()
-	cfg, err := Export(context.Background(), Source{
+	probe, err := Probe(context.Background(), labDB(t, "master"), "Sales")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Read(context.Background(), Source{
 		Publisher:   labDB(t, "Sales"),
 		Distributor: labDB(t, "master"),
 		Database:    "Sales",
+		Probe:       probe,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return cfg
+	return res
 }
 
 func TestReadLabSales(t *testing.T) {
-	cfg := labRead(t)
+	cfg := labRead(t).Config
 	if cfg.Version != 2 {
 		t.Errorf("version = %d, want 2", cfg.Version)
 	}
@@ -102,5 +107,50 @@ func TestReadLabSales(t *testing.T) {
 				agent(p.Name+" "+s.Key(), &s.DistributionAgent.Agent)
 			}
 		}
+	}
+}
+
+func TestReadLabUnpublishedDatabase(t *testing.T) {
+	ctx := context.Background()
+	master := labDB(t, "master")
+	if _, err := master.ExecContext(ctx, "CREATE DATABASE m_empty"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		master.ExecContext(ctx, "ALTER DATABASE m_empty SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
+		if _, err := master.ExecContext(ctx, "DROP DATABASE m_empty"); err != nil {
+			t.Errorf("dropping m_empty: %v", err)
+		}
+	})
+	probe, err := Probe(ctx, master, "m_empty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Read(ctx, Source{
+		Publisher:   labDB(t, "m_empty"),
+		Distributor: labDB(t, "master"),
+		Database:    "m_empty",
+		Probe:       probe,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := res.Config
+	if len(cfg.Publications) != 0 {
+		t.Errorf("%d publications, want none", len(cfg.Publications))
+	}
+	var server string
+	if err := master.QueryRowContext(ctx, "SELECT @@SERVERNAME").Scan(&server); err != nil {
+		t.Fatal(err)
+	}
+	d := cfg.Distributor
+	if d == nil {
+		t.Fatal("no distributor section")
+	}
+	if !strings.EqualFold(d.Server, server) || d.Database != "distribution" {
+		t.Errorf("distributor = %s / %s, want %s / distribution", d.Server, d.Database, server)
+	}
+	if len(cfg.Findings) != 1 || cfg.Findings[0].Kind != model.FindingNote || cfg.Findings[0].Path != "publications" {
+		t.Errorf("findings = %+v, want one note at publications", cfg.Findings)
 	}
 }

@@ -50,7 +50,7 @@ func TestQueriesParse(t *testing.T) {
 	defer db.Close()
 
 	queries := map[string]string{
-		"qServerName": qServerName, "qDistributorName": qDistributorName,
+		"qServerName": qServerName, "qProbe": qProbe,
 		"qPublications": qPublications, "qTableArticles": qTableArticles,
 		"qSchemaArticles": qSchemaArticles, "qArticleColumns": qArticleColumns,
 		"qSubscriptions": qSubscriptions, "qDistPublisher": qDistPublisher,
@@ -140,5 +140,50 @@ func TestFindOnce(t *testing.T) {
 	e.find(model.FindingNote, "publications[Q]", "x %d", 1)
 	if n := len(e.cfg.Findings); n != 2 {
 		t.Fatalf("different paths gave %d findings", n)
+	}
+}
+
+func TestStartDecision(t *testing.T) {
+	cases := []struct {
+		name  string
+		probe PublisherProbe
+		empty bool
+		err   string
+		kinds []string
+	}{
+		{"published", PublisherProbe{State: "ONLINE", Distributor: "D", Published: true}, false, "", nil},
+		{"offline", PublisherProbe{State: "OFFLINE"}, false, "database is offline", nil},
+		{"restoring", PublisherProbe{State: "RESTORING"}, false, "database is restoring", nil},
+		{"standby", PublisherProbe{State: "ONLINE", Standby: true, Distributor: "D", Published: true}, false, "database is in standby", nil},
+		{"no distributor", PublisherProbe{State: "ONLINE"}, true, "", []string{model.FindingNote}},
+		{"unpublished", PublisherProbe{State: "ONLINE", Distributor: "D"}, true, "", []string{model.FindingNote}},
+		{"merge only", PublisherProbe{State: "ONLINE", Distributor: "D", MergePublished: true}, true, "",
+			[]string{model.FindingNote, model.FindingOutOfScope}},
+		{"merge only, no distributor", PublisherProbe{State: "ONLINE", MergePublished: true}, true, "",
+			[]string{model.FindingNote, model.FindingOutOfScope}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			empty, findings, err := c.probe.Start()
+			if c.err != "" {
+				if err == nil || !strings.Contains(err.Error(), c.err) {
+					t.Fatalf("err = %v, want %q", err, c.err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if empty != c.empty {
+				t.Errorf("empty = %v, want %v", empty, c.empty)
+			}
+			var kinds []string
+			for _, f := range findings {
+				kinds = append(kinds, f.Kind)
+			}
+			if strings.Join(kinds, ",") != strings.Join(c.kinds, ",") {
+				t.Errorf("findings = %v, want %v", kinds, c.kinds)
+			}
+		})
 	}
 }

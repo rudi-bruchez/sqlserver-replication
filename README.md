@@ -34,6 +34,10 @@ Required permissions: read access to the publication database, and to `msdb` and
 
 Passwords are never exported. Where an agent uses SQL Server authentication, the file carries a `password_secret` name instead. Agent command lines are exported with their password arguments masked.
 
+### Empty configuration
+
+Before reading anything, the export probes the publisher through its `master` database. A database with no distributor configured, or not enabled for transactional or snapshot publishing, exports as the empty configuration: the publisher section, no publication, and a `note` finding that says why. A database that is published for merge replication adds an `out_of_scope` finding. A database that is offline, restoring or in standby is an error, not an empty configuration.
+
 ## Tests
 
 ```
