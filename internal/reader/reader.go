@@ -504,7 +504,7 @@ func (e *exporter) readDistributorLink(d *model.Distributor) error {
 	var self sql.NullInt64
 	for rows.Next() {
 		if found {
-			continue // the mappings after the first are for single logins
+			continue // sys.servers names are unique: one row at most
 		}
 		found = true
 		if err := rows.Scan(&provider, &self, &remote); err != nil {

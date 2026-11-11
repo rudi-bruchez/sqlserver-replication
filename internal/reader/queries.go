@@ -36,9 +36,9 @@ SELECT s.provider_string,
        CAST(l.uses_self_credential AS int),
        l.remote_name
 FROM sys.servers AS s
-LEFT JOIN sys.linked_logins AS l ON l.server_id = s.server_id
-WHERE s.name = N'repl_distributor'
-ORDER BY l.local_principal_id, l.remote_name`
+LEFT JOIN sys.linked_logins AS l
+       ON l.server_id = s.server_id AND l.local_principal_id = 0 -- the mapping for all logins
+WHERE s.name = N'repl_distributor'`
 
 	qPublications = `
 SELECT p.pubid, p.name, ISNULL(p.description, N''),
