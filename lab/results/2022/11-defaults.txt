@@ -32,7 +32,7 @@ R|D.sp_addpublication.transactional.@centralized_conflicts|null|column=syspublic
 R|D.sp_addpublication.transactional.@conflict_retention|14|column=syspublications.conflict_retention (days) declared=14 call=ok
 R|D.sp_addpublication.transactional.@queue_type|null|column=syspublications.queue_type declared=NULL call=ok
 R|D.sp_addpublication.transactional.@add_to_active_directory|null|column=syspublications.ad_guidname (NULL: not in Active Directory) declared=N'false' call=ok
-R|D.sp_addpublication.transactional.@logreader_job_name|REPLLAB-Sales-<id>|column=distribution.dbo.MSlogreader_agents.name of the publication database (Sales has one before the call; sp_addpublication creates one in a database that has none) declared=NULL call=ok
+R|D.sp_addpublication.transactional.@logreader_job_name|pre-existing(REPLLAB-Sales-<id>)|column=distribution.dbo.MSlogreader_agents.name of the publication database; pre-existing: Sales has its log reader before the call (sp_addpublication creates one in a database that has none), so this is not a default declared=NULL call=ok
 R|D.sp_addpublication.transactional.@qreader_job_name|no-row|column=distribution.dbo.MSqreader_agents.name (one queue reader per distributor, created for queued updating only) declared=NULL call=ok
 R|D.sp_addpublication.transactional.@publisher|repllab|column=distribution.dbo.MSpublications.publisher_id (server name) declared=NULL call=ok
 R|D.sp_addpublication.transactional.@allow_initialize_from_backup|0|column=syspublications.allow_initialize_from_backup declared=NULL call=ok
@@ -60,7 +60,7 @@ R|D.sp_addpublication_snapshot.transactional.@active_end_time_of_day|235959|colu
 R|D.sp_addpublication_snapshot.transactional.@snapshot_job_name|REPLLAB-Sales-m_dp_tran-<id>|column=msdb.dbo.sysjobs.name of the agent job (distribution.dbo.MSsnapshot_agents.job_id) declared=NULL call=ok
 R|D.sp_addpublication_snapshot.transactional.@publisher_security_mode|1|column=distribution.dbo.MSsnapshot_agents.publisher_security_mode declared=NULL call=ok
 R|D.sp_addpublication_snapshot.transactional.@publisher_login|''|column=distribution.dbo.MSsnapshot_agents.publisher_login declared=NULL call=ok
-R|D.sp_addpublication_snapshot.transactional.@publisher_password|set|column=distribution.dbo.MSsnapshot_agents.publisher_password (secret; sp_addpublication already wrote one) declared=NULL call=ok
+R|D.sp_addpublication_snapshot.transactional.@publisher_password|pre-existing(set)|column=distribution.dbo.MSsnapshot_agents.publisher_password (secret); pre-existing: sp_addpublication wrote it before this call, so this is not a default of sp_addpublication_snapshot declared=NULL call=ok
 R|D.sp_addpublication_snapshot.transactional.@job_login|null|column=distribution.dbo.MSsnapshot_agents.job_login declared=NULL call=ok
 R|D.sp_addpublication_snapshot.transactional.@job_password|null|column=distribution.dbo.MSsnapshot_agents.job_password (secret) declared=NULL call=ok
 R|D.sp_addpublication_snapshot.transactional.@publisher|repllab|column=distribution.dbo.MSsnapshot_agents.publisher_id (server name) declared=NULL call=ok
@@ -101,7 +101,7 @@ R|D.sp_addpublication.snapshot.@centralized_conflicts|null|column=syspublication
 R|D.sp_addpublication.snapshot.@conflict_retention|14|column=syspublications.conflict_retention (days) declared=14 call=ok
 R|D.sp_addpublication.snapshot.@queue_type|null|column=syspublications.queue_type declared=NULL call=ok
 R|D.sp_addpublication.snapshot.@add_to_active_directory|null|column=syspublications.ad_guidname (NULL: not in Active Directory) declared=N'false' call=ok
-R|D.sp_addpublication.snapshot.@logreader_job_name|REPLLAB-Sales-<id>|column=distribution.dbo.MSlogreader_agents.name of the publication database (Sales has one before the call; sp_addpublication creates one in a database that has none) declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@logreader_job_name|pre-existing(REPLLAB-Sales-<id>)|column=distribution.dbo.MSlogreader_agents.name of the publication database; pre-existing: Sales has its log reader before the call (sp_addpublication creates one in a database that has none), so this is not a default declared=NULL call=ok
 R|D.sp_addpublication.snapshot.@qreader_job_name|no-row|column=distribution.dbo.MSqreader_agents.name (one queue reader per distributor, created for queued updating only) declared=NULL call=ok
 R|D.sp_addpublication.snapshot.@publisher|repllab|column=distribution.dbo.MSpublications.publisher_id (server name) declared=NULL call=ok
 R|D.sp_addpublication.snapshot.@allow_initialize_from_backup|0|column=syspublications.allow_initialize_from_backup declared=NULL call=ok
@@ -396,7 +396,7 @@ R|D.sp_addsubscription.push.@active_start_time_of_day|0|column=msdb.dbo.syssched
 R|D.sp_addsubscription.push.@active_end_time_of_day|235959|column=msdb.dbo.sysschedules.active_end_time of the agent job declared=NULL call=ok
 R|D.sp_addsubscription.push.@active_start_date|today|column=msdb.dbo.sysschedules.active_start_date of the agent job (today = the day of the run) declared=NULL call=ok
 R|D.sp_addsubscription.push.@active_end_date|99991231|column=msdb.dbo.sysschedules.active_end_date of the agent job declared=NULL call=ok
-R|D.sp_addsubscription.push.@optional_command_line|-Subscriber [repllab] -SubscriberDB [m_dsub1] -Publisher [repllab] -Distributor [repllab] -DistributorSecurityMode 1 -PublisherDB [Sales]    -Continuous|column=msdb.dbo.sysjobsteps.command of the agent job the call created declared=NULL call=ok
+R|D.sp_addsubscription.push.@optional_command_line|absent|column=msdb.dbo.sysjobsteps.command of the agent job the call created, minus the switches the procedure generates (absent: nothing else) declared=NULL call=ok
 R|D.sp_addsubscription.push.@reserved|no-column|column=no-column: internal use declared=NULL call=ok
 R|D.sp_addsubscription.push.@enabled_for_syncmgr|no-column|column=no-column: Windows Synchronization Manager of a pull subscriber, nothing stored by sp_addsubscription declared=NULL call=ok
 R|D.sp_addsubscription.push.@offloadagent|0|column=distribution.dbo.MSdistribution_agents.offload_enabled declared=0 call=ok
@@ -414,7 +414,7 @@ R|D.sp_addsubscription.push.@fileidhint|no-column|column=no-column: read only wh
 R|D.sp_addsubscription.push.@unload|no-column|column=no-column: read only when sync_type is initialize with backup declared=1 call=ok
 R|D.sp_addsubscription.push.@subscriptionlsn|publisher_seqno|column=distribution.dbo.MSsubscriptions.subscription_seqno (set from the parameter only with initialize from lsn) declared=null call=ok
 R|D.sp_addsubscription.push.@subscriptionstreams|null|column=distribution.dbo.MSdistribution_agents.subscriptionstreams declared=null call=ok
-R|D.sp_addsubscription.push.@subscriber_type|null|column=distribution.dbo.MSdistribution_agents.subscriber_type (0 SQL Server) declared=0 call=ok
+R|D.sp_addsubscription.push.@subscriber_type|pre-existing(0)|column=distribution.dbo.MSsubscriber_info.type of (publisher, subscriber) (0 SQL Server); sp_addsubscription reads it there and never writes MSdistribution_agents.subscriber_type. The row pre-exists on the lab (registered by setup.sql), so the default for an unregistered subscriber is not measured declared=0 call=ok
 R|D.sp_addsubscription.push.@memory_optimized|0|column=distribution.dbo.MSdistribution_agents.memory_optimized declared=0 call=ok
 R|D.sp_addsubscription.push.@subscriber_security_mode|1|column=distribution.dbo.MSdistribution_agents.subscriber_security_mode declared=NULL call=ok
 R|D.sp_addsubscription.push.@subscriber_login|''|column=distribution.dbo.MSdistribution_agents.subscriber_login declared=NULL call=ok
@@ -467,7 +467,7 @@ R|D.sp_addsubscription.pull.@active_start_time_of_day|no-job|column=msdb.dbo.sys
 R|D.sp_addsubscription.pull.@active_end_time_of_day|no-job|column=msdb.dbo.sysschedules.active_end_time of the agent job declared=NULL call=ok
 R|D.sp_addsubscription.pull.@active_start_date|no-job|column=msdb.dbo.sysschedules.active_start_date of the agent job (today = the day of the run) declared=NULL call=ok
 R|D.sp_addsubscription.pull.@active_end_date|no-job|column=msdb.dbo.sysschedules.active_end_date of the agent job declared=NULL call=ok
-R|D.sp_addsubscription.pull.@optional_command_line|no-job|column=msdb.dbo.sysjobsteps.command of the agent job the call created declared=NULL call=ok
+R|D.sp_addsubscription.pull.@optional_command_line|no-job|column=msdb.dbo.sysjobsteps.command of the agent job the call created, minus the switches the procedure generates (absent: nothing else) declared=NULL call=ok
 R|D.sp_addsubscription.pull.@reserved|no-column|column=no-column: internal use declared=NULL call=ok
 R|D.sp_addsubscription.pull.@enabled_for_syncmgr|no-column|column=no-column: Windows Synchronization Manager of a pull subscriber, nothing stored by sp_addsubscription declared=NULL call=ok
 R|D.sp_addsubscription.pull.@offloadagent|0|column=distribution.dbo.MSdistribution_agents.offload_enabled declared=0 call=ok
@@ -485,7 +485,7 @@ R|D.sp_addsubscription.pull.@fileidhint|no-column|column=no-column: read only wh
 R|D.sp_addsubscription.pull.@unload|no-column|column=no-column: read only when sync_type is initialize with backup declared=1 call=ok
 R|D.sp_addsubscription.pull.@subscriptionlsn|publisher_seqno|column=distribution.dbo.MSsubscriptions.subscription_seqno (set from the parameter only with initialize from lsn) declared=null call=ok
 R|D.sp_addsubscription.pull.@subscriptionstreams|null|column=distribution.dbo.MSdistribution_agents.subscriptionstreams declared=null call=ok
-R|D.sp_addsubscription.pull.@subscriber_type|null|column=distribution.dbo.MSdistribution_agents.subscriber_type (0 SQL Server) declared=0 call=ok
+R|D.sp_addsubscription.pull.@subscriber_type|pre-existing(0)|column=distribution.dbo.MSsubscriber_info.type of (publisher, subscriber) (0 SQL Server); sp_addsubscription reads it there and never writes MSdistribution_agents.subscriber_type. The row pre-exists on the lab (registered by setup.sql), so the default for an unregistered subscriber is not measured declared=0 call=ok
 R|D.sp_addsubscription.pull.@memory_optimized|0|column=distribution.dbo.MSdistribution_agents.memory_optimized declared=0 call=ok
 R|D.sp_addsubscription.pull.@subscriber_security_mode|1|column=distribution.dbo.MSdistribution_agents.subscriber_security_mode declared=NULL call=ok
 R|D.sp_addsubscription.pull.@subscriber_login|''|column=distribution.dbo.MSdistribution_agents.subscriber_login declared=NULL call=ok
@@ -503,11 +503,11 @@ R|D.sp_addpullsubscription_agent.pull.@subscriber_security_mode|1|column=msdb.db
 R|D.sp_addpullsubscription_agent.pull.@subscriber_login|absent|column=msdb.dbo.sysjobsteps.command of the pull agent job, switch -SubscriberLogin declared=NULL call=ok
 R|D.sp_addpullsubscription_agent.pull.@subscriber_password|absent|column=msdb.dbo.sysjobsteps.command of the pull agent job, switch -SubscriberPassword (secret) declared=NULL call=ok
 R|D.sp_addpullsubscription_agent.pull.@distributor|repllab|column=<subscription db>.dbo.MSsubscription_properties.distributor declared=@publisher call=ok
-R|D.sp_addpullsubscription_agent.pull.@distribution_db|no-column|column=no-column: not in MSsubscription_properties; the step command, printed under @optional_command_line, has no switch for it declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@distribution_db|no-column|column=no-column: not in MSsubscription_properties, and the step command has no switch for it (-Publisher -PublisherDB -Publication -Distributor -SubscriptionType -Subscriber -SubscriberSecurityMode -SubscriberDB) declared=NULL call=ok
 R|D.sp_addpullsubscription_agent.pull.@distributor_security_mode|1|column=<subscription db>.dbo.MSsubscription_properties.distributor_security_mode declared=1 call=ok
 R|D.sp_addpullsubscription_agent.pull.@distributor_login|''|column=<subscription db>.dbo.MSsubscription_properties.distributor_login declared=NULL call=ok
 R|D.sp_addpullsubscription_agent.pull.@distributor_password|set|column=<subscription db>.dbo.MSsubscription_properties.distributor_password (secret) declared=NULL call=ok
-R|D.sp_addpullsubscription_agent.pull.@optional_command_line|-Publisher [repllab] -PublisherDB [Sales] -Publication [m_ps] -Distributor [repllab] -SubscriptionType 2 -Subscriber [repllab] -SubscriberSecurityMode 1 -SubscriberDB [m_dsub2]|column=msdb.dbo.sysjobsteps.command of the pull agent job (the parameter is appended to it) declared='' call=ok
+R|D.sp_addpullsubscription_agent.pull.@optional_command_line|absent|column=msdb.dbo.sysjobsteps.command of the pull agent job, minus the switches the procedure generates (absent: nothing else) declared='' call=ok
 R|D.sp_addpullsubscription_agent.pull.@frequency_type|no-schedule|column=msdb.dbo.sysschedules.freq_type of the agent job declared=2 call=ok
 R|D.sp_addpullsubscription_agent.pull.@frequency_interval|no-schedule|column=msdb.dbo.sysschedules.freq_interval of the agent job declared=1 call=ok
 R|D.sp_addpullsubscription_agent.pull.@frequency_relative_interval|no-schedule|column=msdb.dbo.sysschedules.freq_relative_interval of the agent job declared=1 call=ok
@@ -549,7 +549,7 @@ R|D.sp_addlogreader_agent.publication-db.@publisher_login|''|column=distribution
 R|D.sp_addlogreader_agent.publication-db.@publisher_password|set|column=distribution.dbo.MSlogreader_agents.publisher_password (secret) declared=NULL call=ok
 R|D.sp_addlogreader_agent.publication-db.@publisher|repllab|column=distribution.dbo.MSlogreader_agents.publisher_id (server name) declared=NULL call=ok
 R|D.sp_addlogreader_agent.publication-db.@job_security_mode|no-column|column=no-column: Managed Instance only (refused with 41989 elsewhere, 07-changes) declared=NULL call=ok
-R|D.sp_add_agent_profile.agent-type-3.@profile_id|assigned|column=msdb.dbo.MSagent_profiles.profile_id (output) declared=NULL call=ok
+R|D.sp_add_agent_profile.agent-type-3.@profile_id|assigned|column=msdb.dbo.MSagent_profiles.profile_id (output variable passed) declared=NULL passed call=ok
 R|D.sp_add_agent_profile.agent-type-3.@profile_type|1|column=MSagent_profiles.type (0 system, 1 custom) declared=1 call=ok
 R|D.sp_add_agent_profile.agent-type-3.@description|null|column=MSagent_profiles.description declared=NULL call=ok
 R|D.sp_add_agent_profile.agent-type-3.@default|0|column=MSagent_profiles.def_profile declared=0 call=ok

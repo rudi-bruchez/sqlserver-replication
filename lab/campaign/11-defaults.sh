@@ -16,7 +16,8 @@
 # Values are printed so that two runs give the same file: agent and job names with
 # <id> or <guid> for their generated suffix, a generated sync view as syncobj_0x<hex>,
 # active_start_date of the run's day as today, an output id as assigned, a password
-# as null, empty or set, an empty string as ''. no-job: the context created no agent job; no-schedule: the job
+# as null, empty or set, an empty string as ''; pre-existing(<value>): the value was
+# there before the call (not a default; see the row's detail). no-job: the context created no agent job; no-schedule: the job
 # has no schedule (on demand); no-row: the table that would hold it has no row for the
 # object.
 #
@@ -145,7 +146,7 @@ MAP_PUB=$(cat <<EOF
 @conflict_retention|syspublications.conflict_retention (days)|(SELECT conflict_retention FROM #p)
 @queue_type|syspublications.queue_type|(SELECT queue_type FROM #p)
 @add_to_active_directory|syspublications.ad_guidname (NULL: not in Active Directory)|(SELECT ad_guidname FROM #p)
-@logreader_job_name|distribution.dbo.MSlogreader_agents.name of the publication database (Sales has one before the call; sp_addpublication creates one in a database that has none)|$(norm "(SELECT name FROM #lr)")
+@logreader_job_name|distribution.dbo.MSlogreader_agents.name of the publication database; pre-existing: Sales has its log reader before the call (sp_addpublication creates one in a database that has none), so this is not a default|(SELECT CONCAT(N'pre-existing(', $(norm "(SELECT name FROM #lr)"), N')'))
 @qreader_job_name|distribution.dbo.MSqreader_agents.name (one queue reader per distributor, created for queued updating only)|ISNULL((SELECT TOP (1) name FROM distribution.dbo.MSqreader_agents), N'no-row')
 @publisher|distribution.dbo.MSpublications.publisher_id (server name)|$(srv "(SELECT publisher_id FROM #mp)")
 @allow_initialize_from_backup|syspublications.allow_initialize_from_backup|(SELECT allow_initialize_from_backup FROM #p)
@@ -274,7 +275,7 @@ MAP_SUB=$(cat <<EOF
 @update_mode|syssubscriptions.update_mode (0 read only)|(SELECT TOP (1) update_mode FROM #sub)
 @loopback_detection|syssubscriptions.loopback_detection|(SELECT TOP (1) loopback_detection FROM #sub)
 $(sched_map)
-@optional_command_line|msdb.dbo.sysjobsteps.command of the agent job the call created|$(command_of)
+@optional_command_line|msdb.dbo.sysjobsteps.command of the agent job the call created, minus the switches the procedure generates (absent: nothing else)|$(extra_switches)
 @reserved|no-column: internal use|$NC
 @enabled_for_syncmgr|no-column: Windows Synchronization Manager of a pull subscriber, nothing stored by sp_addsubscription|$NC
 @offloadagent|$DA.offload_enabled|(SELECT offload_enabled FROM #da)
@@ -292,7 +293,7 @@ $(sched_map)
 @unload|no-column: read only when sync_type is initialize with backup|$NC
 @subscriptionlsn|distribution.dbo.MSsubscriptions.subscription_seqno (set from the parameter only with initialize from lsn)|(SELECT TOP (1) CASE WHEN subscription_seqno IS NULL THEN NULL WHEN subscription_seqno = publisher_seqno THEN N'publisher_seqno' ELSE N'other' END FROM #msub)
 @subscriptionstreams|$DA.subscriptionstreams|(SELECT subscriptionstreams FROM #da)
-@subscriber_type|$DA.subscriber_type (0 SQL Server)|(SELECT subscriber_type FROM #da)
+@subscriber_type|distribution.dbo.MSsubscriber_info.type of (publisher, subscriber) (0 SQL Server); sp_addsubscription reads it there and never writes MSdistribution_agents.subscriber_type. The row pre-exists on the lab (registered by setup.sql), so the default for an unregistered subscriber is not measured|ISNULL((SELECT TOP (1) CONCAT(N'pre-existing(', type, N')') FROM distribution.dbo.MSsubscriber_info WHERE UPPER(publisher) = UPPER(@@SERVERNAME) AND UPPER(subscriber) = UPPER(@@SERVERNAME)), N'no-row')
 @memory_optimized|$DA.memory_optimized|(SELECT memory_optimized FROM #da)
 @subscriber_security_mode|$DA.subscriber_security_mode|(SELECT subscriber_security_mode FROM #da)
 @subscriber_login|$DA.subscriber_login|(SELECT subscriber_login FROM #da)
@@ -343,11 +344,11 @@ MAP_PULLAGENT=$(cat <<EOF
 @subscriber_login|$CMD -SubscriberLogin|$(switch SubscriberLogin)
 @subscriber_password|$CMD -SubscriberPassword (secret)|$(switch_secret SubscriberPassword)
 @distributor|$SP.distributor|(SELECT distributor FROM #sp)
-@distribution_db|no-column: not in MSsubscription_properties; the step command, printed under @optional_command_line, has no switch for it|$NC
+@distribution_db|no-column: not in MSsubscription_properties, and the step command has no switch for it (-Publisher -PublisherDB -Publication -Distributor -SubscriptionType -Subscriber -SubscriberSecurityMode -SubscriberDB)|$NC
 @distributor_security_mode|$SP.distributor_security_mode|(SELECT distributor_security_mode FROM #sp)
 @distributor_login|$SP.distributor_login|(SELECT distributor_login FROM #sp)
 @distributor_password|$SP.distributor_password (secret)|$(secret "(SELECT distributor_password FROM #sp)")
-@optional_command_line|msdb.dbo.sysjobsteps.command of the pull agent job (the parameter is appended to it)|$(command_of)
+@optional_command_line|msdb.dbo.sysjobsteps.command of the pull agent job, minus the switches the procedure generates (absent: nothing else)|$(extra_switches)
 $(sched_map)
 @distribution_jobid|$RS.agent_id (output)|(SELECT CASE WHEN r.agent_id IS NULL THEN NULL WHEN EXISTS (SELECT 1 FROM #j WHERE job_id = CONVERT(uniqueidentifier, r.agent_id)) THEN N'agent_job_id' ELSE N'assigned' END FROM #rs r)
 @encrypted_distributor_password|no-column: a flag of the call (how @distributor_password is passed)|$NC
@@ -391,7 +392,7 @@ $(sched_map)
 @snapshot_job_name|msdb.dbo.sysjobs.name of the agent job ($SN.job_id)|$(norm "(SELECT name FROM #j)")
 @publisher_security_mode|$SN.publisher_security_mode|(SELECT publisher_security_mode FROM #sn)
 @publisher_login|$SN.publisher_login|(SELECT publisher_login FROM #sn)
-@publisher_password|$SN.publisher_password (secret; sp_addpublication already wrote one)|$(secret "(SELECT publisher_password FROM #sn)")
+@publisher_password|$SN.publisher_password (secret); pre-existing: sp_addpublication wrote it before this call, so this is not a default of sp_addpublication_snapshot|(SELECT CONCAT(N'pre-existing(', $(secret "(SELECT publisher_password FROM #sn)"), N')'))
 @job_login|$SN.job_login|(SELECT job_login FROM #sn)
 @job_password|$SN.job_password (secret)|$(secret "(SELECT job_password FROM #sn)")
 @publisher|$SN.publisher_id (server name)|$(srv "(SELECT publisher_id FROM #sn)")
@@ -402,7 +403,7 @@ $(sched_map)
 EOF
 )
 MAP_PROF=$(cat <<EOF
-@profile_id|msdb.dbo.MSagent_profiles.profile_id (output)|(SELECT CASE WHEN profile_id IS NOT NULL THEN N'assigned' END FROM #pr)
+@profile_id|msdb.dbo.MSagent_profiles.profile_id (output variable passed)|(SELECT CASE WHEN profile_id IS NOT NULL THEN N'assigned' END FROM #pr)
 @profile_type|MSagent_profiles.type (0 system, 1 custom)|(SELECT type FROM #pr)
 @description|MSagent_profiles.description|(SELECT description FROM #pr)
 @default|MSagent_profiles.def_profile|(SELECT def_profile FROM #pr)
@@ -418,6 +419,7 @@ cleaned=0
 cleanup() {
     [ "$cleaned" = 1 ] && return
     cleaned=1
+    ( stop_m_agents ) || true
     sql <<'SQL' >&2 || true
 SET NOCOUNT ON;
 IF DB_ID(N'm_dsub2') IS NOT NULL
@@ -598,7 +600,7 @@ measure sp_addlogreader_agent publication-db "$MAP_LR" "$PRE_LR" "$TRY_RESULT" "
 
 # A distribution agent profile.
 call prof.3 msdb "DECLARE @pid int; EXEC @rc = sp_add_agent_profile @profile_id = @pid OUTPUT, @profile_name = N'm_prof', @agent_type = 3;"
-measure sp_add_agent_profile agent-type-3 "$MAP_PROF" "$PRE_PROF" "$TRY_RESULT" "" m_prof
+measure sp_add_agent_profile agent-type-3 "$MAP_PROF" "$PRE_PROF" "$TRY_RESULT" "@profile_id" m_prof
 
 # Controls.
 bad=0

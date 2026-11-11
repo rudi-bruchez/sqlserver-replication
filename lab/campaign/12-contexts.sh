@@ -59,6 +59,7 @@ cleanup() {
     [ "$cleaned" = 1 ] && return
     cleaned=1
     local d
+    ( stop_m_agents ) || true
     for d in $DBS; do
         # Two steps: a batch that names a missing MSreplication_subscriptions fails with 208.
         if [ "$(sql_value "SELECT CASE WHEN DB_ID(N'$d') IS NOT NULL AND OBJECT_ID(N'[$d].dbo.MSreplication_subscriptions') IS NOT NULL THEN 1 ELSE 0 END" 2>/dev/null)" = 1 ]; then
@@ -196,6 +197,7 @@ row() {
     fi
     try_in "$db" "$stmt"; res=$TRY_RESULT; msg=$TRY_MSG
     if [ "$res" = ok ] || [ "$always" = 1 ] || { [ "$always" = prereq ] && [ "$pres" = ok ]; }; then
+        stop_m_agents
         try_in "$udb" "$undo"; ures=$TRY_RESULT
         [ "$ures" = ok ] || control "X.$proc.$db: undo in $udb gave $ures ($TRY_MSG)"
     fi

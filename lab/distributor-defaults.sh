@@ -27,8 +27,9 @@
 #
 # Asserted, exit 1 otherwise (rows on stderr): X.sp_adddistributor.msdb is 5001 (the
 # review's observation); every undo and every D call is ok; 3 contexts; TOTAL equals the
-# sum of the per-context counts and the number of rows; no row or field of exactly 256
-# characters. An error that escapes a call's TRY...CATCH or a value query stops the script
+# sum of the per-context counts and the number of rows. A value of exactly 256 characters
+# (an nvarchar(max) cut) stops the script in measure; a row of that length is padded by
+# r() (lab/defaults-lib.sh). An error that escapes a call's TRY...CATCH or a value query stops the script
 # (sqlcmd -b in try_in and measure), which stands for campaign.sh's uncaught guard.
 set -euo pipefail
 lab=$(cd "$(dirname "$0")" && pwd)
@@ -190,8 +191,6 @@ measure sp_adddistpublisher fresh "$MAP_DISTPUB" "$PRE_DISTPUB" "$dcall from $D_
 nd=$(printf '%s\n' "${rows[@]}" | grep -c '^R|D\.' || true)
 [ "$nd" = "$COUNT_SUM" ] || control "$nd D rows, the per-context counts add up to $COUNT_SUM"
 [ "${#rows[@]}" = $((COUNT_SUM + 9)) ] || control "${#rows[@]} rows, expected $COUNT_SUM D rows and 9 X rows"
-long=$(printf '%s\n' "${rows[@]}" | awk -F'|' '{ hit = (length($0) == 256); for (i = 1; i <= NF; i++) if (length($i) == 256) hit = 1; if (hit) print substr($0, 1, 40) }')
-[ -z "$long" ] || control "row or field of 256 characters: $long"
 for c in "${COUNTS[@]}"; do echo "count $c"; done
 echo "count sum: $COUNT_SUM"
 if [ "$bad" != 0 ]; then
