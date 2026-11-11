@@ -14,7 +14,26 @@ fi
 filter=$1
 shift
 enc=$(python3 -I -c 'import os,urllib.parse;print(urllib.parse.quote(os.environ["MSSQL_SA_PASSWORD"],safe=""))')
+export SQLREPL_ENC="$enc"
 export SQLREPL_TEST_DSN="sqlserver://sa:${enc}@127.0.0.1:11980?encrypt=disable"
 export SQLREPL_TEST_LAB=1
-go test -count=1 -v -run "$filter" "$@" 2>&1 | grep -E '^(=== RUN|--- |ok|FAIL|PASS|panic)'
-
+rc=0
+out=$(go test -count=1 -v -run "$filter" "$@" 2>&1) || rc=$?
+# Redact the DSN, the encoded password and the password, reading them from the
+# environment: the output is shown in full otherwise.
+printf '%s\n' "$out" | python3 -I -c '
+import os, sys
+t = sys.stdin.read()
+for k in ("SQLREPL_TEST_DSN", "SQLREPL_ENC", "MSSQL_SA_PASSWORD"):
+    v = os.environ.get(k, "")
+    if v:
+        t = t.replace(v, "<redacted>")
+sys.stdout.write(t)
+'
+if [ "$rc" -eq 0 ]; then
+  if printf '%s\n' "$out" | grep -q '\[no tests to run\]' || ! printf '%s\n' "$out" | grep -qE '^--- (PASS|FAIL)'; then
+    echo "gotest.sh: no test matched $filter" >&2
+    exit 3
+  fi
+fi
+exit "$rc"
