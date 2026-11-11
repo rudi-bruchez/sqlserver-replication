@@ -11,7 +11,7 @@ Improving and managing SQL Server replication
 
 Reads a publication database, its publications, articles, push subscriptions and agents, and writes them as YAML. It only runs `SELECT` statements, on the publisher and on the distributor.
 
-Scope: transactional replication, push subscriptions, SQL Server publisher. Anything else found (pull subscriptions, updatable subscriptions, peer-to-peer, snapshot publications) is reported under `warnings`.
+Scope: transactional replication, push subscriptions, SQL Server publisher. Anything else found (pull subscriptions, updatable subscriptions, peer-to-peer, snapshot publications) is reported under `findings`.
 
 ```
 go build ./cmd/sqlrepl

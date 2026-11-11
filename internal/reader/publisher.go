@@ -60,31 +60,32 @@ func (e *exporter) readPublications() error {
 		}
 		if internet != 0 {
 			p.Snapshot.FTP = &model.FTP{
-				Address:        model.Ptr(ftpAddress),
-				Port:           model.Ptr(ftpPort),
-				Subdirectory:   model.Ptr(ftpSubdirectory),
-				Login:          model.Ptr(ftpLogin),
-				PasswordSecret: model.Ptr("ftp/" + p.Name),
+				Address:      model.Ptr(ftpAddress),
+				Port:         model.Ptr(ftpPort),
+				Subdirectory: model.Ptr(ftpSubdirectory),
+				Login:        model.Ptr(ftpLogin),
+				PasswordSecret: model.Ptr(e.secret(model.Join(model.Join(model.Join(publicationPath(p.Name), "snapshot"), "ftp"), "password_secret"),
+					"FTP", ftpAddress, ftpLogin)),
 			}
 		}
 
 		if replFreq != 0 {
-			e.warn("publication %s: snapshot publication, out of scope", p.Name)
+			e.find(model.FindingOutOfScope, publicationPath(p.Name), "publication %s: snapshot publication, out of scope", p.Name)
 		}
 		if syncTran != 0 || queuedTran != 0 {
-			e.warn("publication %s: updatable subscriptions (allow_sync_tran or allow_queued_tran) are out of scope", p.Name)
+			e.find(model.FindingOutOfScope, publicationPath(p.Name), "publication %s: updatable subscriptions (allow_sync_tran or allow_queued_tran) are out of scope", p.Name)
 		}
 		if dts != 0 {
-			e.warn("publication %s: allow_dts is set, DTS transformations are out of scope", p.Name)
+			e.find(model.FindingOutOfScope, publicationPath(p.Name), "publication %s: allow_dts is set, DTS transformations are out of scope", p.Name)
 		}
 		if options&(decode.PubOptionP2P|decode.PubOptionP2PLocalChangesOnly|decode.PubOptionP2PConflictDetection|decode.PubOptionLastWriterWins) != 0 {
-			e.warn("publication %s: peer-to-peer options are set (options = 0x%X), out of scope", p.Name, options)
+			e.find(model.FindingOutOfScope, publicationPath(p.Name), "publication %s: peer-to-peer options are set (options = 0x%X), out of scope", p.Name, options)
 		}
 		if options&decode.PubOptionNonSQLSubscribers != 0 {
-			e.warn("publication %s: enabled for non-SQL Server subscribers, out of scope", p.Name)
+			e.find(model.FindingOutOfScope, publicationPath(p.Name), "publication %s: enabled for non-SQL Server subscribers, out of scope", p.Name)
 		}
 		if u := decode.PublicationOptionUnknownBits(options); u != 0 {
-			e.warn("publication %s: undecoded bits in syspublications.options: 0x%X", p.Name, u)
+			e.find(model.FindingNote, publicationPath(p.Name), "publication %s: undecoded bits in syspublications.options: 0x%X", p.Name, u)
 		}
 
 		p.Articles = []model.Article{}
@@ -161,7 +162,7 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 		}
 		p := e.publication(pubid)
 		if p == nil {
-			e.warn("article %s: publication id %d not found", a.Name, pubid)
+			e.find(model.FindingNote, "publications", "article %s: publication id %d not found", a.Name, pubid)
 			continue
 		}
 		if err := e.fillCommon(&a, p.Name, typ, preCreation, schemaOption, t); err != nil {
@@ -171,7 +172,7 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 		a.InsertColumnNames = model.Ptr(status&decode.ArticleStatusInsertColumnNames != 0)
 		a.Parameterized = model.Ptr(status&decode.ArticleStatusParameterized != 0)
 		if u := decode.ArticleStatusUnknownBits(status); u != 0 {
-			e.warn("article %s.%s: undecoded bits in sysarticles.status: 0x%X", p.Name, a.Name, u)
+			e.find(model.FindingNote, articlePath(p.Name, a.Name), "article %s.%s: undecoded bits in sysarticles.status: 0x%X", p.Name, a.Name, u)
 		}
 		a.Commands = &model.Commands{
 			Insert: command(insCmd),
@@ -192,7 +193,7 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 			} else if filterClause != "" {
 				// Measured (lab/campaign/04-filter-clause.sh, case F1): such a clause
 				// filters the snapshot, not the log reader.
-				e.warn("article %s.%s: filter clause without a filter procedure (sp_articlefilter); it filters the snapshot only, changes are replicated unfiltered", p.Name, a.Name)
+				e.find(model.FindingIncomplete, model.Join(articlePath(p.Name, a.Name), "filter"), "article %s.%s: filter clause without a filter procedure (sp_articlefilter); it filters the snapshot only, changes are replicated unfiltered", p.Name, a.Name)
 			}
 		}
 		if syncObjID != 0 && syncObjID != objID && !strings.HasPrefix(syncName, "syncobj_0x") {
@@ -232,7 +233,7 @@ func (e *exporter) readSchemaArticles() error {
 		}
 		p := e.publication(pubid)
 		if p == nil {
-			e.warn("article %s: publication id %d not found", a.Name, pubid)
+			e.find(model.FindingNote, "publications", "article %s: publication id %d not found", a.Name, pubid)
 			continue
 		}
 		if err := e.fillCommon(&a, p.Name, typ, preCreation, schemaOption, t); err != nil {
@@ -262,7 +263,7 @@ func (e *exporter) fillCommon(a *model.Article, pub string, typ, preCreation int
 	// An empty list is written [], "no option"; nil would be "omitted".
 	a.SchemaOptions = model.Ptr(append([]string{}, decode.SchemaOptionNames(v)...))
 	if a.Source.Name == "" {
-		e.warn("article %s.%s: source object not found", pub, a.Name)
+		e.find(model.FindingUnreadable, model.Join(articlePath(pub, a.Name), "source"), "article %s.%s: source object not found", pub, a.Name)
 	}
 	return nil
 }
@@ -332,14 +333,14 @@ func (e *exporter) readSubscriptions() error {
 		}
 		label := fmt.Sprintf("publication %s, subscription %s.%s", p.Name, k.subscriber, k.database)
 		if s.subscriptionType != 0 {
-			e.warn("%s: pull subscription, out of scope, not exported", label)
+			e.find(model.FindingOutOfScope, subscriptionPath(p.Name, k.subscriber, k.database), "%s: pull subscription, out of scope, not exported", label)
 			continue
 		}
 		if s.updateMode != 0 {
-			e.warn("%s: update_mode %d, updatable subscriptions are out of scope", label, s.updateMode)
+			e.find(model.FindingOutOfScope, subscriptionPath(p.Name, k.subscriber, k.database), "%s: update_mode %d, updatable subscriptions are out of scope", label, s.updateMode)
 		}
 		if s.inconsistent {
-			e.warn("%s: articles disagree on subscription_type, sync_type, update_mode or loopback_detection; the first article's values are exported", label)
+			e.find(model.FindingIncomplete, subscriptionPath(p.Name, k.subscriber, k.database), "%s: articles disagree on subscription_type, sync_type, update_mode or loopback_detection; the first article's values are exported", label)
 		}
 		sub := model.Subscription{
 			Subscriber:        k.subscriber,

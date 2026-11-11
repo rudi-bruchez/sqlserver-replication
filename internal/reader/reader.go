@@ -60,7 +60,8 @@ type exporter struct {
 	articleNames map[int][]string // pubid → article names, sorted
 	profiles     map[int]profileRow
 	usedProfiles map[int]bool
-	warned       map[string]bool
+	found        map[string]bool
+	secrets      secrets
 }
 
 type profileRow struct {
@@ -71,20 +72,44 @@ type profileRow struct {
 	isDefault   bool
 }
 
-// warn records a warning once, however many rows raise it.
-func (e *exporter) warn(format string, args ...any) {
-	w := fmt.Sprintf(format, args...)
-	if e.warned[w] {
+// find records a finding once, however many rows raise it.
+func (e *exporter) find(kind, path, format string, args ...any) {
+	f := model.Finding{Kind: kind, Path: path, Message: fmt.Sprintf(format, args...)}
+	k := f.Kind + "\x00" + f.Path + "\x00" + f.Message
+	if e.found[k] {
 		return
 	}
-	e.warned[w] = true
-	e.cfg.Warnings = append(e.cfg.Warnings, w)
+	e.found[k] = true
+	e.cfg.Findings = append(e.cfg.Findings, f)
+}
+
+// secret returns the secret name of a source, noting a collision at path.
+func (e *exporter) secret(path, kind string, parts ...string) string {
+	n, f := e.secrets.name(kind, parts...)
+	if f != nil {
+		e.find(f.Kind, path, "%s", f.Message)
+	}
+	return n
+}
+
+// publicationPath, articlePath and subscriptionPath build finding paths.
+func publicationPath(name string) string {
+	return "publications" + model.Element(model.Publication{Name: name}.Key())
+}
+
+func articlePath(pub, name string) string {
+	return model.Join(publicationPath(pub), "articles") + model.Element(model.Article{Name: name}.Key())
+}
+
+func subscriptionPath(pub, subscriber, database string) string {
+	return model.Join(publicationPath(pub), "subscriptions") +
+		model.Element(model.Subscription{Subscriber: subscriber, Database: database}.Key())
 }
 
 func (e *exporter) run() error {
 	e.cfg = &model.Config{Version: model.FormatVersion}
 	e.usedProfiles = map[int]bool{}
-	e.warned = map[string]bool{}
+	e.found = map[string]bool{}
 
 	name := e.src.PublisherName
 	if name == "" {
@@ -144,11 +169,12 @@ func (e *exporter) readDistributor() error {
 	d.WorkingDirectory = model.Ptr(workingDirectory)
 	d.PublisherConnection = &model.Connection{Security: model.Ptr(decode.SecurityMode(security)), Login: model.Ptr(login)}
 	if security == 0 {
-		d.PublisherConnection.PasswordSecret = model.Ptr("publisher/" + e.cfg.Publisher.Server)
+		d.PublisherConnection.PasswordSecret = model.Ptr(e.secret("distributor.publisher_connection.password_secret",
+			"SQL", e.cfg.Publisher.Server, login))
 	}
 	d.Trusted = model.Ptr(trusted != 0)
 	if publisherType != "" && !strings.EqualFold(publisherType, "MSSQLSERVER") {
-		e.warn("publisher type %s is out of scope", publisherType)
+		e.find(model.FindingOutOfScope, "distributor", "publisher type %s is out of scope", publisherType)
 	}
 	e.dist = quoteName(d.Database)
 
@@ -217,13 +243,13 @@ func (e *exporter) readProfiles() error {
 }
 
 // profileName resolves an agent profile id and records it for export.
-func (e *exporter) profileName(id int) string {
+func (e *exporter) profileName(path string, id int) string {
 	if id == 0 {
 		return ""
 	}
 	p, ok := e.profiles[id]
 	if !ok {
-		e.warn("agent profile id %d not found in msdb.dbo.MSagent_profiles", id)
+		e.find(model.FindingIncomplete, path, "agent profile id %d not found in msdb.dbo.MSagent_profiles", id)
 		return ""
 	}
 	e.usedProfiles[id] = true

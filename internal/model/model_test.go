@@ -297,3 +297,18 @@ func TestNilPropertiesPanicsOnPointerSlice(t *testing.T) {
 	var out []string
 	walkStruct(v, "", nil, v, &out)
 }
+
+func TestSecretName(t *testing.T) {
+	cases := []struct {
+		got, want string
+	}{
+		{SecretName("SQL", "repllab", "distributor_admin"), "SQLREPL_SQL_REPLLAB_DISTRIBUTOR_ADMIN"},
+		{SecretName("SQL", `PUB\INST`, "repl.user"), "SQLREPL_SQL_PUB_INST_REPL_USER"},
+		{SecretName("WIN", `DOMAIN\svc`), "SQLREPL_WIN_DOMAIN_SVC"},
+	}
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Errorf("got %q, want %q", c.got, c.want)
+		}
+	}
+}

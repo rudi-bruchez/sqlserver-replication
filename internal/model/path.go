@@ -29,13 +29,13 @@ func (s SharedDistributionAgent) Key() string { return s.Subscriber + "/" + s.Da
 // Key returns <agent_type>/<name>.
 func (p AgentProfile) Key() string { return p.AgentType + "/" + p.Name }
 
-// element returns the path segment of a list element.
-func element(key string) string {
+// Element returns the path segment of a list element.
+func Element(key string) string {
 	return "[" + strings.ReplaceAll(key, "]", "]]") + "]"
 }
 
-// joinPath appends a YAML key to a path.
-func joinPath(path, key string) string {
+// Join appends a YAML key to a path.
+func Join(path, key string) string {
 	if path == "" {
 		return key
 	}
@@ -122,7 +122,7 @@ func walkStruct(sv reflect.Value, path string, parents []Step, judge reflect.Val
 		if key == "" {
 			key = strings.ToLower(f.Name)
 		}
-		p := joinPath(path, key)
+		p := Join(path, key)
 		child := append(parents[:len(parents):len(parents)], Step{Key: key, Value: judge.Addr().Interface()})
 
 		if fv.Kind() == reflect.Pointer {
@@ -147,7 +147,7 @@ func walkStruct(sv reflect.Value, path string, parents []Step, judge reflect.Val
 				if !ok {
 					panic(fmt.Sprintf("model: %s has no Key method", e.Type()))
 				}
-				walkStruct(e, p+element(k.Key()), child, e, out)
+				walkStruct(e, p+Element(k.Key()), child, e, out)
 			}
 		}
 	}

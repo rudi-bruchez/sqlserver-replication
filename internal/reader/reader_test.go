@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
+
 	_ "github.com/microsoft/go-mssqldb"
 	_ "github.com/microsoft/go-mssqldb/namedpipe"
 	_ "github.com/microsoft/go-mssqldb/sharedmemory"
@@ -89,5 +91,42 @@ func TestQueriesParse(t *testing.T) {
 	// A syntax error must still be reported, or the test proves nothing.
 	if _, err := conn.ExecContext(ctx, "SELECT x FROM WHERE"); err == nil {
 		t.Error("PARSEONLY accepted invalid syntax")
+	}
+}
+
+func TestSecretRegistry(t *testing.T) {
+	var s secrets
+	a, f := s.name("SQL", "a_b", "c")
+	if a != "SQLREPL_SQL_A_B_C" || f != nil {
+		t.Fatalf("first: %q, %v", a, f)
+	}
+	b, f := s.name("SQL", "A_B", "c")
+	if b != a || f != nil {
+		t.Fatalf("same source: %q, %v", b, f)
+	}
+	c, f := s.name("SQL", "a", "b_c")
+	if c != "SQLREPL_SQL_A_B_C_2" {
+		t.Fatalf("collision: %q", c)
+	}
+	if f == nil || f.Kind != model.FindingNote ||
+		!strings.Contains(f.Message, "SQL a_b/c") || !strings.Contains(f.Message, "SQL a/b_c") {
+		t.Fatalf("collision finding: %+v", f)
+	}
+	d, _ := s.name("SQL", "a_b_", "c")
+	if d != "SQLREPL_SQL_A_B__C" {
+		t.Fatalf("distinct name: %q", d)
+	}
+}
+
+func TestFindOnce(t *testing.T) {
+	e := &exporter{cfg: &model.Config{}, found: map[string]bool{}}
+	e.find(model.FindingNote, "publications[P]", "x %d", 1)
+	e.find(model.FindingNote, "publications[P]", "x %d", 1)
+	if n := len(e.cfg.Findings); n != 1 {
+		t.Fatalf("identical calls gave %d findings", n)
+	}
+	e.find(model.FindingNote, "publications[Q]", "x %d", 1)
+	if n := len(e.cfg.Findings); n != 2 {
+		t.Fatalf("different paths gave %d findings", n)
 	}
 }

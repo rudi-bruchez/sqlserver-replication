@@ -8,7 +8,7 @@ A Go tool, `sqlrepl`, that manages SQL Server transactional replication as a dec
 
 Roadmap and status: step 1 (analysis, `docs/analysis/step-1-analysis.md`) and step 2 (read-only export) are done. The design of steps 3 and 4 is in `docs/superpowers/specs/2026-11-10-sqlrepl-plan-apply-design.md`; plan 1 (`docs/superpowers/plans/`, rename and measurement campaign) is done: the 2022 CU27 results in `lab/results/2022/` are those of commit `21c33a1`, its last measuring commit. Step 3 (plan) and step 4 (apply) are not started; the measurements that gate step 3 are made. The export has run against the lab replication of `lab/README.md` (SQL Server 2022 Developer in podman), which found and fixed the command parsing and the filter procedure and sync view rules.
 
-Scope: transactional replication, push subscriptions, SQL Server publisher. Merge, peer-to-peer, updatable, pull and anonymous subscriptions and Oracle publishers are out of scope; the export reports them under `warnings` instead of modelling them.
+Scope: transactional replication, push subscriptions, SQL Server publisher. Merge, peer-to-peer, updatable, pull and anonymous subscriptions and Oracle publishers are out of scope; the export reports them under `findings` instead of modelling them.
 
 Everything written in this repository (docs, code, comments, commits) is in English.
 

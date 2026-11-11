@@ -128,8 +128,8 @@ func runExport(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	for _, w := range cfg.Warnings {
-		fmt.Fprintln(os.Stderr, "warning:", w)
+	for _, f := range cfg.Findings {
+		fmt.Fprintf(os.Stderr, "finding: %s: %s: %s\n", f.Kind, f.Path, f.Message)
 	}
 	if *output == "" {
 		_, err = stdout.Write(out)

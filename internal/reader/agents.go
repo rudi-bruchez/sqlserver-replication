@@ -20,24 +20,26 @@ type agentRow struct {
 }
 
 // agent builds the model of an agent: profile, job, run-as account, command
-// line and schedules. secret names the password secret when the agent uses
-// SQL Server authentication.
-func (e *exporter) agent(label string, r agentRow, secret string) (model.Agent, error) {
-	a := model.Agent{Profile: model.Ptr(e.profileName(r.profileID))}
+// line and schedules. path is the path of the agent, and secretParts the
+// parts of the name of its password secret when it uses SQL Server
+// authentication.
+func (e *exporter) agent(path, label string, r agentRow, secretParts ...string) (model.Agent, error) {
+	a := model.Agent{Profile: model.Ptr(e.profileName(model.Join(path, "profile"), r.profileID))}
 	a.Connection = &model.Connection{Security: model.Ptr(decode.SecurityMode(r.securityMode)), Login: model.Ptr(r.login)}
 	if r.securityMode == 0 {
-		a.Connection.PasswordSecret = model.Ptr(secret)
+		a.Connection.PasswordSecret = model.Ptr(e.secret(model.Join(model.Join(path, "connection"), "password_secret"),
+			"SQL", append(secretParts, r.login)...))
 	}
 
 	if r.jobID == "" {
-		e.warn("%s: no SQL Server Agent job recorded", label)
+		e.find(model.FindingIncomplete, path, "%s: no SQL Server Agent job recorded", label)
 		return a, nil
 	}
 	var jobName, runAs, command string
 	var stepFound int
 	err := e.src.Distributor.QueryRowContext(e.ctx, qJob, r.jobID, r.stepUID).Scan(&jobName, &runAs, &command, &stepFound)
 	if err == sql.ErrNoRows {
-		e.warn("%s: job %s recorded by replication no longer exists in msdb", label, r.jobID)
+		e.find(model.FindingIncomplete, path, "%s: job %s recorded by replication no longer exists in msdb", label, r.jobID)
 		return a, nil
 	}
 	if err != nil {
@@ -47,7 +49,7 @@ func (e *exporter) agent(label string, r agentRow, secret string) (model.Agent, 
 	if stepFound == 0 {
 		// Without a step, run_as and command were not read: they stay nil,
 		// since "" for run_as would claim the Agent service account.
-		e.warn("%s: job %s has no replication step; command and run-as account not exported", label, jobName)
+		e.find(model.FindingIncomplete, path, "%s: job %s has no replication step; command and run-as account not exported", label, jobName)
 	} else {
 		a.RunAs = model.Ptr(runAs)
 		a.Command = model.Ptr(maskPasswords(strings.TrimSpace(command)))
@@ -92,14 +94,14 @@ func (e *exporter) readLogReaderAgent() error {
 		&name, &r.securityMode, &r.login, &r.profileID, &r.jobID, &r.stepUID)
 	if err == sql.ErrNoRows {
 		if len(e.cfg.Publications) > 0 {
-			e.warn("no log reader agent found for %s.%s", e.cfg.Publisher.Server, e.src.Database)
+			e.find(model.FindingIncomplete, "publisher.log_reader_agent", "no log reader agent found for %s.%s", e.cfg.Publisher.Server, e.src.Database)
 		}
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	a, err := e.agent("log reader agent "+name, r, "publisher/"+e.cfg.Publisher.Server)
+	a, err := e.agent("publisher.log_reader_agent", "log reader agent "+name, r, e.cfg.Publisher.Server)
 	if err != nil {
 		return err
 	}
@@ -138,7 +140,7 @@ func (e *exporter) readSnapshotAgents() error {
 		if p == nil {
 			continue
 		}
-		a, err := e.agent("snapshot agent of "+p.Name, f.row, "publisher/"+e.cfg.Publisher.Server)
+		a, err := e.agent(model.Join(publicationPath(p.Name), "snapshot_agent"), "snapshot agent of "+p.Name, f.row, e.cfg.Publisher.Server)
 		if err != nil {
 			return err
 		}
@@ -146,7 +148,7 @@ func (e *exporter) readSnapshotAgents() error {
 	}
 	for _, p := range e.cfg.Publications {
 		if p.SnapshotAgent == nil {
-			e.warn("publication %s: no snapshot agent found at the distributor", p.Name)
+			e.find(model.FindingIncomplete, model.Join(publicationPath(p.Name), "snapshot_agent"), "publication %s: no snapshot agent found at the distributor", p.Name)
 		}
 	}
 	return nil
@@ -191,8 +193,8 @@ func (e *exporter) readDistributionAgents() error {
 		}
 		return nil
 	}
-	build := func(label string, f *found, subscriber, database string) (model.DistributionAgent, error) {
-		a, err := e.agent(label, f.row, "subscriber/"+subscriber+"/"+database)
+	build := func(path, label string, f *found, subscriber string) (model.DistributionAgent, error) {
+		a, err := e.agent(path, label, f.row, subscriber)
 		return model.DistributionAgent{
 			Agent:               a,
 			SubscriptionStreams: model.Ptr(f.streams),
@@ -209,12 +211,13 @@ func (e *exporter) readDistributionAgents() error {
 			s := &p.Subscriptions[j]
 			label := fmt.Sprintf("publication %s, subscription %s.%s", p.Name, s.Subscriber, s.Database)
 			if *p.IndependentAgent {
+				path := model.Join(subscriptionPath(p.Name, s.Subscriber, s.Database), "distribution_agent")
 				f := find(p.Name, s.Subscriber, s.Database)
 				if f == nil {
-					e.warn("%s: no push distribution agent found at the distributor", label)
+					e.find(model.FindingIncomplete, path, "%s: no push distribution agent found at the distributor", label)
 					continue
 				}
-				a, err := build("distribution agent of "+label, f, s.Subscriber, s.Database)
+				a, err := build(path, "distribution agent of "+label, f, s.Subscriber)
 				if err != nil {
 					return err
 				}
@@ -226,12 +229,14 @@ func (e *exporter) readDistributionAgents() error {
 				continue
 			}
 			shared[key] = true
+			path := model.Join("publisher", "shared_distribution_agents") +
+				model.Element(model.SharedDistributionAgent{Subscriber: s.Subscriber, Database: s.Database}.Key())
 			f := find("ALL", s.Subscriber, s.Database)
 			if f == nil {
-				e.warn("subscriber %s.%s: no shared push distribution agent found at the distributor", s.Subscriber, s.Database)
+				e.find(model.FindingIncomplete, path, "subscriber %s.%s: no shared push distribution agent found at the distributor", s.Subscriber, s.Database)
 				continue
 			}
-			a, err := build(fmt.Sprintf("shared distribution agent of %s.%s", s.Subscriber, s.Database), f, s.Subscriber, s.Database)
+			a, err := build(model.Join(path, "distribution_agent"), fmt.Sprintf("shared distribution agent of %s.%s", s.Subscriber, s.Database), f, s.Subscriber)
 			if err != nil {
 				return err
 			}

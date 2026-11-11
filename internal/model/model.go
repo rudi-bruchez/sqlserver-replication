@@ -22,13 +22,24 @@ type Config struct {
 	Distributor   *Distributor   `yaml:"distributor,omitempty"`
 	Publications  []Publication  `yaml:"publications"`
 	AgentProfiles []AgentProfile `yaml:"agent_profiles,omitempty"`
-	// Warnings lists what the export found but cannot represent faithfully:
-	// out-of-scope features, undecoded bits, inconsistent rows.
-	Warnings []string `yaml:"warnings,omitempty"`
 	// Findings lists what the export found and how plan 3 must treat it,
 	// each with the path of the element concerned.
 	Findings []Finding `yaml:"findings,omitempty"`
 }
+
+// Kinds of finding.
+const (
+	// FindingOutOfScope: a feature the tool does not model.
+	FindingOutOfScope = "out_of_scope"
+	// FindingIncomplete: something the export expected and did not find, or
+	// found inconsistent, so the element is partly exported.
+	FindingIncomplete = "incomplete"
+	// FindingUnreadable: an object the export could not read, possibly for
+	// lack of visibility.
+	FindingUnreadable = "unreadable"
+	// FindingNote: an observation that needs no action.
+	FindingNote = "note"
+)
 
 // Finding is one observation of the export about a path of the model.
 type Finding struct {
