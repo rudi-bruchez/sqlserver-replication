@@ -2,6 +2,7 @@
 # The password reaches sqlcmd as SQLCMDPASSWORD, never on a command line.
 # Exported so that `podman exec -e SQLCMDPASSWORD` and `podman run -e MSSQL_SA_PASSWORD`
 # pass it by name: a value on the podman command line is visible to ps.
+: "${MSSQL_SA_PASSWORD:?MSSQL_SA_PASSWORD must be set}"
 export MSSQL_SA_PASSWORD
 
 # sql [sqlcmd args...]: sqlcmd inside the repllab container, standard input passed
