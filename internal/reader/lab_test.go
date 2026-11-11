@@ -40,6 +40,16 @@ func labDB(t *testing.T, database string) *sql.DB {
 	return db
 }
 
+// labFinding tells whether a finding concerns the lab's own objects:
+// SalesPub, SalesRef, or anything outside the publications and the shared
+// pull agents, which other sessions' objects in Sales can produce.
+func labFinding(path string) bool {
+	if strings.HasPrefix(path, "publications[SalesPub]") || strings.HasPrefix(path, "publications[SalesRef]") {
+		return true
+	}
+	return !strings.HasPrefix(path, "publications[") && !strings.HasPrefix(path, "publisher.shared_pull_agents[")
+}
+
 // labRead reads the Sales publication of the lab, publisher and
 // distributor being the same instance.
 func labRead(t *testing.T) *Result {
@@ -82,8 +92,7 @@ func TestReadLabSales(t *testing.T) {
 		}
 	}
 	for _, f := range cfg.Findings {
-		if !strings.HasPrefix(f.Path, "publications[") ||
-			strings.HasPrefix(f.Path, "publications[SalesPub]") || strings.HasPrefix(f.Path, "publications[SalesRef]") {
+		if labFinding(f.Path) {
 			t.Errorf("unexpected finding %s %s: %s", f.Kind, f.Path, f.Message)
 		}
 	}
@@ -380,8 +389,7 @@ func TestReadLabAgents(t *testing.T) {
 func TestReadLabArticles(t *testing.T) {
 	cfg := labRead(t).Config
 	for _, f := range cfg.Findings {
-		if !strings.HasPrefix(f.Path, "publications[") ||
-			strings.HasPrefix(f.Path, "publications[SalesPub]") || strings.HasPrefix(f.Path, "publications[SalesRef]") {
+		if labFinding(f.Path) {
 			t.Errorf("unexpected finding %s %s: %s", f.Kind, f.Path, f.Message)
 		}
 	}
@@ -474,12 +482,12 @@ func pullSetup(t *testing.T) string {
 	return labScripts(t, "pull")
 }
 
-// labScripts runs testdata/<name>-teardown.sql, then <name>-setup.sql, and
-// registers the teardown again in t.Cleanup on a fresh connection: the
+// labScripts runs testdata/<name>-teardown.sql, then <name>-setup.sql and
+// the extra scripts, and registers the teardown again in t.Cleanup on a fresh connection: the
 // teardown is idempotent, so a run that an earlier failure left behind is
 // removed first, and a partial setup is removed too. It returns the lab's
 // @@SERVERNAME.
-func labScripts(t *testing.T, name string) string {
+func labScripts(t *testing.T, name string, extra ...string) string {
 	t.Helper()
 	ctx := context.Background()
 	master := labDB(t, "master")
@@ -504,8 +512,10 @@ func labScripts(t *testing.T, name string) string {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	if err := runScript(ctx, conn, name+"-setup.sql"); err != nil {
-		t.Fatalf("setup: %v", err)
+	for _, script := range append([]string{name + "-setup.sql"}, extra...) {
+		if err := runScript(ctx, conn, script); err != nil {
+			t.Fatalf("%s: %v", script, err)
+		}
 	}
 	var server string
 	if err := conn.QueryRowContext(ctx, "SELECT @@SERVERNAME").Scan(&server); err != nil {
@@ -634,7 +644,7 @@ func TestReadLabAnonymousSubscriberRow(t *testing.T) {
 // share one pull agent: it is exported once, under
 // publisher.shared_pull_agents, and neither subscription has a pull_agent.
 func TestReadLabSharedPullAgent(t *testing.T) {
-	server := labScripts(t, "pull-shared")
+	server := labScripts(t, "pull-shared", "pull-shared-agent1.sql")
 	cfg := labReadWith(t, map[string]*sql.DB{"repllab": labDB(t, "master")}).Config
 	subs := 0
 	for _, p := range cfg.Publications {
@@ -670,7 +680,7 @@ func TestReadLabSharedPullAgent(t *testing.T) {
 		t.Fatalf("shared_pull_agents for m_pssub = %d, want 1", len(shared))
 	}
 	a := shared[0]
-	for _, f := range findingsUnder(cfg, "publisher.shared_pull_agents") {
+	for _, f := range findingsUnder(cfg, sharedPullPath) {
 		t.Errorf("unexpected finding %s %s: %s", f.Kind, f.Path, f.Message)
 	}
 	if a.JobEnabled == nil || !*a.JobEnabled {
@@ -684,5 +694,44 @@ func TestReadLabSharedPullAgent(t *testing.T) {
 	}
 	if a.Profile == nil {
 		t.Error("profile = nil, want the profile of the N'ALL' row")
+	}
+}
+
+// sharedPullPath is the path of the test's shared pull agent; other sessions'
+// shared pull agents have other paths.
+const sharedPullPath = "publisher.shared_pull_agents[REPLLAB/m_pssub]"
+
+// The measured state where only m_ps2 has called
+// sp_addpullsubscription_agent: m_ps1's row has no agent_id. The shared agent
+// is exported from m_ps2's row, and m_ps1's subscription has one incomplete
+// finding.
+func TestReadLabSharedPullAgentMissingRow(t *testing.T) {
+	labScripts(t, "pull-shared")
+	cfg := labReadWith(t, map[string]*sql.DB{"repllab": labDB(t, "master")}).Config
+	var shared *model.SharedPullAgent
+	for i := range cfg.Publisher.SharedPullAgents {
+		if a := &cfg.Publisher.SharedPullAgents[i]; strings.EqualFold(a.Database, "m_pssub") {
+			shared = a
+		}
+	}
+	if shared == nil {
+		t.Fatal("no shared pull agent for m_pssub")
+	}
+	if shared.JobName == nil || !strings.Contains(*shared.JobName, "-m_pssub-") {
+		t.Errorf("job_name = %v, want the job of m_pssub", shared.JobName)
+	}
+	if shared.Command == nil || shared.DistributorConnection == nil {
+		t.Errorf("command %v, distributor_connection %v: the job and its properties are not exported", shared.Command, shared.DistributorConnection)
+	}
+	for _, f := range findingsUnder(cfg, sharedPullPath) {
+		t.Errorf("unexpected finding %s %s: %s", f.Kind, f.Path, f.Message)
+	}
+	want := "publications[m_ps1].subscriptions[REPLLAB/m_pssub]"
+	fs := findingsUnder(cfg, "publications[m_ps1]")
+	if len(fs) != 1 || fs[0].Kind != model.FindingIncomplete || fs[0].Path != want {
+		t.Errorf("m_ps1 findings = %+v, want one incomplete at %s", fs, want)
+	}
+	for _, f := range findingsUnder(cfg, "publications[m_ps2]") {
+		t.Errorf("unexpected finding %s %s: %s", f.Kind, f.Path, f.Message)
 	}
 }

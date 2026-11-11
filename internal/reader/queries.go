@@ -243,11 +243,17 @@ ORDER BY profile_id, parameter_name`
 // Queries run on a subscriber, connected to master. {subdb} is replaced by the
 // quoted name of the subscription database (subscriberQuery).
 const (
-	// Whether the subscription database exists. Its replication tables are
-	// not probed with OBJECT_ID, which returns NULL for a table that
-	// metadata visibility hides: the subscriber query tells them by its
-	// error 208.
-	qDatabaseExists = `SELECT CASE WHEN DB_ID(@p1) IS NULL THEN 0 ELSE 1 END`
+	// Whether the subscription database exists: 1 yes, 0 no, 2 the login
+	// cannot tell. DB_ID returns NULL for an existing database when the
+	// login is denied VIEW ANY DATABASE (measured on the lab, SQL Server
+	// 2022 CU27), so NULL means "missing" only with that permission. The
+	// replication tables are not probed with OBJECT_ID, which returns NULL
+	// for a table that metadata visibility hides: the subscriber query tells
+	// them by its error 208.
+	qDatabaseExists = `
+SELECT CASE WHEN DB_ID(@p1) IS NOT NULL THEN 1
+            WHEN HAS_PERMS_BY_NAME(NULL, NULL, N'VIEW ANY DATABASE') = 1 THEN 0
+            ELSE 2 END`
 
 	// The join of sp_helppullsubscription.sql:94-176, for one publication.
 	// Every subscription_type is returned: type 2 (anonymous) is reported,

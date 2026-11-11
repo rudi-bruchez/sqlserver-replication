@@ -1,6 +1,9 @@
 -- Two publications without an independent agent, pulled into one
 -- subscription database of the lab instance itself: they share one pull
--- agent. pull-shared-teardown.sql removes everything.
+-- agent. Only m_ps2 gets its agent here: pull-shared-agent1.sql adds
+-- m_ps1's, which joins the same shared agent. Without it, m_ps1's row has a
+-- NULL agent_id and no MSsubscription_properties row (measured).
+-- pull-shared-teardown.sql removes everything.
 SET NOCOUNT ON;
 USE Sales;
 CREATE TABLE dbo.m_pst1 (id int PRIMARY KEY, a int);
@@ -30,8 +33,6 @@ USE m_pssub;
 DECLARE @srv sysname = @@SERVERNAME;
 EXEC sp_addpullsubscription @publisher = @srv, @publisher_db = N'Sales', @publication = N'm_ps1',
      @subscription_type = N'pull', @independent_agent = N'false', @immediate_sync = N'false';
-EXEC sp_addpullsubscription_agent @publisher = @srv, @publisher_db = N'Sales', @publication = N'm_ps1',
-     @distributor = @srv, @subscriber_security_mode = 1, @distributor_security_mode = 1;
 EXEC sp_addpullsubscription @publisher = @srv, @publisher_db = N'Sales', @publication = N'm_ps2',
      @subscription_type = N'pull', @independent_agent = N'false', @immediate_sync = N'false';
 EXEC sp_addpullsubscription_agent @publisher = @srv, @publisher_db = N'Sales', @publication = N'm_ps2',

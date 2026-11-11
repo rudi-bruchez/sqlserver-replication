@@ -462,9 +462,17 @@ func (e *exporter) readDistributionAgents() error {
 		}
 		return &pullDistRow{profileID: f.row.profileID, streams: f.streams, memoryOptimized: f.memoryOptimized != 0}
 	}
+	// sharedRow is one subscription's row at the subscriber, kept until
+	// every subscription of its subscriber database has been read.
+	type sharedRow struct {
+		publication, subPath string
+		row                  *pullRow
+	}
 	type sharedPull struct {
 		subscriber, database, path string
-		built, unreadable          bool
+		unreadable                 bool
+		db                         *sql.DB
+		rows                       []sharedRow
 	}
 	var sharedPulls []*sharedPull
 	sharedPullIndex := map[[2]string]*sharedPull{}
@@ -482,7 +490,7 @@ func (e *exporter) readDistributionAgents() error {
 		// One pull agent serves every subscription of the subscriber
 		// database to a publication without an independent agent (one job,
 		// the same agent_id and job_step_uid in every row): each row is
-		// checked, the agent is exported once.
+		// checked here, the agent is built once all are read.
 		key := [2]string{strings.ToUpper(s.Subscriber), strings.ToUpper(s.Database)}
 		sp := sharedPullIndex[key]
 		if sp == nil {
@@ -498,16 +506,52 @@ func (e *exporter) readDistributionAgents() error {
 		}
 		if db == nil {
 			sp.unreadable = true
-		}
-		if r == nil || sp.built {
 			return nil
 		}
-		a, err := e.buildPullAgent(sp.path, fmt.Sprintf("shared pull agent of %s.%s", sp.subscriber, sp.database), r,
-			distRow("ALL", s.Subscriber, s.Database), db, s.Subscriber)
+		sp.db = db
+		if r != nil {
+			sp.rows = append(sp.rows, sharedRow{publication: p.Name, subPath: subPath, row: r})
+		}
+		return nil
+	}
+	// buildShared exports a shared pull agent from the rows that have an
+	// agent: sp_addpullsubscription registers a row without one, and only
+	// sp_addpullsubscription_agent gives it the agent's job (measured: with
+	// the agent added for the second publication only, the first row has a
+	// NULL agent_id and no MSsubscription_properties row).
+	buildShared := func(sp *sharedPull) error {
+		var first *sharedRow
+		for k := range sp.rows {
+			r := &sp.rows[k]
+			if r.row.agentID == "" {
+				continue
+			}
+			if first == nil {
+				first = r
+				continue
+			}
+			if !strings.EqualFold(r.row.agentID, first.row.agentID) || !strings.EqualFold(r.row.stepUID, first.row.stepUID) {
+				e.find(model.FindingIncomplete, sp.path, "publications %s and %s record different pull agents at the subscriber (agent_id %s and %s, job_step_uid %s and %s); the agent of %s is exported",
+					first.publication, r.publication, first.row.agentID, r.row.agentID, first.row.stepUID, r.row.stepUID, first.publication)
+			}
+		}
+		if first == nil {
+			if !sp.unreadable {
+				e.find(model.FindingIncomplete, sp.path, "subscriber %s.%s: no shared pull agent found at the subscriber", sp.subscriber, sp.database)
+			}
+			return nil
+		}
+		for _, r := range sp.rows {
+			if r.row.agentID == "" {
+				e.find(model.FindingIncomplete, r.subPath, "publication %s, subscription %s.%s: no pull agent registered for this publication at the subscriber",
+					r.publication, sp.subscriber, sp.database)
+			}
+		}
+		a, err := e.buildPullAgent(sp.path, fmt.Sprintf("shared pull agent of %s.%s", sp.subscriber, sp.database), first.row,
+			distRow("ALL", sp.subscriber, sp.database), sp.db, sp.subscriber)
 		if err != nil {
 			return err
 		}
-		sp.built = true
 		e.cfg.Publisher.SharedPullAgents = append(e.cfg.Publisher.SharedPullAgents,
 			model.SharedPullAgent{Subscriber: sp.subscriber, Database: sp.database, PullAgent: *a})
 		return nil
@@ -562,8 +606,8 @@ func (e *exporter) readDistributionAgents() error {
 		}
 	}
 	for _, sp := range sharedPulls {
-		if !sp.built && !sp.unreadable {
-			e.find(model.FindingIncomplete, sp.path, "subscriber %s.%s: no shared pull agent found at the subscriber", sp.subscriber, sp.database)
+		if err := buildShared(sp); err != nil {
+			return err
 		}
 	}
 	sort.Slice(e.cfg.Publisher.SharedPullAgents, func(i, j int) bool {
@@ -623,8 +667,12 @@ func (e *exporter) readPullRow(p *model.Publication, s *model.Subscription, labe
 	if err := db.QueryRowContext(e.ctx, qDatabaseExists, s.Database).Scan(&exists); err != nil {
 		return nil, nil, fmt.Errorf("subscriber %s: %w", s.Subscriber, err)
 	}
-	if exists == 0 {
+	switch exists {
+	case 0:
 		e.find(model.FindingIncomplete, agentPath, "subscription database %s does not exist at subscriber %s", s.Database, s.Subscriber)
+		return nil, nil, nil
+	case 2:
+		e.find(model.FindingUnreadable, agentPath, "the login cannot tell whether subscription database %s exists at subscriber %s (no VIEW ANY DATABASE)", s.Database, s.Subscriber)
 		return nil, nil, nil
 	}
 
