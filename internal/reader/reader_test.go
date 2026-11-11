@@ -60,6 +60,8 @@ func TestQueriesParse(t *testing.T) {
 		"qDistributionAgents": qDistributionAgents, "qJob": qJob,
 		"qJobSchedules": qJobSchedules, "qAgentProfiles": qAgentProfiles,
 		"qAgentParameters": qAgentParameters,
+		"qSyncWithBackup":  qSyncWithBackup, "qDistributorLink": qDistributorLink,
+		"qDistributionFiles": qDistributionFiles, "qSubscriberType": qSubscriberType,
 	}
 	ctx := context.Background()
 	// PARSEONLY only applies to the batches that follow it in the session,
@@ -185,5 +187,37 @@ func TestStartDecision(t *testing.T) {
 				t.Errorf("findings = %v, want %v", kinds, c.kinds)
 			}
 		})
+	}
+}
+
+func TestMultiSubnetFailover(t *testing.T) {
+	cases := []struct {
+		in   sql.NullString
+		want bool
+	}{
+		{sql.NullString{}, false},
+		{sql.NullString{String: "addr=tcp:d,1433", Valid: true}, false},
+		{sql.NullString{String: "addr=tcp:d,1433;MultiSubnetFailover=Yes;", Valid: true}, true},
+		{sql.NullString{String: "multisubnetfailover=yes", Valid: true}, true},
+		{sql.NullString{String: "MultiSubnetFailover=No", Valid: true}, false},
+	}
+	for _, c := range cases {
+		if got := multiSubnetFailover(c.in); got != c.want {
+			t.Errorf("multiSubnetFailover(%+v) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestSplitFilePath(t *testing.T) {
+	cases := []struct{ in, folder, file string }{
+		{`/var/opt/mssql//DATA/distribution.MDF`, `/var/opt/mssql//DATA`, `distribution.MDF`},
+		{`C:\Data\distribution.MDF`, `C:\Data`, `distribution.MDF`},
+		{`distribution.MDF`, ``, `distribution.MDF`},
+	}
+	for _, c := range cases {
+		folder, file := splitFilePath(c.in)
+		if folder != c.folder || file != c.file {
+			t.Errorf("splitFilePath(%q) = %q, %q, want %q, %q", c.in, folder, file, c.folder, c.file)
+		}
 	}
 }

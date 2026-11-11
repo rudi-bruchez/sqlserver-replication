@@ -22,6 +22,24 @@ SELECT ISNULL((SELECT TOP (1) datasource FROM master.dbo.sysservers WHERE srvsta
        state_desc, is_in_standby, is_published, is_merge_published
 FROM sys.databases WHERE name = @p1`
 
+	// sp_replicationdboption 'sync with backup'; NULL when the database is not
+	// found.
+	qSyncWithBackup = `SELECT CAST(DATABASEPROPERTYEX(@p1, N'IsSyncWithBackup') AS int)`
+
+	// What the publisher records about the distributor: the linked server
+	// repl_distributor and its login mappings, lowest local principal first
+	// (0 is the mapping for every login). sys.sp_adddistributor builds
+	// provider_string through sys.fn_getproviderstring, then appends
+	// MultiSubnetFailover=Yes; when asked.
+	qDistributorLink = `
+SELECT s.provider_string,
+       CAST(l.uses_self_credential AS int),
+       l.remote_name
+FROM sys.servers AS s
+LEFT JOIN sys.linked_logins AS l ON l.server_id = s.server_id
+WHERE s.name = N'repl_distributor'
+ORDER BY l.local_principal_id, l.remote_name`
+
 	qPublications = `
 SELECT p.pubid, p.name, ISNULL(p.description, N''),
        p.repl_freq, p.status, p.sync_method, ISNULL(p.retention, 0),
@@ -98,14 +116,24 @@ const (
 	qDistPublisher = `
 SELECT distribution_db, ISNULL(working_directory, N''),
        CAST(ISNULL(security_mode, 1) AS int), ISNULL(login, N''),
-       CAST(ISNULL(trusted, 0) AS int), ISNULL(publisher_type, N'')
+       CAST(ISNULL(trusted, 0) AS int), ISNULL(publisher_type, N''),
+       CASE WHEN storage_connection_string IS NULL THEN 0 ELSE 1 END
 FROM msdb.dbo.MSdistpublishers
 WHERE UPPER(name) = UPPER(@p1)`
 
 	qDistributionDB = `
-SELECT min_distretention, max_distretention, history_retention
+SELECT min_distretention, max_distretention, history_retention,
+       ISNULL(deletebatchsize_xact, 0), ISNULL(deletebatchsize_cmd, 0)
 FROM msdb.dbo.MSdistributiondbs
 WHERE name = @p1`
+
+	// The first data file (type 0) and the first log file (type 1) of the
+	// distribution database.
+	qDistributionFiles = `
+SELECT type, physical_name
+FROM sys.master_files
+WHERE database_id = DB_ID(@p1) AND type IN (0, 1)
+ORDER BY type, file_id`
 
 	qDistributorProperties = `
 SELECT property, ISNULL(CAST(value AS nvarchar(4000)), N'')
@@ -118,6 +146,14 @@ ORDER BY property`
 
 	// fallbackServers replaces MSreplservers on older distributors.
 	fallbackServers = `(SELECT server_id AS srvid, name AS srvname FROM master.sys.servers)`
+
+	// MSsubscriber_info.publisher and subscriber differ in case from the
+	// server names on the lab.
+	qSubscriberType = `
+SELECT TOP (1) CAST(type AS int)
+FROM {dist}.dbo.MSsubscriber_info
+WHERE UPPER(publisher) = UPPER(@p1) AND UPPER(subscriber) = UPPER(@p2)
+ORDER BY type`
 
 	qServerID = `SELECT rs.srvid FROM {servers} AS rs WHERE UPPER(rs.srvname) = UPPER(@p1)`
 

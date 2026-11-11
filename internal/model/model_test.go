@@ -94,6 +94,7 @@ func fullConfig() *Config {
 		Publisher: Publisher{
 			Server:         "S",
 			Database:       "D",
+			SyncWithBackup: Ptr(false),
 			LogReaderAgent: Ptr(agent("logreader")),
 			SharedDistributionAgents: []SharedDistributionAgent{{
 				Subscriber: "SUB", Database: "SubDB",
@@ -109,6 +110,15 @@ func fullConfig() *Config {
 			WorkingDirectory:      Ptr(""),
 			PublisherConnection:   sqlConn("publisher/S"),
 			Trusted:               Ptr(false),
+			DeleteBatchSizeXact:   Ptr(5000),
+			DeleteBatchSizeCmd:    Ptr(2000),
+			DataFolder:            Ptr("/var/opt/mssql/DATA"),
+			DataFile:              Ptr("distribution.MDF"),
+			LogFolder:             Ptr("/var/opt/mssql/DATA"),
+			LogFile:               Ptr("distribution.LDF"),
+			AdminPasswordSecret:   Ptr("SQLREPL_SQL_S_DISTRIBUTOR_ADMIN"),
+			AdminLinkSecurity:     Ptr("sql"),
+			MultiSubnetFailover:   Ptr(false),
 			Properties:            map[string]string{"k": "v"},
 		},
 		Publications: []Publication{{
@@ -127,12 +137,16 @@ func fullConfig() *Config {
 			AllowInitializeFromBackup: Ptr(false),
 			ReplicateDDL:              Ptr(true),
 			AllowDrop:                 Ptr(false),
+			AllowPartitionSwitch:      Ptr(false),
+			ReplicatePartitionSwitch:  Ptr(false),
+			EnabledForHetSub:          Ptr(false),
 			Snapshot: &Snapshot{
-				InDefaultFolder: Ptr(true),
-				AltFolder:       Ptr(""),
-				Compress:        Ptr(false),
-				PreScript:       Ptr(""),
-				PostScript:      Ptr(""),
+				EnabledForInternet: Ptr(true),
+				InDefaultFolder:    Ptr(true),
+				AltFolder:          Ptr(""),
+				Compress:           Ptr(false),
+				PreScript:          Ptr(""),
+				PostScript:         Ptr(""),
 				FTP: &FTP{Address: Ptr(""), Port: Ptr(0), Subdirectory: Ptr(""),
 					Login: Ptr("anonymous"), PasswordSecret: Ptr("ftp/P")},
 			},
@@ -174,6 +188,8 @@ func fullConfig() *Config {
 				Subscriber:        "SUB",
 				Database:          "SubDB",
 				Articles:          []string{"T"},
+				Type:              Ptr("push"),
+				SubscriberType:    Ptr("sql_server"),
 				Initialization:    Ptr("automatic"),
 				LoopbackDetection: Ptr(false),
 				DistributionAgent: &DistributionAgent{Agent: agent("dist"), SubscriptionStreams: Ptr(4), MemoryOptimized: Ptr(false)},
@@ -228,6 +244,10 @@ func TestNilProperties(t *testing.T) {
 	c.Publications[0].Articles[0].Filter, c.Publications[0].Articles[0].SyncObject = nil, nil
 	c.Publications[0].Articles[0].Commands.Update = &Command{Mode: "SQL"}
 	c.Publications[0].Snapshot.FTP = nil
+	if got, want := NilProperties(c), []string{"publications[P].snapshot.ftp"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("ftp with enabled_for_internet: got %q, want %q", got, want)
+	}
+	c.Publications[0].Snapshot.EnabledForInternet = Ptr(false)
 	if got := NilProperties(c); len(got) != 0 {
 		t.Errorf("shared agent: got %q, want none", got)
 	}

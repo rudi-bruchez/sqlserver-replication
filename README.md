@@ -11,7 +11,9 @@ Improving and managing SQL Server replication
 
 Reads a publication database, its publications, articles, push subscriptions and agents, and writes them as YAML. It only runs `SELECT` statements, on the publisher and on the distributor.
 
-Scope: transactional replication, push subscriptions, SQL Server publisher. Anything else found (pull subscriptions, updatable subscriptions, peer-to-peer, snapshot publications) is reported under `findings`.
+Scope: transactional and snapshot replication, push subscriptions, SQL Server publisher. Anything else found (pull subscriptions, updatable subscriptions, peer-to-peer, non-SQL Server subscribers) is reported under `findings`. Each finding has a `kind` (`out_of_scope`, `incomplete`, `unreadable` or `note`), the `path` of the element concerned and a `message`.
+
+Besides the publications, the file holds the distributor properties (cleanup batch sizes, the folders and names of the distribution database files, the security of the `repl_distributor` link, `multi_subnet_failover`), the publisher's `sync_with_backup`, and per publication the partition switch options, `enabled_for_het_sub`, `snapshot.enabled_for_internet` and the `type` and `subscriber_type` of each subscription. A property the export could not read is left out and has a finding.
 
 ```
 go build ./cmd/sqlrepl

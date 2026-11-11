@@ -1,6 +1,7 @@
 package reader
 
 import (
+	"database/sql"
 	"fmt"
 	"slices"
 	"sort"
@@ -51,12 +52,16 @@ func (e *exporter) readPublications() error {
 		p.AllowInitializeFromBackup = model.Ptr(fromBackup != 0)
 		p.ReplicateDDL = model.Ptr(ddl != 0)
 		p.AllowDrop = model.Ptr(options&decode.PubOptionAllowDrop != 0)
+		p.AllowPartitionSwitch = model.Ptr(options&decode.PubOptionAllowPartitionSwitch != 0)
+		p.ReplicatePartitionSwitch = model.Ptr(options&decode.PubOptionReplicatePartitionSwitch != 0)
+		p.EnabledForHetSub = model.Ptr(options&decode.PubOptionNonSQLSubscribers != 0)
 		p.Snapshot = &model.Snapshot{
-			InDefaultFolder: model.Ptr(inDefault != 0),
-			AltFolder:       model.Ptr(altFolder),
-			Compress:        model.Ptr(compress != 0),
-			PreScript:       model.Ptr(preScript),
-			PostScript:      model.Ptr(postScript),
+			EnabledForInternet: model.Ptr(internet != 0),
+			InDefaultFolder:    model.Ptr(inDefault != 0),
+			AltFolder:          model.Ptr(altFolder),
+			Compress:           model.Ptr(compress != 0),
+			PreScript:          model.Ptr(preScript),
+			PostScript:         model.Ptr(postScript),
 		}
 		if internet != 0 {
 			p.Snapshot.FTP = &model.FTP{
@@ -69,9 +74,6 @@ func (e *exporter) readPublications() error {
 			}
 		}
 
-		if replFreq != 0 {
-			e.find(model.FindingOutOfScope, publicationPath(p.Name), "publication %s: snapshot publication, out of scope", p.Name)
-		}
 		if syncTran != 0 || queuedTran != 0 {
 			e.find(model.FindingOutOfScope, publicationPath(p.Name), "publication %s: updatable subscriptions (allow_sync_tran or allow_queued_tran) are out of scope", p.Name)
 		}
@@ -345,9 +347,11 @@ func (e *exporter) readSubscriptions() error {
 		sub := model.Subscription{
 			Subscriber:        k.subscriber,
 			Database:          k.database,
+			Type:              model.Ptr(decode.SubscriptionType(s.subscriptionType)),
 			Initialization:    model.Ptr(decode.Initialization(s.syncType, s.nosync)),
 			LoopbackDetection: model.Ptr(s.loopback),
 		}
+		sub.SubscriberType = e.subscriberType(subscriptionPath(p.Name, k.subscriber, k.database), label, k.subscriber)
 		sort.Strings(s.articles)
 		if !slices.Equal(s.articles, e.articleNames[k.pubid]) {
 			sub.Articles = s.articles
@@ -355,4 +359,24 @@ func (e *exporter) readSubscriptions() error {
 		p.Subscriptions = append(p.Subscriptions, sub)
 	}
 	return nil
+}
+
+// subscriberType reads the subscriber type of a subscriber at the distributor.
+func (e *exporter) subscriberType(path, label, subscriber string) *string {
+	var code int
+	err := e.src.Distributor.QueryRowContext(e.ctx, e.distQuery(qSubscriberType),
+		e.cfg.Publisher.Server, subscriber).Scan(&code)
+	if err == sql.ErrNoRows {
+		e.find(model.FindingIncomplete, path, "%s: subscriber %s not found in MSsubscriber_info", label, subscriber)
+		return nil
+	}
+	if err != nil {
+		e.find(model.FindingUnreadable, path, "%s: reading MSsubscriber_info: %v", label, err)
+		return nil
+	}
+	t := decode.SubscriberType(code)
+	if t != "sql_server" {
+		e.find(model.FindingOutOfScope, path, "%s: subscriber type %s is out of scope", label, t)
+	}
+	return model.Ptr(t)
 }

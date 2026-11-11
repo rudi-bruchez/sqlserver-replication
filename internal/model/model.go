@@ -54,6 +54,8 @@ type Publisher struct {
 	// (msdb.dbo.MSdistpublishers.name), normally @@SERVERNAME.
 	Server   string `yaml:"server"`
 	Database string `yaml:"database"`
+	// SyncWithBackup is sp_replicationdboption 'sync with backup'.
+	SyncWithBackup *bool `yaml:"sync_with_backup,omitempty"`
 	// LogReaderAgent is shared by every publication of the database.
 	LogReaderAgent *Agent `yaml:"log_reader_agent,omitempty"`
 	// SharedDistributionAgents serve, for one subscriber database, every
@@ -83,6 +85,30 @@ type Distributor struct {
 	// (MSdistpublishers.security_mode, login, password).
 	PublisherConnection *Connection `yaml:"publisher_connection,omitempty"`
 	Trusted             *bool       `yaml:"trusted,omitempty"`
+	// DeleteBatchSizeXact and DeleteBatchSizeCmd are the cleanup batch sizes
+	// of the distribution database (sp_adddistributiondb).
+	DeleteBatchSizeXact *int `yaml:"delete_batch_size_xact,omitempty"`
+	DeleteBatchSizeCmd  *int `yaml:"delete_batch_size_cmd,omitempty"`
+	// The folders and file names of the distribution database, read from its
+	// first data and log files (sys.master_files).
+	DataFolder *string `yaml:"data_folder,omitempty"`
+	DataFile   *string `yaml:"data_file,omitempty"`
+	LogFolder  *string `yaml:"log_folder,omitempty"`
+	LogFile    *string `yaml:"log_file,omitempty"`
+	// DataFileSizeMB, LogFileSizeMB and CreationConnection only serve to
+	// create the distribution database; the export never reads them.
+	DataFileSizeMB     *int        `yaml:"data_file_size_mb,omitempty"`
+	LogFileSizeMB      *int        `yaml:"log_file_size_mb,omitempty"`
+	CreationConnection *Connection `yaml:"creation_connection,omitempty"`
+	// AdminPasswordSecret names the secret of the distributor_admin login.
+	AdminPasswordSecret *string `yaml:"admin_password_secret,omitempty"`
+	// AdminLinkSecurity is windows or sql, read from the repl_distributor
+	// linked server at the publisher.
+	AdminLinkSecurity   *string `yaml:"admin_link_security,omitempty"`
+	MultiSubnetFailover *bool   `yaml:"multi_subnet_failover,omitempty"`
+	// StorageConnectionStringSecret names the secret of the Azure storage
+	// connection string of the publisher, nil when there is none.
+	StorageConnectionStringSecret *string `yaml:"storage_connection_string_secret,omitempty"`
 	// Properties holds msdb.dbo.MSdistributor as key/value pairs.
 	Properties map[string]string `yaml:"properties,omitempty"`
 }
@@ -150,6 +176,9 @@ type Publication struct {
 	AllowInitializeFromBackup *bool `yaml:"allow_initialize_from_backup,omitempty"`
 	ReplicateDDL              *bool `yaml:"replicate_ddl,omitempty"`
 	AllowDrop                 *bool `yaml:"allow_drop,omitempty"`
+	AllowPartitionSwitch      *bool `yaml:"allow_partition_switch,omitempty"`
+	ReplicatePartitionSwitch  *bool `yaml:"replicate_partition_switch,omitempty"`
+	EnabledForHetSub          *bool `yaml:"enabled_for_het_sub,omitempty"`
 
 	Snapshot      *Snapshot      `yaml:"snapshot,omitempty"`
 	SnapshotAgent *Agent         `yaml:"snapshot_agent,omitempty"`
@@ -164,7 +193,10 @@ type Snapshot struct {
 	Compress        *bool   `yaml:"compress,omitempty"`
 	PreScript       *string `yaml:"pre_script,omitempty"`
 	PostScript      *string `yaml:"post_script,omitempty"`
-	FTP             *FTP    `yaml:"ftp,omitempty"`
+	// EnabledForInternet is set when the snapshot files are served by FTP; the
+	// FTP settings are written exactly then.
+	EnabledForInternet *bool `yaml:"enabled_for_internet,omitempty"`
+	FTP                *FTP  `yaml:"ftp,omitempty"`
 }
 
 // FTP holds the snapshot FTP settings, present when enabled_for_internet is
@@ -243,9 +275,13 @@ type Subscription struct {
 	Database   string `yaml:"database"`
 	// Articles lists the subscribed articles, only when the subscription
 	// does not cover every article of the publication.
-	Articles          []string `yaml:"articles,omitempty"`
-	Initialization    *string  `yaml:"initialization,omitempty"`
-	LoopbackDetection *bool    `yaml:"loopback_detection,omitempty"`
+	Articles []string `yaml:"articles,omitempty"`
+	// Type is push, pull or anonymous; SubscriberType is sql_server, odbc or
+	// oledb.
+	Type              *string `yaml:"type,omitempty"`
+	SubscriberType    *string `yaml:"subscriber_type,omitempty"`
+	Initialization    *string `yaml:"initialization,omitempty"`
+	LoopbackDetection *bool   `yaml:"loopback_detection,omitempty"`
 	// DistributionAgent is set when the publication has an independent
 	// agent. Otherwise the subscription uses the shared agent of its
 	// subscriber database, listed under publisher.shared_distribution_agents.

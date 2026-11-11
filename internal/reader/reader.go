@@ -175,6 +175,9 @@ func (e *exporter) run() error {
 	for _, f := range findings {
 		e.find(f.Kind, f.Path, "%s", f.Message)
 	}
+	if err := e.readSyncWithBackup(); err != nil {
+		return fmt.Errorf("reading sync with backup: %w", err)
+	}
 	if empty {
 		if e.src.Probe.Distributor != "" && e.src.Distributor != nil {
 			if err := e.readDistributor(true); err != nil {
@@ -221,10 +224,10 @@ func (e *exporter) readDistributor(lenient bool) error {
 		return err
 	}
 
-	var security, trusted int
+	var security, trusted, hasStorage int
 	var workingDirectory, login, publisherType string
 	err := db.QueryRowContext(e.ctx, qDistPublisher, e.cfg.Publisher.Server).Scan(
-		&d.Database, &workingDirectory, &security, &login, &trusted, &publisherType)
+		&d.Database, &workingDirectory, &security, &login, &trusted, &publisherType, &hasStorage)
 	if err == sql.ErrNoRows && lenient {
 		e.find(model.FindingNote, "distributor", "publisher %q is not registered at the distributor", e.cfg.Publisher.Server)
 		return nil
@@ -244,20 +247,34 @@ func (e *exporter) readDistributor(lenient bool) error {
 			"SQL", e.cfg.Publisher.Server, login))
 	}
 	d.Trusted = model.Ptr(trusted != 0)
+	if hasStorage != 0 {
+		d.StorageConnectionStringSecret = model.Ptr(e.secret("distributor.storage_connection_string_secret",
+			"STORAGE", e.cfg.Publisher.Server))
+	}
 	if publisherType != "" && !strings.EqualFold(publisherType, "MSSQLSERVER") {
 		e.find(model.FindingOutOfScope, "distributor", "publisher type %s is out of scope", publisherType)
 	}
 	e.dist = quoteName(d.Database)
 
-	var minRetention, maxRetention, historyRetention int
+	var minRetention, maxRetention, historyRetention, deleteXact, deleteCmd int
 	err = db.QueryRowContext(e.ctx, qDistributionDB, d.Database).Scan(
-		&minRetention, &maxRetention, &historyRetention)
+		&minRetention, &maxRetention, &historyRetention, &deleteXact, &deleteCmd)
 	if err != nil {
 		return fmt.Errorf("msdb.dbo.MSdistributiondbs: %w", err)
 	}
 	d.MinRetentionHours = model.Ptr(minRetention)
 	d.MaxRetentionHours = model.Ptr(maxRetention)
 	d.HistoryRetentionHours = model.Ptr(historyRetention)
+	d.DeleteBatchSizeXact = model.Ptr(deleteXact)
+	d.DeleteBatchSizeCmd = model.Ptr(deleteCmd)
+	d.AdminPasswordSecret = model.Ptr(e.secret("distributor.admin_password_secret",
+		"SQL", d.Server, "distributor_admin"))
+	if err := e.readDistributionFiles(d); err != nil {
+		return err
+	}
+	if err := e.readDistributorLink(d); err != nil {
+		return err
+	}
 
 	rows, err := db.QueryContext(e.ctx, qDistributorProperties)
 	if err != nil {
@@ -410,4 +427,125 @@ func maskPasswords(cmd string) string {
 // quoteName quotes an identifier the way QUOTENAME does.
 func quoteName(s string) string {
 	return "[" + strings.ReplaceAll(s, "]", "]]") + "]"
+}
+
+// readSyncWithBackup reads the sync with backup option of the publication
+// database.
+func (e *exporter) readSyncWithBackup() error {
+	var v sql.NullInt64
+	if err := e.src.Publisher.QueryRowContext(e.ctx, qSyncWithBackup, e.src.Database).Scan(&v); err != nil {
+		return err
+	}
+	if !v.Valid {
+		e.find(model.FindingUnreadable, "publisher.sync_with_backup", "DATABASEPROPERTYEX returned NULL for IsSyncWithBackup")
+		return nil
+	}
+	e.cfg.Publisher.SyncWithBackup = model.Ptr(v.Int64 != 0)
+	return nil
+}
+
+// readDistributionFiles reads the folders and names of the first data and log
+// files of the distribution database.
+func (e *exporter) readDistributionFiles(d *model.Distributor) error {
+	rows, err := e.src.Distributor.QueryContext(e.ctx, qDistributionFiles, d.Database)
+	if err != nil {
+		return fmt.Errorf("sys.master_files: %w", err)
+	}
+	defer rows.Close()
+	var haveData, haveLog bool
+	for rows.Next() {
+		var typ int
+		var path string
+		if err := rows.Scan(&typ, &path); err != nil {
+			return err
+		}
+		folder, file := splitFilePath(path)
+		switch {
+		case typ == 0 && !haveData:
+			haveData = true
+			d.DataFolder, d.DataFile = model.Ptr(folder), model.Ptr(file)
+		case typ == 1 && !haveLog:
+			haveLog = true
+			d.LogFolder, d.LogFile = model.Ptr(folder), model.Ptr(file)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if !haveData {
+		e.find(model.FindingUnreadable, "distributor.data_file", "no data file of %s in sys.master_files", d.Database)
+	}
+	if !haveLog {
+		e.find(model.FindingUnreadable, "distributor.log_file", "no log file of %s in sys.master_files", d.Database)
+	}
+	return nil
+}
+
+// splitFilePath cuts a physical file name at its last / or \.
+func splitFilePath(p string) (folder, file string) {
+	i := strings.LastIndexAny(p, `/\`)
+	if i < 0 {
+		return "", p
+	}
+	return p[:i], p[i+1:]
+}
+
+// readDistributorLink reads, at the publisher, the repl_distributor linked
+// server: how the publisher connects to the distributor, and the multi subnet
+// failover option.
+func (e *exporter) readDistributorLink(d *model.Distributor) error {
+	rows, err := e.src.Publisher.QueryContext(e.ctx, qDistributorLink)
+	if err != nil {
+		return fmt.Errorf("sys.servers: %w", err)
+	}
+	defer rows.Close()
+	var found bool
+	var provider, remote sql.NullString
+	var self sql.NullInt64
+	for rows.Next() {
+		if found {
+			continue // the mappings after the first are for single logins
+		}
+		found = true
+		if err := rows.Scan(&provider, &self, &remote); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if !found {
+		e.find(model.FindingUnreadable, "distributor.admin_link_security", "linked server repl_distributor not found at the publisher")
+		e.find(model.FindingUnreadable, "distributor.multi_subnet_failover", "linked server repl_distributor not found at the publisher")
+		return nil
+	}
+	d.MultiSubnetFailover = model.Ptr(multiSubnetFailover(provider))
+	switch {
+	case self.Valid && self.Int64 == 1:
+		d.AdminLinkSecurity = model.Ptr("windows")
+	case self.Valid && self.Int64 == 0 && strings.EqualFold(remote.String, "distributor_admin"):
+		d.AdminLinkSecurity = model.Ptr("sql")
+	default:
+		e.find(model.FindingUnreadable, "distributor.admin_link_security",
+			"the login mapping of repl_distributor is neither the current security context nor distributor_admin")
+	}
+	return nil
+}
+
+// multiSubnetFailover tells whether the provider string of the
+// repl_distributor linked server holds MultiSubnetFailover=Yes. The string is
+// a list of key=value pairs separated by ";" that also holds addr=... and, on
+// SQL Server 2025, the encryption settings.
+func multiSubnetFailover(provider sql.NullString) bool {
+	if !provider.Valid {
+		return false
+	}
+	for _, pair := range strings.Split(provider.String, ";") {
+		k, v, ok := strings.Cut(pair, "=")
+		if ok && strings.EqualFold(strings.TrimSpace(k), "MultiSubnetFailover") &&
+			strings.EqualFold(strings.TrimSpace(v), "Yes") {
+			return true
+		}
+	}
+	return false
 }

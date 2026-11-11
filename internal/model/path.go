@@ -208,7 +208,18 @@ func (c Connection) OmittedOK(key string, parents []Step) bool {
 // OmittedOK: the FTP settings are set only when the publication is enabled
 // for internet.
 func (s Snapshot) OmittedOK(key string, parents []Step) bool {
-	return key == "ftp"
+	return key == "ftp" && s.EnabledForInternet != nil && !*s.EnabledForInternet
+}
+
+// OmittedOK: the file sizes and the creation connection only serve to create
+// the distribution database and are never read; no storage connection string
+// is the default.
+func (d Distributor) OmittedOK(key string, parents []Step) bool {
+	switch key {
+	case "data_file_size_mb", "log_file_size_mb", "creation_connection", "storage_connection_string_secret":
+		return true
+	}
+	return false
 }
 
 var schemaOnlyTypes = map[string]bool{
