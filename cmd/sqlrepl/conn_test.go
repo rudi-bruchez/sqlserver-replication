@@ -1,7 +1,11 @@
 package main
 
 import (
+	"database/sql"
+	"errors"
 	"net/url"
+	"reflect"
+	"sort"
 	"testing"
 )
 
@@ -49,5 +53,76 @@ func TestDSN(t *testing.T) {
 	}
 	if _, err := dsn("", "", connParams{}); err == nil {
 		t.Fatal("expected an error for an empty server")
+	}
+}
+
+func TestServerFlags(t *testing.T) {
+	f := serverFlags{}
+	if err := f.Set("repllab=tcp:127.0.0.1,11980"); err != nil {
+		t.Fatal(err)
+	}
+	e, ok := f.lookup("REPLLAB")
+	if !ok || e.Address != "tcp:127.0.0.1,11980" || e.Name != "repllab" {
+		t.Errorf("lookup(REPLLAB) = %+v, %v; want repllab at tcp:127.0.0.1,11980", e, ok)
+	}
+
+	f = serverFlags{}
+	if err := f.Set("a=x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Set("A=y"); err == nil {
+		t.Error("a second entry for A was accepted")
+	}
+	for _, s := range []string{"=x", "a="} {
+		if err := (serverFlags{}).Set(s); err == nil {
+			t.Errorf("Set(%q) accepted", s)
+		}
+	}
+}
+
+func TestOpenSubscribers(t *testing.T) {
+	f := serverFlags{}
+	for _, s := range []string{"repllab=P", "other=Q"} {
+		if err := f.Set(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The fake connections are never closed: Close on a zero sql.DB panics.
+	var opened []string
+	open := func(address string) (*sql.DB, error) {
+		opened = append(opened, address)
+		return new(sql.DB), nil
+	}
+	subs, err := openSubscribers(f, "P", "P", open)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(opened)
+	if want := []string{"P", "Q"}; !reflect.DeepEqual(opened, want) {
+		t.Errorf("opened %q, want %q", opened, want)
+	}
+	var keys []string
+	for k, db := range subs {
+		keys = append(keys, k)
+		if db == nil {
+			t.Errorf("%s: nil connection", k)
+		}
+	}
+	sort.Strings(keys)
+	if want := []string{"other", "repllab"}; !reflect.DeepEqual(keys, want) {
+		t.Errorf("keys %q, want %q", keys, want)
+	}
+	if subs["repllab"] == subs["other"] {
+		t.Error("both entries share one connection")
+	}
+
+	failing := func(address string) (*sql.DB, error) {
+		if address == "Q" {
+			return nil, errors.New("refused")
+		}
+		return new(sql.DB), nil
+	}
+	if _, err := openSubscribers(f, "P", "P", failing); err == nil {
+		t.Error("a failed connection was not reported")
 	}
 }

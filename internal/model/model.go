@@ -277,8 +277,8 @@ type Filter struct {
 	Procedure *ObjectName `yaml:"procedure,omitempty"`
 }
 
-// Subscription is a push subscription, grouped from the per-article rows of
-// syssubscriptions.
+// Subscription is a push or pull subscription, grouped from the per-article
+// rows of syssubscriptions.
 type Subscription struct {
 	Subscriber string `yaml:"subscriber"`
 	Database   string `yaml:"database"`
@@ -295,6 +295,9 @@ type Subscription struct {
 	// agent. Otherwise the subscription uses the shared agent of its
 	// subscriber database, listed under publisher.shared_distribution_agents.
 	DistributionAgent *DistributionAgent `yaml:"distribution_agent,omitempty"`
+	// PullAgent is the distribution agent of a pull subscription, read at
+	// the subscriber; set only when type is pull.
+	PullAgent *PullAgent `yaml:"pull_agent,omitempty"`
 }
 
 // DistributionAgent extends Agent with the distribution-specific settings.
@@ -302,6 +305,21 @@ type DistributionAgent struct {
 	Agent               `yaml:",inline"`
 	SubscriptionStreams *int  `yaml:"subscription_streams,omitempty"`
 	MemoryOptimized     *bool `yaml:"memory_optimized,omitempty"`
+}
+
+// PullAgent extends DistributionAgent with the settings a pull subscription
+// keeps at the subscriber (MSsubscription_properties,
+// MSreplication_subscriptions). Its job lives in the subscriber's msdb.
+type PullAgent struct {
+	DistributionAgent `yaml:",inline"`
+	// Distributor is the distributor the agent connects to, as recorded at
+	// the subscriber.
+	Distributor       *string `yaml:"distributor,omitempty"`
+	AltSnapshotFolder *string `yaml:"alt_snapshot_folder,omitempty"`
+	WorkingDirectory  *string `yaml:"working_directory,omitempty"`
+	UseFTP            *bool   `yaml:"use_ftp,omitempty"`
+	EnabledForSyncmgr *bool   `yaml:"enabled_for_syncmgr,omitempty"`
+	Description       *string `yaml:"description,omitempty"`
 }
 
 // AgentProfile is a user-defined agent profile (MSagent_profiles.type = 1).

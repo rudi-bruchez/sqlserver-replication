@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
 )
@@ -43,6 +44,12 @@ func labDB(t *testing.T, database string) *sql.DB {
 // distributor being the same instance.
 func labRead(t *testing.T) *Result {
 	t.Helper()
+	return labReadWith(t, nil)
+}
+
+// labReadWith is labRead with connections to subscribers.
+func labReadWith(t *testing.T, subscribers map[string]*sql.DB) *Result {
+	t.Helper()
 	probe, err := Probe(context.Background(), labDB(t, "master"), "Sales")
 	if err != nil {
 		t.Fatal(err)
@@ -52,6 +59,7 @@ func labRead(t *testing.T) *Result {
 		Distributor: labDB(t, "master"),
 		Database:    "Sales",
 		Probe:       probe,
+		Subscribers: subscribers,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -426,4 +434,177 @@ func TestReadLabProfiles(t *testing.T) {
 		return
 	}
 	t.Error("profile distribution/lab-distrib missing from agent_profiles")
+}
+
+// runScript runs a script of testdata on conn, batch by batch, split on the
+// lines that hold only GO.
+func runScript(ctx context.Context, conn *sql.Conn, name string) error {
+	b, err := os.ReadFile("testdata/" + name)
+	if err != nil {
+		return err
+	}
+	var batch strings.Builder
+	run := func() error {
+		q := strings.TrimSpace(batch.String())
+		batch.Reset()
+		if q == "" {
+			return nil
+		}
+		_, err := conn.ExecContext(ctx, q)
+		return err
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.EqualFold(strings.TrimFunc(line, unicode.IsSpace), "GO") {
+			if err := run(); err != nil {
+				return err
+			}
+			continue
+		}
+		batch.WriteString(line)
+		batch.WriteByte('\n')
+	}
+	return run()
+}
+
+// pullSetup creates the pull subscription of testdata/pull-setup.sql: the
+// publication m_pp of Sales, pulled by m_psub of the lab instance itself. The
+// teardown is registered before the setup runs, so a partial setup is
+// removed too. It returns the lab's @@SERVERNAME.
+func pullSetup(t *testing.T) string {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := labDB(t, "master").Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	t.Cleanup(func() {
+		if err := runScript(ctx, conn, "pull-teardown.sql"); err != nil {
+			t.Errorf("teardown: %v", err)
+		}
+	})
+	if err := runScript(ctx, conn, "pull-setup.sql"); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	var server string
+	if err := conn.QueryRowContext(ctx, "SELECT @@SERVERNAME").Scan(&server); err != nil {
+		t.Fatal(err)
+	}
+	return server
+}
+
+// pullSubscription returns m_pp's subscription to m_psub.
+func pullSubscription(t *testing.T, cfg *model.Config) *model.Subscription {
+	t.Helper()
+	for i := range cfg.Publications {
+		p := &cfg.Publications[i]
+		if p.Name != "m_pp" {
+			continue
+		}
+		for j := range p.Subscriptions {
+			if strings.EqualFold(p.Subscriptions[j].Database, "m_psub") {
+				return &p.Subscriptions[j]
+			}
+		}
+	}
+	t.Fatal("subscription of m_pp to m_psub not exported")
+	return nil
+}
+
+func findingsUnder(cfg *model.Config, prefix string) []model.Finding {
+	var out []model.Finding
+	for _, f := range cfg.Findings {
+		if strings.HasPrefix(f.Path, prefix) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// The subscriber is keyed repllab, in lower case, while
+// syssubscriptions.srvname is REPLLAB: the lookup ignores case.
+func TestReadLabPullSubscription(t *testing.T) {
+	server := pullSetup(t)
+	cfg := labReadWith(t, map[string]*sql.DB{"repllab": labDB(t, "master")}).Config
+	s := pullSubscription(t, cfg)
+	if s.Type == nil || *s.Type != "pull" {
+		t.Errorf("type = %v, want pull", s.Type)
+	}
+	if s.DistributionAgent != nil {
+		t.Errorf("distribution_agent = %+v, want nil", s.DistributionAgent)
+	}
+	for _, f := range findingsUnder(cfg, "publications[m_pp]") {
+		t.Errorf("unexpected finding %s %s: %s", f.Kind, f.Path, f.Message)
+	}
+	a := s.PullAgent
+	if a == nil {
+		t.Fatal("pull_agent not exported")
+	}
+	if a.JobEnabled == nil || !*a.JobEnabled {
+		t.Errorf("job_enabled = %v, want true", a.JobEnabled)
+	}
+	if c := a.Connection; c == nil || c.Security == nil || *c.Security != "windows" {
+		t.Errorf("connection = %+v, want windows", c)
+	}
+	if c := a.DistributorConnection; c == nil || c.Security == nil || *c.Security != "windows" {
+		t.Errorf("distributor_connection = %+v, want windows", c)
+	}
+	if a.Distributor == nil || !strings.EqualFold(*a.Distributor, server) {
+		t.Errorf("distributor = %v, want %s", a.Distributor, server)
+	}
+	if a.UseFTP == nil || *a.UseFTP {
+		t.Errorf("use_ftp = %v, want false", a.UseFTP)
+	}
+	if a.Schedules == nil || len(*a.Schedules) != 0 {
+		t.Errorf("schedules = %v, want empty and non-nil", a.Schedules)
+	}
+	if a.JobLogin == nil || *a.JobLogin != "" {
+		t.Errorf("job_login = %v, want empty", a.JobLogin)
+	}
+}
+
+func TestReadLabPullSubscriberNotConnected(t *testing.T) {
+	pullSetup(t)
+	cfg := labRead(t).Config
+	s := pullSubscription(t, cfg)
+	if s.PullAgent != nil {
+		t.Errorf("pull_agent = %+v, want nil", s.PullAgent)
+	}
+	want := "publications[m_pp].subscriptions[REPLLAB/m_psub].pull_agent"
+	fs := findingsUnder(cfg, "publications[m_pp]")
+	if len(fs) != 1 || fs[0].Kind != model.FindingUnreadable || fs[0].Path != want {
+		t.Errorf("findings = %+v, want one unreadable at %s", fs, want)
+	}
+}
+
+// A type 2 row at the subscriber is an anonymous subscription: reported out
+// of scope, and not taken for a missing pull row. The update is on the
+// test's own database, set back before the teardown; no transaction, since
+// the reader reads on other connections.
+func TestReadLabAnonymousSubscriberRow(t *testing.T) {
+	pullSetup(t)
+	ctx := context.Background()
+	master := labDB(t, "master")
+	if _, err := master.ExecContext(ctx, "UPDATE m_psub.dbo.MSreplication_subscriptions SET subscription_type = 2"); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := master.ExecContext(ctx, "UPDATE m_psub.dbo.MSreplication_subscriptions SET subscription_type = 1"); err != nil {
+			t.Errorf("setting subscription_type back: %v", err)
+		}
+	})
+	cfg := labReadWith(t, map[string]*sql.DB{"repllab": labDB(t, "master")}).Config
+	pullSubscription(t, cfg)
+	var outOfScope, incomplete int
+	for _, f := range findingsUnder(cfg, "publications[m_pp].subscriptions[") {
+		switch f.Kind {
+		case model.FindingOutOfScope:
+			outOfScope++
+		case model.FindingIncomplete:
+			incomplete++
+		}
+	}
+	if outOfScope != 1 || incomplete != 0 {
+		t.Errorf("out_of_scope %d, incomplete %d; want 1 and 0: %+v", outOfScope, incomplete, cfg.Findings)
+	}
 }

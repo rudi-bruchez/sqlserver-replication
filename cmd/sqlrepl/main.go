@@ -2,8 +2,8 @@
 // replication as a declarative file.
 //
 // Only the export is implemented: it reads a publication database, its
-// publications, articles, push subscriptions and agents, and writes them as
-// YAML. It runs SELECT statements only.
+// publications, articles, push and pull subscriptions and agents, and writes
+// them as YAML. It runs SELECT statements only.
 package main
 
 import (
@@ -83,6 +83,8 @@ func runExport(args []string, stdout io.Writer) error {
 	timeout := fs.Duration("timeout", 2*time.Minute, "overall timeout")
 	params := paramFlags{}
 	fs.Var(params, "param", "extra connection parameter key=value, repeatable (e.g. -param encrypt=disable)")
+	servers := serverFlags{}
+	fs.Var(servers, "server", "address of a server by name, NAME=ADDRESS, repeatable: a subscriber whose pull subscriptions are read, or the distributor")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -117,6 +119,9 @@ func runExport(args []string, stdout io.Writer) error {
 
 	if *distributor == "" {
 		*distributor = probe.Distributor
+		if e, ok := servers.lookup(probe.Distributor); ok {
+			*distributor = e.Address
+		}
 	}
 	var dist *sql.DB
 	if *distributor != "" {
@@ -127,12 +132,25 @@ func runExport(args []string, stdout io.Writer) error {
 		defer dist.Close()
 	}
 
+	subs, err := openSubscribers(servers, *publisher, *distributor, func(address string) (*sql.DB, error) {
+		return open(ctx, address, "master", cp)
+	})
+	defer func() {
+		for _, db := range subs {
+			db.Close()
+		}
+	}()
+	if err != nil {
+		return fmt.Errorf("subscriber: %w", err)
+	}
+
 	res, err := reader.Read(ctx, reader.Source{
 		Publisher:     pub,
 		Distributor:   dist,
 		Database:      *database,
 		PublisherName: *publisherName,
 		Probe:         probe,
+		Subscribers:   subs,
 	})
 	if err != nil {
 		return err

@@ -199,6 +199,22 @@ func fullConfig() *Config {
 				Initialization:    Ptr("automatic"),
 				LoopbackDetection: Ptr(false),
 				DistributionAgent: &DistributionAgent{Agent: agent("dist"), SubscriptionStreams: Ptr(4), MemoryOptimized: Ptr(false)},
+			}, {
+				Subscriber:        "SUB2",
+				Database:          "PullDB",
+				Type:              Ptr("pull"),
+				SubscriberType:    Ptr("sql_server"),
+				Initialization:    Ptr("automatic"),
+				LoopbackDetection: Ptr(false),
+				PullAgent: &PullAgent{
+					DistributionAgent: DistributionAgent{Agent: *snapshotAgent(agent("pull")), SubscriptionStreams: Ptr(0), MemoryOptimized: Ptr(false)},
+					Distributor:       Ptr("S"),
+					AltSnapshotFolder: Ptr(""),
+					WorkingDirectory:  Ptr(""),
+					UseFTP:            Ptr(false),
+					EnabledForSyncmgr: Ptr(false),
+					Description:       Ptr(""),
+				},
 			}},
 		}},
 		AgentProfiles: []AgentProfile{{
@@ -260,6 +276,18 @@ func TestNilProperties(t *testing.T) {
 	c.Publications[0].IndependentAgent = Ptr(true)
 	if got, want := NilProperties(c), []string{"publications[P].subscriptions[SUB/SubDB].distribution_agent"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("independent agent: got %q, want %q", got, want)
+	}
+	// A pull subscription has no push agent but needs its pull agent, and
+	// the pull agent its distributor connection.
+	c = fullConfig()
+	pull := &c.Publications[0].Subscriptions[1]
+	pull.PullAgent.DistributorConnection = nil
+	if got, want := NilProperties(c), []string{"publications[P].subscriptions[SUB2/PullDB].pull_agent.distributor_connection"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("pull agent: got %q, want %q", got, want)
+	}
+	pull.PullAgent = nil
+	if got, want := NilProperties(c), []string{"publications[P].subscriptions[SUB2/PullDB].pull_agent"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("pull subscription: got %q, want %q", got, want)
 	}
 	c = fullConfig()
 	c.Publisher.LogReaderAgent = nil

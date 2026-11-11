@@ -358,8 +358,9 @@ func (e *exporter) readSubscriptions() error {
 			continue
 		}
 		label := fmt.Sprintf("publication %s, subscription %s.%s", p.Name, k.subscriber, k.database)
-		if s.subscriptionType != 0 {
-			e.find(model.FindingOutOfScope, subscriptionPath(p.Name, k.subscriber, k.database), "%s: pull subscription, out of scope, not exported", label)
+		// Push (0) and pull (1) are exported; anonymous (2) is out of scope.
+		if s.subscriptionType != 0 && s.subscriptionType != 1 {
+			e.find(model.FindingOutOfScope, subscriptionPath(p.Name, k.subscriber, k.database), "%s: %s subscription, out of scope, not exported", label, decode.SubscriptionType(s.subscriptionType))
 			continue
 		}
 		if s.updateMode != 0 {

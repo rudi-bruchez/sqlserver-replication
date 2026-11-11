@@ -23,6 +23,14 @@ type agentRow struct {
 	// snapshot is set for a snapshot agent, whose command line carries the
 	// distributor connection.
 	snapshot bool
+	// jobs is the connection whose msdb holds the agent's job; nil is the
+	// distributor.
+	jobs *sql.DB
+	// pullSubscriber is set, to the subscriber name, for a pull agent: its
+	// connection to the subscriber is read from the switches of the job step,
+	// and its job login is the credential of the step's proxy, both with
+	// run_as (MSsubscription_properties.job_login only stores @cl_login).
+	pullSubscriber string
 }
 
 // agent builds the model of an agent: profile, job, run-as account, command
@@ -31,15 +39,18 @@ type agentRow struct {
 // authentication.
 func (e *exporter) agent(path, label string, r agentRow, secretParts ...string) (model.Agent, error) {
 	a := model.Agent{Profile: model.Ptr(e.profileName(model.Join(path, "profile"), r.profileID))}
-	a.Connection = &model.Connection{Security: model.Ptr(decode.SecurityMode(r.securityMode)), Login: model.Ptr(r.login)}
-	if r.securityMode == 0 {
-		a.Connection.PasswordSecret = model.Ptr(e.secret(model.Join(model.Join(path, "connection"), "password_secret"),
-			"SQL", append(secretParts, r.login)...))
+	pull := r.pullSubscriber != ""
+	if !pull {
+		a.Connection = &model.Connection{Security: model.Ptr(decode.SecurityMode(r.securityMode)), Login: model.Ptr(r.login)}
+		if r.securityMode == 0 {
+			a.Connection.PasswordSecret = model.Ptr(e.secret(model.Join(model.Join(path, "connection"), "password_secret"),
+				"SQL", append(secretParts, r.login)...))
+		}
+		e.jobLogin(path, &a, r.jobLogin)
 	}
-
-	a.JobLogin = model.Ptr(r.jobLogin)
-	if r.jobLogin != "" {
-		a.JobPasswordSecret = model.Ptr(e.secret(model.Join(path, "job_password_secret"), "WIN", r.jobLogin))
+	jobs := r.jobs
+	if jobs == nil {
+		jobs = e.src.Distributor
 	}
 
 	if r.jobID == "" {
@@ -51,7 +62,7 @@ func (e *exporter) agent(path, label string, r agentRow, secretParts ...string) 
 	var proxyID sql.NullInt32
 	var proxyFound int
 	var credential sql.NullString
-	err := e.src.Distributor.QueryRowContext(e.ctx, qJob, r.jobID, r.stepUID).Scan(
+	err := jobs.QueryRowContext(e.ctx, qJob, r.jobID, r.stepUID).Scan(
 		&jobName, &enabled, &proxyID, &proxyFound, &credential, &command, &stepFound)
 	if err == sql.ErrNoRows {
 		e.find(model.FindingIncomplete, path, "%s: job %s recorded by replication no longer exists in msdb", label, r.jobID)
@@ -69,18 +80,28 @@ func (e *exporter) agent(path, label string, r agentRow, secretParts ...string) 
 	} else {
 		if ra, ok := runAs(proxyID, proxyFound != 0, credential); ok {
 			a.RunAs = ra
+			if pull {
+				e.jobLogin(path, &a, *ra)
+			}
 		} else {
 			// "" would claim the Agent service account: run_as stays nil.
 			e.find(model.FindingUnreadable, model.Join(path, "run_as"),
 				"the job step runs under proxy %d, whose credential this login cannot see", proxyID.Int32)
+			if pull {
+				e.find(model.FindingUnreadable, model.Join(path, "job_login"),
+					"the job step runs under proxy %d, whose credential this login cannot see", proxyID.Int32)
+			}
 		}
 		a.Command = model.Ptr(maskPasswords(strings.TrimSpace(command)))
 		if r.snapshot {
 			e.distributorConnection(path, &a, command)
 		}
+		if pull {
+			a.Connection = e.commandConnection(model.Join(path, "connection"), command, "Subscriber", r.pullSubscriber)
+		}
 	}
 
-	rows, err := e.src.Distributor.QueryContext(e.ctx, qJobSchedules, r.jobID)
+	rows, err := jobs.QueryContext(e.ctx, qJobSchedules, r.jobID)
 	if err != nil {
 		return a, err
 	}
@@ -112,6 +133,15 @@ func (e *exporter) agent(path, label string, r agentRow, secretParts ...string) 
 	return a, rows.Err()
 }
 
+// jobLogin sets the job login of an agent and, when it is not empty, the
+// name of its password secret.
+func (e *exporter) jobLogin(path string, a *model.Agent, login string) {
+	a.JobLogin = model.Ptr(login)
+	if login != "" {
+		a.JobPasswordSecret = model.Ptr(e.secret(model.Join(path, "job_password_secret"), "WIN", login))
+	}
+}
+
 // runAs gives the account of a job step: "" when it has no proxy (the Agent
 // service account), nil and false when the proxy or its credential cannot be
 // seen, otherwise the credential identity.
@@ -126,31 +156,41 @@ func runAs(proxyID sql.NullInt32, proxyFound bool, credential sql.NullString) (*
 }
 
 // distributorConnection reads the connection of a snapshot agent to the
-// distributor from the switches of its command line. An absent security mode
-// is 1, Windows authentication. Whatever cannot be read leaves
-// distributor_connection (or its login) nil with an unreadable finding: never
-// a default and never a secret name built from a guess.
+// distributor from the switches of its command line (commandConnection).
 func (e *exporter) distributorConnection(path string, a *model.Agent, command string) {
-	cpath := model.Join(path, "distributor_connection")
+	distributor := ""
+	if e.cfg.Distributor != nil {
+		distributor = e.cfg.Distributor.Server
+	}
+	a.DistributorConnection = e.commandConnection(model.Join(path, "distributor_connection"), command, "Distributor", distributor)
+}
+
+// commandConnection reads the connection an agent makes to side (Distributor
+// or Subscriber) from the -<side>, -<side>SecurityMode and -<side>Login
+// switches of its command line; server names the password secret. An absent
+// security mode is 1, Windows authentication. Whatever cannot be read gives a
+// nil connection (or a nil login) with an unreadable finding at cpath: never
+// a default and never a secret name built from a guess.
+func (e *exporter) commandConnection(cpath, command, side, server string) *model.Connection {
 	unreadable := func(p, format string, args ...any) {
 		e.find(model.FindingUnreadable, p, format, args...)
 	}
 	// A switch name glued to the text before it is not a switch the server
 	// wrote: reading around it could default a SQL connection to Windows.
-	for _, name := range []string{"Distributor", "DistributorSecurityMode", "DistributorLogin"} {
+	for _, name := range []string{side, side + "SecurityMode", side + "Login"} {
 		if gluedSwitch(command, name) {
 			unreadable(cpath, "-%s is not preceded by whitespace in the command line", name)
-			return
+			return nil
 		}
 	}
-	// -Distributor is bracketed by the server: an unbalanced bracket or quote
+	// -<side> is bracketed by the server: an unbalanced bracket or quote
 	// means the line is not what the server wrote.
-	if _, present, balanced := bracketedSwitch(command, "Distributor"); present && !balanced {
-		unreadable(cpath, "the command line has an unbalanced bracket or quote after -Distributor")
-		return
+	if _, present, balanced := bracketedSwitch(command, side); present && !balanced {
+		unreadable(cpath, "the command line has an unbalanced bracket or quote after -%s", side)
+		return nil
 	}
 	mode := 1
-	if rest, present := switchStart(command, "DistributorSecurityMode"); present {
+	if rest, present := switchStart(command, side+"SecurityMode"); present {
 		// The value is the first token: the step can carry other switches
 		// after it (-OutputVerboseLevel 2).
 		v := rest
@@ -159,34 +199,26 @@ func (e *exporter) distributorConnection(path string, a *model.Agent, command st
 		}
 		n, err := strconv.Atoi(v)
 		if err != nil {
-			unreadable(cpath, "-DistributorSecurityMode %q is not a number", v)
-			return
+			unreadable(cpath, "-%sSecurityMode %q is not a number", side, v)
+			return nil
 		}
 		mode = n
 	}
 	c := &model.Connection{Security: model.Ptr(decode.SecurityMode(mode))}
-	if mode == 0 {
-		a.DistributorConnection = c
-		login, ok := loginSwitch(command)
-		if !ok {
-			unreadable(model.Join(cpath, "login"), "the -DistributorLogin value of the command line cannot be told from the other switches")
-			return
-		}
-		c.Login = model.Ptr(login)
-		distributor := ""
-		if e.cfg.Distributor != nil {
-			distributor = e.cfg.Distributor.Server
-		}
-		c.PasswordSecret = model.Ptr(e.secret(model.Join(cpath, "password_secret"), "SQL", distributor, login))
-		return
+	if mode != 0 {
+		return c
 	}
-	a.DistributorConnection = c
+	login, ok := sideLoginSwitch(command, side)
+	if !ok {
+		unreadable(model.Join(cpath, "login"), "the -%sLogin value of the command line cannot be told from the other switches", side)
+		return c
+	}
+	c.Login = model.Ptr(login)
+	c.PasswordSecret = model.Ptr(e.secret(model.Join(cpath, "password_secret"), "SQL", server, login))
+	return c
 }
 
-var (
-	loginEnd    = regexp.MustCompile(`(?i)\s[-/]DistributorPassword(?:\s|$)`)
-	otherSwitch = regexp.MustCompile(`\s[-/][A-Za-z]`)
-)
+var otherSwitch = regexp.MustCompile(`\s[-/][A-Za-z]`)
 
 // loginSwitch reads -DistributorLogin, which the server writes raw, as
 // " -DistributorLogin <login> -DistributorPassword <password>" (measured): the
@@ -196,10 +228,20 @@ var (
 // cannot then be told from the rest of the line. The first occurrence of a
 // repeated switch is kept; which one the agent honours is not measured.
 func loginSwitch(cmd string) (login string, ok bool) {
-	rest, present := switchStart(cmd, "DistributorLogin")
+	return sideLoginSwitch(cmd, "Distributor")
+}
+
+// sideLoginSwitch is loginSwitch for -<side>Login, ended by -<side>Password.
+// For a pull agent's -SubscriberLogin the layout is assumed, not measured:
+// sp_addpullsubscription_agent ignores its deprecated subscriber security
+// parameters and writes -SubscriberSecurityMode 1 even when given 0 (lab,
+// SQL Server 2022 CU27), so only an edited step holds the switch.
+func sideLoginSwitch(cmd, side string) (login string, ok bool) {
+	rest, present := switchStart(cmd, side+"Login")
 	if !present {
 		return "", false
 	}
+	loginEnd := regexp.MustCompile(`(?i)\s[-/]` + regexp.QuoteMeta(side) + `Password(?:\s|$)`)
 	loc := loginEnd.FindStringIndex(" " + rest)
 	if loc == nil {
 		return "", false
@@ -387,10 +429,10 @@ func (e *exporter) readDistributionAgents() error {
 
 	// Server and database names are compared case-insensitively, as the
 	// replication procedures do; publication names are compared exactly.
-	find := func(publication, subscriber, database string) *found {
+	find := func(subscriptionType int, publication, subscriber, database string) *found {
 		for k := range all {
 			f := &all[k]
-			if f.subscriptionType == 0 && f.publication == publication &&
+			if f.subscriptionType == subscriptionType && f.publication == publication &&
 				strings.EqualFold(f.subscriber, subscriber) && strings.EqualFold(f.database, database) {
 				return f
 			}
@@ -414,9 +456,26 @@ func (e *exporter) readDistributionAgents() error {
 		for j := range p.Subscriptions {
 			s := &p.Subscriptions[j]
 			label := fmt.Sprintf("publication %s, subscription %s.%s", p.Name, s.Subscriber, s.Database)
+			if s.Type != nil && *s.Type == "pull" {
+				// The distributor keeps a row for the pull agent too, with
+				// its profile; a publication without an independent agent
+				// records it as N'ALL', as for push (not measured for pull).
+				name := p.Name
+				if !*p.IndependentAgent {
+					name = "ALL"
+				}
+				var d *pullDistRow
+				if f := find(1, name, s.Subscriber, s.Database); f != nil {
+					d = &pullDistRow{profileID: f.row.profileID, streams: f.streams, memoryOptimized: f.memoryOptimized != 0}
+				}
+				if err := e.readPullAgent(p, s, label, d); err != nil {
+					return err
+				}
+				continue
+			}
 			if *p.IndependentAgent {
 				path := model.Join(subscriptionPath(p.Name, s.Subscriber, s.Database), "distribution_agent")
-				f := find(p.Name, s.Subscriber, s.Database)
+				f := find(0, p.Name, s.Subscriber, s.Database)
 				if f == nil {
 					e.find(model.FindingIncomplete, path, "%s: no push distribution agent found at the distributor", label)
 					continue
@@ -435,7 +494,7 @@ func (e *exporter) readDistributionAgents() error {
 			shared[key] = true
 			path := model.Join("publisher", "shared_distribution_agents") +
 				model.Element(model.SharedDistributionAgent{Subscriber: s.Subscriber, Database: s.Database}.Key())
-			f := find("ALL", s.Subscriber, s.Database)
+			f := find(0, "ALL", s.Subscriber, s.Database)
 			if f == nil {
 				e.find(model.FindingIncomplete, path, "subscriber %s.%s: no shared push distribution agent found at the distributor", s.Subscriber, s.Database)
 				continue
@@ -455,5 +514,137 @@ func (e *exporter) readDistributionAgents() error {
 		}
 		return a.Database < b.Database
 	})
+	return nil
+}
+
+// pullDistRow is what the distributor records about a pull agent
+// (MSdistribution_agents, subscription_type 1).
+type pullDistRow struct {
+	profileID       int
+	streams         int
+	memoryOptimized bool
+}
+
+// pullRow is one row of qPullSubscription.
+type pullRow struct {
+	subscriptionType           int
+	independent, immediate     int
+	description, agentID       string
+	hasProperties              int
+	distributor                string
+	distributorSecurity        int
+	distributorLogin           string
+	altSnapshotFolder, workDir string
+	useFTP, syncmgr            int
+	stepUID, dtsPackage        string
+}
+
+// readPullAgent reads the agent of a pull subscription at its subscriber:
+// MSreplication_subscriptions and MSsubscription_properties in the
+// subscription database, the job in the subscriber's msdb. d is the agent's
+// row at the distributor, nil when there is none.
+func (e *exporter) readPullAgent(p *model.Publication, s *model.Subscription, label string, d *pullDistRow) error {
+	subPath := subscriptionPath(p.Name, s.Subscriber, s.Database)
+	path := model.Join(subPath, "pull_agent")
+	db := subscriberConn(e.src.Subscribers, s.Subscriber)
+	if db == nil {
+		e.find(model.FindingUnreadable, path, "subscriber %s is not connected: pass -server %s=ADDRESS", s.Subscriber, s.Subscriber)
+		return nil
+	}
+	for _, table := range []string{"MSreplication_subscriptions", "MSsubscription_properties"} {
+		var exists int
+		if err := db.QueryRowContext(e.ctx, qTableExists, quoteName(s.Database)+".dbo."+table).Scan(&exists); err != nil {
+			return fmt.Errorf("subscriber %s: %w", s.Subscriber, err)
+		}
+		if exists == 0 {
+			e.find(model.FindingIncomplete, path, "%s: no table %s in database %s at subscriber %s", label, table, s.Database, s.Subscriber)
+			return nil
+		}
+	}
+
+	rows, err := db.QueryContext(e.ctx, subscriberQuery(s.Database), e.cfg.Publisher.Server, e.src.Database, p.Name)
+	if err != nil {
+		return fmt.Errorf("subscriber %s: %w", s.Subscriber, err)
+	}
+	var pull *pullRow
+	anonymous := false
+	for rows.Next() {
+		var r pullRow
+		if err := rows.Scan(&r.subscriptionType, &r.independent, &r.immediate, &r.description, &r.agentID,
+			&r.hasProperties, &r.distributor, &r.distributorSecurity, &r.distributorLogin,
+			&r.altSnapshotFolder, &r.workDir, &r.useFTP, &r.syncmgr, &r.stepUID, &r.dtsPackage); err != nil {
+			rows.Close()
+			return err
+		}
+		switch r.subscriptionType {
+		case 1:
+			pull = &r
+		case 2:
+			anonymous = true
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	// The job queries reuse the connection pool: the rows are read in full
+	// first.
+	if anonymous {
+		e.find(model.FindingOutOfScope, subPath, "%s: the subscriber holds an anonymous subscription to the publication, out of scope, not exported", label)
+	}
+	if pull == nil {
+		if !anonymous {
+			e.find(model.FindingIncomplete, path, "%s: no pull subscription row in %s.dbo.MSreplication_subscriptions at subscriber %s", label, s.Database, s.Subscriber)
+		}
+		return nil
+	}
+	// independent_agent and immediate_sync are parameters of
+	// sp_addpullsubscription that default to 1, not copies of the
+	// publication's: the model keeps the publication's values.
+	if (pull.independent != 0) != *p.IndependentAgent || (pull.immediate != 0) != *p.ImmediateSync {
+		e.find(model.FindingIncomplete, path, "%s: the subscriber records independent_agent %d and immediate_sync %d, the publication %t and %t",
+			label, pull.independent, pull.immediate, *p.IndependentAgent, *p.ImmediateSync)
+	}
+	if pull.dtsPackage != "" {
+		e.find(model.FindingOutOfScope, path, "%s: DTS package %s, out of scope", label, pull.dtsPackage)
+	}
+
+	row := agentRow{jobID: pull.agentID, stepUID: pull.stepUID, jobs: db, pullSubscriber: s.Subscriber}
+	if d != nil {
+		row.profileID = d.profileID
+	}
+	a, err := e.agent(path, "pull agent of "+label, row)
+	if err != nil {
+		return err
+	}
+	pa := &model.PullAgent{
+		DistributionAgent: model.DistributionAgent{Agent: a},
+		Description:       model.Ptr(pull.description),
+	}
+	if d != nil {
+		pa.SubscriptionStreams = model.Ptr(d.streams)
+		pa.MemoryOptimized = model.Ptr(d.memoryOptimized)
+	} else {
+		// No row: the profile is unknown, not the default.
+		pa.Profile = nil
+		e.find(model.FindingIncomplete, path, "%s: no pull distribution agent found at the distributor", label)
+	}
+	if pull.hasProperties == 0 {
+		e.find(model.FindingIncomplete, path, "%s: no row in %s.dbo.MSsubscription_properties at subscriber %s", label, s.Database, s.Subscriber)
+	} else {
+		pa.Distributor = model.Ptr(pull.distributor)
+		pa.AltSnapshotFolder = model.Ptr(pull.altSnapshotFolder)
+		pa.WorkingDirectory = model.Ptr(pull.workDir)
+		pa.UseFTP = model.Ptr(pull.useFTP != 0)
+		pa.EnabledForSyncmgr = model.Ptr(pull.syncmgr != 0)
+		c := &model.Connection{Security: model.Ptr(decode.SecurityMode(pull.distributorSecurity))}
+		if pull.distributorSecurity == 0 {
+			c.Login = model.Ptr(pull.distributorLogin)
+			c.PasswordSecret = model.Ptr(e.secret(model.Join(model.Join(path, "distributor_connection"), "password_secret"),
+				"SQL", pull.distributor, pull.distributorLogin))
+		}
+		pa.DistributorConnection = c
+	}
+	s.PullAgent = pa
 	return nil
 }

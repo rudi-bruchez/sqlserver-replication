@@ -29,6 +29,29 @@ type Source struct {
 	PublisherName string
 	// Probe is the result of Probe on the publisher.
 	Probe PublisherProbe
+	// Subscribers holds a connection to master of each subscriber that can
+	// be read, keyed by the server name as the user typed it. A pull
+	// subscription is read at its subscriber; one whose subscriber is not
+	// here is reported unreadable. Keys are matched case-insensitively
+	// (subscriberConn).
+	Subscribers map[string]*sql.DB
+}
+
+// subscriberConn returns the connection of a subscriber, matching the name
+// case-insensitively: syssubscriptions.srvname is upper case while the user
+// types the name as they like.
+func subscriberConn(subs map[string]*sql.DB, name string) *sql.DB {
+	for k, db := range subs {
+		if strings.EqualFold(k, name) {
+			return db
+		}
+	}
+	return nil
+}
+
+// subscriberQuery returns qPullSubscription for a subscription database.
+func subscriberQuery(database string) string {
+	return strings.ReplaceAll(qPullSubscription, "{subdb}", quoteName(database))
 }
 
 // PublisherProbe is what the publisher says about itself and the publication

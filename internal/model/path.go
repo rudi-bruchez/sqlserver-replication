@@ -246,10 +246,18 @@ func (c Command) OmittedOK(key string, parents []Step) bool {
 	return key == "procedure" && !callModes[c.Mode]
 }
 
-// OmittedOK: a subscription of a publication without an independent agent
-// uses the shared agent of its subscriber database.
+// OmittedOK: a push subscription has no pull agent, a pull subscription has
+// no push distribution agent, and a subscription of a publication without an
+// independent agent uses the shared agent of its subscriber database.
 func (s Subscription) OmittedOK(key string, parents []Step) bool {
-	if key != "distribution_agent" {
+	switch key {
+	case "pull_agent":
+		return s.Type != nil && *s.Type == "push"
+	case "distribution_agent":
+		if s.Type != nil && *s.Type == "pull" {
+			return true
+		}
+	default:
 		return false
 	}
 	for i := len(parents) - 1; i >= 0; i-- {
@@ -289,4 +297,10 @@ func (a Agent) OmittedOK(key string, parents []Step) bool {
 // OmittedOK answers for the fields of the inlined Agent too.
 func (d DistributionAgent) OmittedOK(key string, parents []Step) bool {
 	return d.Agent.OmittedOK(key, parents)
+}
+
+// OmittedOK answers for the fields of the inlined DistributionAgent and
+// Agent: a pull agent has no property of its own that may be omitted.
+func (p PullAgent) OmittedOK(key string, parents []Step) bool {
+	return p.DistributionAgent.OmittedOK(key, parents)
 }

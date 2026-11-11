@@ -9,15 +9,18 @@ Improving and managing SQL Server replication
 
 ## sqlrepl export
 
-Reads a publication database, its publications, articles, push subscriptions and agents, and writes them as YAML. It only runs `SELECT` statements, on the publisher and on the distributor.
+Reads a publication database, its publications, articles, push and pull subscriptions and agents, and writes them as YAML. It only runs `SELECT` statements, on the publisher, on the distributor and on the subscribers given with `-server`.
 
-Scope: transactional and snapshot replication, push subscriptions, SQL Server publisher. Anything else found (pull subscriptions, updatable subscriptions, peer-to-peer, non-SQL Server subscribers) is reported under `findings`. Each finding has a `kind` (`out_of_scope`, `incomplete`, `unreadable` or `note`), the `path` of the element concerned and a `message`.
+Scope: transactional and snapshot replication, push and pull subscriptions, SQL Server publisher. Anything else found (anonymous and updatable subscriptions, peer-to-peer, non-SQL Server subscribers) is reported under `findings`. Each finding has a `kind` (`out_of_scope`, `incomplete`, `unreadable` or `note`), the `path` of the element concerned and a `message`.
 
 Besides the publications, the file holds the distributor properties (cleanup batch sizes, the folders and names of the distribution database files, the security of the `repl_distributor` link, `multi_subnet_failover`), the publisher's `sync_with_backup`, and per publication the partition switch options, `enabled_for_het_sub`, `snapshot.enabled_for_internet` and the `type` and `subscriber_type` of each subscription. A property the export could not read is left out and has a finding.
+
+A pull subscription's agent runs at the subscriber, which keeps its settings and its job. The export reads it under `pull_agent` when the subscriber is given with `-server NAME=ADDRESS`, `NAME` being the subscriber name as the publisher records it, in any case. Without it, `pull_agent` is left out with an `unreadable` finding that names the flag to pass. The subscriber connection uses the publisher's credentials (`-user`, `-param`).
 
 ```
 go build ./cmd/sqlrepl
 sqlrepl export -publisher PUBSRV -database Sales -o sales.yaml
+sqlrepl export -publisher PUBSRV -database Sales -server SUBSRV=subsrv.example.com,1433 -o sales.yaml
 ```
 
 Options:
@@ -26,13 +29,14 @@ Options:
 |---|---|
 | `-publisher` | publisher instance: `host`, `host\instance`, `host,port`, optionally prefixed by a protocol (`lpc:`, `np:`, `tcp:`) |
 | `-database` | publication database |
-| `-distributor` | distributor instance; by default, the distributor registered at the publisher |
+| `-distributor` | distributor instance; by default, the distributor registered at the publisher, looked up first among the `-server` names |
 | `-publisher-name` | publisher name registered at the distributor, when it differs from `@@SERVERNAME` (publication database in an availability group) |
 | `-user` | SQL Server login, password in `SQLREPL_PASSWORD`; Windows authentication by default |
 | `-param key=value` | extra go-mssqldb connection parameter, repeatable (`-param encrypt=disable`) |
+| `-server NAME=ADDRESS` | address of a server by its name, repeatable: each one is opened as a subscriber whose pull subscriptions are read, and the distributor name registered at the publisher is looked up among them; the address takes the `-publisher` forms. A name given twice, in any case, is an error |
 | `-o` | output file; standard output by default |
 
-Required permissions: read access to the publication database, and to `msdb` and the distribution database on the distributor.
+Required permissions: read access to the publication database, and to `msdb` and the distribution database on the distributor; for a pull subscription, to the subscription database and `msdb` on the subscriber.
 
 Passwords are never exported. Where an agent uses SQL Server authentication, the file carries a `password_secret` name instead. Agent command lines are exported with their password arguments masked.
 

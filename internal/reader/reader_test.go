@@ -64,6 +64,7 @@ func TestQueriesParse(t *testing.T) {
 		"qAgentParameters": qAgentParameters,
 		"qSyncWithBackup":  qSyncWithBackup, "qDistributorLink": qDistributorLink,
 		"qDistributionFiles": qDistributionFiles, "qSubscriberType": qSubscriberType,
+		"qTableExists": qTableExists, "qPullSubscription": subscriberQuery("SalesSub"),
 	}
 	ctx := context.Background()
 	// PARSEONLY only applies to the batches that follow it in the session,
@@ -86,7 +87,7 @@ func TestQueriesParse(t *testing.T) {
 				t.Errorf("%s: unreplaced placeholder", name)
 			}
 			// Parameters are declared so that the batch parses on its own.
-			batch := "DECLARE @p1 nvarchar(256), @p2 nvarchar(256);\n" + q
+			batch := "DECLARE @p1 nvarchar(256), @p2 nvarchar(256), @p3 nvarchar(256);\n" + q
 			if _, err := conn.ExecContext(ctx, batch); err != nil {
 				t.Errorf("%s with %s: %v", name, servers, err)
 			}
@@ -482,5 +483,49 @@ func TestSelectProfiles(t *testing.T) {
 	}
 	if got[0].Default == nil || !*got[0].Default {
 		t.Errorf("default flag lost on %+v", got[0])
+	}
+}
+
+func TestSubscriberQueryQuotesDatabase(t *testing.T) {
+	q := subscriberQuery("m sub]1")
+	if !strings.Contains(q, "[m sub]]1].dbo.MSreplication_subscriptions") {
+		t.Errorf("query does not quote the database:\n%s", q)
+	}
+	if strings.Contains(q, "{") {
+		t.Errorf("unreplaced placeholder:\n%s", q)
+	}
+}
+
+// The pull agent's step carries -Subscriber, -SubscriberSecurityMode and
+// -SubscriberLogin, read as the distributor switches are.
+func TestSubscriberCommandConnection(t *testing.T) {
+	cases := []struct {
+		name, cmd        string
+		security, secret string // security "" when the connection is nil
+	}{
+		{"lab", `-Publisher [repllab] -PublisherDB [Sales] -Publication [m_pp] -Distributor [repllab] -SubscriptionType 1 -Subscriber [repllab] -SubscriberSecurityMode 1 -SubscriberDB [m_psub]`, "windows", ""},
+		{"absent mode", `-Subscriber [S] -SubscriberDB [db]`, "windows", ""},
+		{"sql", `-Subscriber [S] -SubscriberSecurityMode 0 -SubscriberLogin u -SubscriberPassword p -SubscriberDB [db]`, "sql", "SQLREPL_SQL_SUB_U"},
+		{"unbalanced", `-Subscriber [S -SubscriberSecurityMode 1`, "", ""},
+	}
+	for _, c := range cases {
+		e := &exporter{cfg: &model.Config{}, found: map[string]bool{}}
+		got := e.commandConnection("a.connection", c.cmd, "Subscriber", "SUB")
+		if c.security == "" {
+			if got != nil || len(e.cfg.Findings) != 1 {
+				t.Errorf("%s: connection %+v, findings %+v; want nil and one finding", c.name, got, e.cfg.Findings)
+			}
+			continue
+		}
+		if got == nil || *got.Security != c.security {
+			t.Errorf("%s: connection %+v, want %s", c.name, got, c.security)
+			continue
+		}
+		if (got.PasswordSecret == nil) != (c.secret == "") || (c.secret != "" && *got.PasswordSecret != c.secret) {
+			t.Errorf("%s: password_secret = %v, want %q", c.name, got.PasswordSecret, c.secret)
+		}
+		if len(e.cfg.Findings) != 0 {
+			t.Errorf("%s: findings %+v", c.name, e.cfg.Findings)
+		}
 	}
 }

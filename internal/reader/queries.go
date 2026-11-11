@@ -239,3 +239,36 @@ SELECT profile_id, parameter_name, ISNULL(value, N'')
 FROM msdb.dbo.MSagent_parameters
 ORDER BY profile_id, parameter_name`
 )
+
+// Queries run on a subscriber, connected to master. {subdb} is replaced by the
+// quoted name of the subscription database (subscriberQuery).
+const (
+	// The tables of a subscription database are created by the first
+	// sp_addpullsubscription; sp_helppullsubscription returns nothing
+	// without them. The table name is passed as a parameter.
+	qTableExists = `SELECT CASE WHEN OBJECT_ID(@p1, N'U') IS NULL THEN 0 ELSE 1 END`
+
+	// The join of sp_helppullsubscription.sql:94-176, for one publication.
+	// Every subscription_type is returned: type 2 (anonymous) is reported,
+	// not exported, and may stand beside a type 1 row since the unique index
+	// uc1MSReplication_subscriptions includes subscription_type. agent_id is
+	// the job id of the agent in the subscriber's msdb.
+	qPullSubscription = `
+SELECT rs.subscription_type,
+       CAST(ISNULL(rs.independent_agent, 0) AS int), CAST(ISNULL(rs.immediate_sync, 0) AS int),
+       ISNULL(rs.description, N''),
+       ISNULL(CONVERT(nvarchar(36), CONVERT(uniqueidentifier, rs.agent_id)), N''),
+       CASE WHEN sp.publication IS NULL THEN 0 ELSE 1 END,
+       ISNULL(sp.distributor, N''),
+       CAST(ISNULL(sp.distributor_security_mode, 1) AS int), ISNULL(sp.distributor_login, N''),
+       ISNULL(sp.alt_snapshot_folder, N''), ISNULL(sp.working_directory, N''),
+       CAST(ISNULL(sp.use_ftp, 0) AS int), CAST(ISNULL(sp.enabled_for_syncmgr, 0) AS int),
+       ISNULL(CONVERT(nvarchar(36), sp.job_step_uid), N''),
+       ISNULL(sp.dts_package_name, N'')
+FROM {subdb}.dbo.MSreplication_subscriptions AS rs
+LEFT JOIN {subdb}.dbo.MSsubscription_properties AS sp
+       ON UPPER(sp.publisher) = UPPER(rs.publisher) AND sp.publisher_db = rs.publisher_db
+      AND sp.publication = rs.publication
+WHERE UPPER(rs.publisher) = UPPER(@p1) AND rs.publisher_db = @p2 AND rs.publication = @p3
+ORDER BY rs.subscription_type`
+)
