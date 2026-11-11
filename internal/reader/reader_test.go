@@ -425,6 +425,7 @@ func TestCheckSyncView(t *testing.T) {
 		{"not a view", "not a view", "", nil, false, 0},
 		{"user view", "create view [dbo].[v] as select a from dbo.t where a > 0", "", []string{"a"}, false, 0},
 		{"flag = 1", withClause("flag = 1"), "flag = 1", cust, true, 0},
+		{"trailing semicolon", syncCustomer + ";", "Country = 'FR'", cust, true, 0},
 		{"id = 10", withClause("Amount = 10"), "Amount = 10", cust, true, 0},
 		{"whitespace outside literals", withClause("Country   =\n 'FR'"), "Country = 'FR'", cust, true, 0},
 		{"whitespace in literal", withClause("City = 'New  York'"), "City = 'New York'", cust, true, 1},

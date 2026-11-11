@@ -73,6 +73,8 @@ func guardedClause(rest string) (string, bool) {
 	}
 	sc.skipSpace()
 	t := strings.TrimRight(rest[sc.p:], " \t\r\n")
+	// A hand-altered view can end in ");".
+	t = strings.TrimRight(strings.TrimSuffix(t, ";"), " \t\r\n")
 	if len(t) < 2 || t[0] != '(' || t[len(t)-1] != ')' {
 		return "", false
 	}
