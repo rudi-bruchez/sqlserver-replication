@@ -45,10 +45,13 @@ func (e *exporter) agent(label string, r agentRow, secret string) (model.Agent, 
 	}
 	a.JobName = model.Ptr(jobName)
 	if stepFound == 0 {
+		// Without a step, run_as and command were not read: they stay nil,
+		// since "" for run_as would claim the Agent service account.
 		e.warn("%s: job %s has no replication step; command and run-as account not exported", label, jobName)
+	} else {
+		a.RunAs = model.Ptr(runAs)
+		a.Command = model.Ptr(maskPasswords(strings.TrimSpace(command)))
 	}
-	a.RunAs = model.Ptr(runAs)
-	a.Command = model.Ptr(maskPasswords(strings.TrimSpace(command)))
 
 	rows, err := e.src.Distributor.QueryContext(e.ctx, qJobSchedules, r.jobID)
 	if err != nil {

@@ -262,3 +262,38 @@ func TestPathEscapesKeys(t *testing.T) {
 		t.Errorf("Pattern of a key ending with ] = %q", p)
 	}
 }
+
+func TestLoadRejectsNullListElement(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"version: 2\npublisher:\n  server: S\n  database: D\n  log_reader_agent:\n    schedules: [~]\n", "line 6: null list element"},
+		{"version: 2\npublications:\n  - name: P\n    articles: [null, {name: A}]\n", "line 4: null list element"},
+	} {
+		_, err := Load(strings.NewReader(tc.in))
+		if err == nil || err.Error() != tc.want {
+			t.Errorf("Load(%q): error %v, want %q", tc.in, err, tc.want)
+		}
+	}
+}
+
+func TestLoadRejectsSecondDocument(t *testing.T) {
+	_, err := Load(strings.NewReader("version: 2\n---\nversion: 1\n"))
+	if err == nil || err.Error() != "more than one YAML document" {
+		t.Errorf("error %v, want %q", err, "more than one YAML document")
+	}
+}
+
+// pointerList has a field shape the walk cannot judge.
+type pointerList struct {
+	Items []*Publication `yaml:"items"`
+}
+
+func TestNilPropertiesPanicsOnPointerSlice(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("the walk accepted a list of pointers to structs")
+		}
+	}()
+	v := reflect.ValueOf(&pointerList{}).Elem()
+	var out []string
+	walkStruct(v, "", nil, v, &out)
+}

@@ -114,6 +114,7 @@ func walkStruct(sv reflect.Value, path string, parents []Step, judge reflect.Val
 			continue
 		}
 		fv := sv.Field(i)
+		checkWalkable(t, f)
 		if hasOption(opts, "inline") {
 			walkStruct(fv, path, parents, judge, out)
 			continue
@@ -148,6 +149,34 @@ func walkStruct(sv reflect.Value, path string, parents []Step, judge reflect.Val
 				}
 				walkStruct(e, p+element(k.Key()), child, e, out)
 			}
+		}
+	}
+}
+
+// checkWalkable panics on a field the walk cannot judge, so that a later
+// field of such a shape is not skipped in silence: an inline field that is not
+// a struct, a list of pointers to structs, a map whose values are structs.
+func checkWalkable(owner reflect.Type, f reflect.StructField) {
+	ft := f.Type
+	tag := f.Tag.Get("yaml")
+	_, opts, _ := strings.Cut(tag, ",")
+	if hasOption(opts, "inline") && ft.Kind() != reflect.Struct {
+		panic(fmt.Sprintf("model: inline field %s.%s is not a struct", owner, f.Name))
+	}
+	if ft.Kind() == reflect.Pointer {
+		ft = ft.Elem()
+	}
+	isStruct := func(t reflect.Type) bool {
+		return t.Kind() == reflect.Struct || t.Kind() == reflect.Pointer && t.Elem().Kind() == reflect.Struct
+	}
+	switch ft.Kind() {
+	case reflect.Slice:
+		if e := ft.Elem(); e.Kind() == reflect.Pointer && isStruct(e) {
+			panic(fmt.Sprintf("model: field %s.%s is a list of pointers to structs", owner, f.Name))
+		}
+	case reflect.Map:
+		if isStruct(ft.Elem()) {
+			panic(fmt.Sprintf("model: field %s.%s is a map of structs", owner, f.Name))
 		}
 	}
 }
