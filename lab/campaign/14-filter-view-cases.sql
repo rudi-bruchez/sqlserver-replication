@@ -1,50 +1,66 @@
 -- The cases of lab/campaign/14-filter-view.sh, fed to sqlcmd on standard input by it, after
--- it has built the committed state (see the header of the .sh). Two sets of the same eight
--- cases:
---   F1..F8    publication m_fv, article m_t1, view m_v, filter m_f: no subscription
---   F1s..F8s  publication m_fvs, article m_t2, view m_vs, filter m_fs: a push subscription
---             to m_fvsub, status 2, snapshot delivered; every call passes
---             @force_invalidate_snapshot = immediate_sync_ready (read here) and
---             @force_reinit_subscription = 1 (measured: each of the three procedures is
---             refused with 20608 without it on this subscribed article)
+-- it has built the committed state (see the header of the .sh). Sets of the same cases:
+--   F1..F8, F2b      publication m_fv, article m_t1, view m_v, filter m_f: no subscription;
+--                    no flags
+--   F1s..F8s, F2bs   publication m_fvs, article m_t2, view m_vs, filter m_fs: a push
+--                    subscription to m_fvsub at status 2 (snapshot delivered); every call
+--                    passes @force_invalidate_snapshot = immediate_sync_ready (read here) and
+--                    @force_reinit_subscription = 1 (without it each of the three procedures
+--                    is refused with 20608 on this article)
+--   F1u..F8u, F2bu   publication m_fvu, article m_t3, view m_vu, filter m_fu: a push
+--                    subscription to m_fvsubu at status 1 (no snapshot ever started); no flags
+--   F6r              F6 on the m_fv article (no subscription) with
+--                    @force_reinit_subscription = 1 on every call: separates the effect of
+--                    the flag from the effect of a subscription
 -- Each case is one transaction rolled back, so that it starts from the committed state:
---   F1  sp_articlefilter @filter_name, @filter_clause = 'a > 0'
---   F2  F1, then sp_articlefilter with 'a > 1'
---   F3  F1, then sp_articlefilter with a NULL clause
---   F4  F1, then sp_articleview @view_name without @filter_clause
---   F5  F2, then sp_articleview @view_name, @filter_clause = 'a > 1'
---   F6  F1 and sp_articleview with 'a > 0', then sp_articlecolumn drop of b
---   F7  F6, then sp_articlecolumn add of b
---   F8  sp_articlecolumn drop of b, then sp_articleview with 'a > 0'
+--   F1   sp_articlefilter @filter_name, @filter_clause = 'a > 0'
+--   F2   F1, then sp_articlefilter with 'a > 1'
+--   F2b  F1, sp_articleview with 'a > 0', then sp_articlefilter with 'a > 1' (does the view
+--        follow a clause changed by sp_articlefilter alone?)
+--   F3   F1, then sp_articlefilter with a NULL clause
+--   F4   F1, then sp_articleview @view_name without @filter_clause
+--   F5   F2, then sp_articleview @view_name, @filter_clause = 'a > 1'
+--   F6   F1 and sp_articleview with 'a > 0', then sp_articlecolumn drop of b
+--   F7   F6, then sp_articlecolumn add of b
+--   F8   sp_articlecolumn drop of b, then sp_articleview with 'a > 0'
 -- The last call of a case is the measured one; the state is read after it, inside the
 -- transaction. One row per case:
---   R|<case>|<ok, or the first error number>|subscribed=<yes|no>; flags=<none|inv=i,reinit=1>;
---     calls=<proc:result,...>; filter_clause=<value>; filter_proc=<exists|absent>;
---     article_filter=<filter name|none|other>; proc_clause=<clause in the procedure, none>;
---     sync_view=<view name|other name|none>; view_clause=<clause after the HAS_PERMS_BY_NAME
---     predicate, none>; view_columns=<list>; view_has_column_b=<yes|no>;
---     article_columns=<list>; last_call_recreated_view=<yes|no>; last_call_changed_view=<yes|no>
--- subscribed is read inside the transaction, before the first call (syssubscriptions rows
--- of the article with srvid >= 0). No object id is printed: only relations, which a rerun
--- reproduces. The view and procedure definitions are read whole (nvarchar(max)) and parsed
--- server side; a definition longer than 4000 characters fails the run.
+--   R|<case>|<ok, or the first error number>|subscribed=<yes|no>; sub_status=<statuses|none>;
+--     flags=<none|reinit=1|inv=i,reinit=1>; calls=<proc:result,...>; filter_clause=<value>;
+--     filter_proc=<exists|absent>; article_filter=<filter name|none|other>;
+--     proc_clause=<clause in the procedure, none>; sync_view=<view name|other name|none>;
+--     view_clause=<clause after the HAS_PERMS_BY_NAME predicate, none>; view_columns=<list>;
+--     view_has_column_b=<yes|no>; article_columns=<list>; last_call_recreated_view=<yes|no>;
+--     last_call_changed_view=<yes|no>
+-- subscribed and sub_status are read inside the transaction, before the first call
+-- (syssubscriptions rows of the article with srvid >= 0). No object id is printed: only
+-- relations, which a rerun reproduces. The view and procedure definitions are read whole
+-- (nvarchar(max)) and parsed server side; a definition longer than 4000 characters fails
+-- the run.
+--
+-- What the rows show (2022): sp_articlecolumn rebuilds the view when the article has a
+-- subscription, at status 1 with no flag as at status 2 with the reinit flag (F6u, F6s),
+-- and does not when it has none, with or without the reinit flag (F6, F6r). 20608 is
+-- raised only on the synchronized (status 2) subscription.
 --
 -- Asserted, each failure raised as one uncaught error that the runner rejects, after the
--- rows are printed: 16 rows; the subscribed flag of every row is the one of its set; F2 and
--- F2s do not change the view (it stays on the clause it had, none); F4 and F4s set
--- filter_clause to NULL; F6 leaves column b in the view (measured on 2022: without a
--- subscription sp_articlecolumn does not rebuild the view; the brief expected the
--- opposite, the coordinator ruled to assert the measurement); F6s leaves a view without b
--- (with a subscription sp_articlecolumn rebuilds it, measured in the Task 11 probe).
+-- rows are printed: 28 rows; the subscription state of every row is the one of its set
+-- (none; status 2; status 1); F2, F2s, F2u do not change the view; F2b, F2bs, F2bu leave
+-- filter_clause on 'a > 1' and the view on 'a > 0'; F4, F4s, F4u set filter_clause to
+-- NULL; F6 and F6r leave column b in the view, F6r without re-creating or changing it;
+-- F6s and F6u leave a view without b; F1u, F4u, F6u succeed without flags.
 SET NOCOUNT ON;
 USE Sales;
 GO
 DECLARE @inv nvarchar(10) = ISNULL((SELECT CONVERT(nvarchar(10), immediate_sync_ready) FROM dbo.syspublications WHERE name = N'm_fvs'), N'none');
 
-DECLARE @sets TABLE (sfx varchar(2), pub sysname, art sysname, vw sysname, flt sysname, fl nvarchar(200), subscribed nvarchar(3), flags nvarchar(40));
+-- only: the one template case a set runs, or NULL for all of them.
+DECLARE @sets TABLE (sfx varchar(2), pub sysname, art sysname, vw sysname, flt sysname, fl nvarchar(200), flags nvarchar(40), only varchar(4));
 INSERT @sets VALUES
- ('',  N'm_fv',  N'm_t1', N'm_v',  N'm_f',  N'', N'no', N'none'),
- ('s', N'm_fvs', N'm_t2', N'm_vs', N'm_fs', N', @force_invalidate_snapshot = ' + @inv + N', @force_reinit_subscription = 1', N'yes', N'inv=' + @inv + N',reinit=1');
+ ('',  N'm_fv',  N'm_t1', N'm_v',  N'm_f',  N'', N'none', NULL),
+ ('s', N'm_fvs', N'm_t2', N'm_vs', N'm_fs', N', @force_invalidate_snapshot = ' + @inv + N', @force_reinit_subscription = 1', N'inv=' + @inv + N',reinit=1', NULL),
+ ('u', N'm_fvu', N'm_t3', N'm_vu', N'm_fu', N'', N'none', NULL),
+ ('r', N'm_fv',  N'm_t1', N'm_v',  N'm_f',  N', @force_reinit_subscription = 1', N'reinit=1', 'F6');
 
 DECLARE @AF0 nvarchar(400) = N'EXEC sp_articlefilter @publication = N''{pub}'', @article = N''{art}'', @filter_name = N''{flt}'', @filter_clause = N''a > 0''{fl}';
 DECLARE @AF1 nvarchar(400) = N'EXEC sp_articlefilter @publication = N''{pub}'', @article = N''{art}'', @filter_name = N''{flt}'', @filter_clause = N''a > 1''{fl}';
@@ -56,10 +72,11 @@ DECLARE @CD  nvarchar(400) = N'EXEC sp_articlecolumn @publication = N''{pub}'', 
 DECLARE @CA  nvarchar(400) = N'EXEC sp_articlecolumn @publication = N''{pub}'', @article = N''{art}'', @column = N''b'', @operation = N''add''{fl}';
 
 -- Steps of each case in order; the last one is the measured call.
-DECLARE @tpl TABLE (cid varchar(4), ord int, proc_name sysname, stmt nvarchar(400));
+DECLARE @tpl TABLE (cid varchar(5), ord int, proc_name sysname, stmt nvarchar(400));
 INSERT @tpl VALUES
  ('F1', 1, N'sp_articlefilter', @AF0),
  ('F2', 1, N'sp_articlefilter', @AF0), ('F2', 2, N'sp_articlefilter', @AF1),
+ ('F2b', 1, N'sp_articlefilter', @AF0), ('F2b', 2, N'sp_articleview', @AV0), ('F2b', 3, N'sp_articlefilter', @AF1),
  ('F3', 1, N'sp_articlefilter', @AF0), ('F3', 2, N'sp_articlefilter', @AFN),
  ('F4', 1, N'sp_articlefilter', @AF0), ('F4', 2, N'sp_articleview', @AV),
  ('F5', 1, N'sp_articlefilter', @AF0), ('F5', 2, N'sp_articlefilter', @AF1), ('F5', 3, N'sp_articleview', @AV1),
@@ -67,16 +84,16 @@ INSERT @tpl VALUES
  ('F7', 1, N'sp_articlefilter', @AF0), ('F7', 2, N'sp_articleview', @AV0), ('F7', 3, N'sp_articlecolumn', @CD), ('F7', 4, N'sp_articlecolumn', @CA),
  ('F8', 1, N'sp_articlecolumn', @CD), ('F8', 2, N'sp_articleview', @AV0);
 
-DECLARE @steps TABLE (cid varchar(4), ord int, proc_name sysname, stmt nvarchar(800));
+DECLARE @steps TABLE (cid varchar(5), sfx varchar(2), ord int, proc_name sysname, stmt nvarchar(800));
 INSERT @steps
-SELECT t.cid + s.sfx, t.ord, t.proc_name,
+SELECT t.cid + s.sfx, s.sfx, t.ord, t.proc_name,
        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(t.stmt, N'{pub}', s.pub), N'{art}', s.art), N'{vw}', s.vw), N'{flt}', s.flt), N'{fl}', s.fl)
-FROM @tpl t CROSS JOIN @sets s;
+FROM @tpl t JOIN @sets s ON s.only IS NULL OR s.only = t.cid;
 
-DECLARE @res TABLE (cid varchar(4), result nvarchar(20), detail nvarchar(3000), subscribed nvarchar(3), view_clause nvarchar(400),
+DECLARE @res TABLE (cid varchar(5), sfx varchar(2), result nvarchar(20), detail nvarchar(3000), subscribed nvarchar(3), sub_status nvarchar(20), recreated nvarchar(10), view_clause nvarchar(400),
                     filter_clause nvarchar(400), has_b nvarchar(10), changed nvarchar(10), too_long int);
 
-DECLARE @cid varchar(4), @ord int, @last int, @proc sysname, @stmt nvarchar(800);
+DECLARE @sfx varchar(2), @sst nvarchar(20), @cid varchar(5), @ord int, @last int, @proc sysname, @stmt nvarchar(800);
 DECLARE @pub sysname, @art sysname, @vw sysname, @flt sysname, @flags nvarchar(40), @subs nvarchar(3);
 DECLARE @calls nvarchar(1000), @first nvarchar(20), @e nvarchar(20), @readable bit;
 DECLARE @vid0 int, @vdef0 nvarchar(max), @vid1 int, @vdef nvarchar(max), @pdef nvarchar(max);
@@ -86,11 +103,11 @@ DECLARE @fc nvarchar(400), @fproc nvarchar(10), @afilter sysname, @pclause nvarc
 DECLARE @marker nvarchar(40) = N'''SELECT'')= 1';
 
 DECLARE cc CURSOR LOCAL FAST_FORWARD FOR
-    SELECT DISTINCT st.cid, se.pub, se.art, se.vw, se.flt, se.flags
-    FROM @steps st JOIN @sets se ON se.sfx = CASE WHEN st.cid LIKE '%s' THEN 's' ELSE '' END
+    SELECT DISTINCT st.cid, st.sfx, se.pub, se.art, se.vw, se.flt, se.flags
+    FROM @steps st JOIN @sets se ON se.sfx = st.sfx
     ORDER BY st.cid;
 OPEN cc;
-FETCH cc INTO @cid, @pub, @art, @vw, @flt, @flags;
+FETCH cc INTO @cid, @sfx, @pub, @art, @vw, @flt, @flags;
 WHILE @@FETCH_STATUS = 0
 BEGIN
     SELECT @calls = N'', @first = N'ok', @readable = 1, @too_long = 0, @vid0 = NULL, @vdef0 = NULL;
@@ -99,6 +116,10 @@ BEGIN
     SET @subs = CASE WHEN EXISTS (SELECT 1 FROM dbo.syssubscriptions s JOIN dbo.sysarticles a ON a.artid = s.artid
                                   JOIN dbo.syspublications pb ON pb.pubid = a.pubid
                                   WHERE pb.name = @pub AND a.name = @art AND s.srvid >= 0) THEN N'yes' ELSE N'no' END;
+    SET @sst = ISNULL((SELECT STRING_AGG(CONVERT(nvarchar(10), x.st), N'/') WITHIN GROUP (ORDER BY x.st)
+                       FROM (SELECT DISTINCT s.status AS st FROM dbo.syssubscriptions s JOIN dbo.sysarticles a ON a.artid = s.artid
+                             JOIN dbo.syspublications pb ON pb.pubid = a.pubid
+                             WHERE pb.name = @pub AND a.name = @art AND s.srvid >= 0) x), N'none');
     DECLARE cs CURSOR LOCAL FAST_FORWARD FOR SELECT ord, proc_name, stmt FROM @steps WHERE cid = @cid ORDER BY ord;
     OPEN cs;
     FETCH cs INTO @ord, @proc, @stmt;
@@ -175,47 +196,49 @@ BEGIN
                             WHEN @vdef0 IS NULL OR OBJECT_DEFINITION(@vid1) IS NULL THEN N'yes'
                             WHEN @vdef0 = OBJECT_DEFINITION(@vid1) THEN N'no' ELSE N'yes' END;
 
-        INSERT @res VALUES (@cid, @first,
-            N'subscribed=' + @subs + N'; flags=' + @flags
+        INSERT @res VALUES (@cid, @sfx, @first,
+            N'subscribed=' + @subs + N'; sub_status=' + @sst + N'; flags=' + @flags
             + N'; calls=' + @calls + N'; filter_clause=' + @fc + N'; filter_proc=' + @fproc + N'; article_filter=' + @afilter
             + N'; proc_clause=' + @pclause + N'; sync_view=' + @sview + N'; view_clause=' + @vclause
             + N'; view_columns=' + @vcols + N'; view_has_column_b=' + @hasb + N'; article_columns=' + @acols
             + N'; last_call_recreated_view=' + @recreated + N'; last_call_changed_view=' + @changed,
-            @subs, @vclause, @fc, @hasb, @changed, @too_long);
+            @subs, @sst, @recreated, @vclause, @fc, @hasb, @changed, @too_long);
     END
     ELSE
-        INSERT @res VALUES (@cid, @first, N'subscribed=' + @subs + N'; flags=' + @flags + N'; calls=' + @calls
+        INSERT @res VALUES (@cid, @sfx, @first, N'subscribed=' + @subs + N'; sub_status=' + @sst + N'; flags=' + @flags + N'; calls=' + @calls
                             + N'; state not readable (transaction doomed or closed by the refused call)',
-                            @subs, NULL, NULL, NULL, NULL, 0);
+                            @subs, @sst, NULL, NULL, NULL, NULL, NULL, 0);
     WHILE @@TRANCOUNT > 0 ROLLBACK;
-    FETCH cc INTO @cid, @pub, @art, @vw, @flt, @flags;
+    FETCH cc INTO @cid, @sfx, @pub, @art, @vw, @flt, @flags;
 END;
 CLOSE cc; DEALLOCATE cc;
 
 SELECT CAST(N'R|' + cid + N'|' + result + N'|' + REPLACE(detail, N'|', N'/') AS nvarchar(4000)) FROM @res
-ORDER BY CASE WHEN cid LIKE '%s' THEN 1 ELSE 0 END, cid;
+ORDER BY CASE sfx WHEN '' THEN 0 WHEN 'r' THEN 1 WHEN 's' THEN 2 ELSE 3 END, cid;
 SELECT 'R|TOTAL|' + CONVERT(varchar(10), COUNT(*)) FROM @res;
 
 -- Assertions: every failure is listed in one error, which the runner's uncaught guard rejects.
 DECLARE @bad nvarchar(2000) = N'';
-IF (SELECT COUNT(*) FROM @res) <> 16
-    SET @bad += N' rows=' + CONVERT(nvarchar(10), (SELECT COUNT(*) FROM @res)) + N' (expected 16);';
+IF (SELECT COUNT(*) FROM @res) <> 28
+    SET @bad += N' rows=' + CONVERT(nvarchar(10), (SELECT COUNT(*) FROM @res)) + N' (expected 28);';
 IF EXISTS (SELECT 1 FROM @res WHERE too_long > 0)
     SET @bad += N' a view or filter procedure definition is longer than 4000 characters;';
-IF EXISTS (SELECT 1 FROM @res WHERE subscribed <> CASE WHEN cid LIKE '%s' THEN N'yes' ELSE N'no' END)
-    SET @bad += N' a row of one set has the subscription state of the other;';
-IF NOT EXISTS (SELECT 1 FROM @res WHERE cid = 'F2' AND changed = N'no')
-    SET @bad += N' F2 changed the view (expected: the view stays on its old clause);';
-IF NOT EXISTS (SELECT 1 FROM @res WHERE cid = 'F2s' AND changed = N'no')
-    SET @bad += N' F2s changed the view (expected: the view stays on its old clause);';
-IF NOT EXISTS (SELECT 1 FROM @res WHERE cid = 'F4' AND filter_clause = N'NULL')
-    SET @bad += N' F4 did not set filter_clause to NULL;';
-IF NOT EXISTS (SELECT 1 FROM @res WHERE cid = 'F4s' AND filter_clause = N'NULL')
-    SET @bad += N' F4s did not set filter_clause to NULL;';
+IF EXISTS (SELECT 1 FROM @res WHERE sub_status <> CASE sfx WHEN 's' THEN N'2' WHEN 'u' THEN N'1' ELSE N'none' END)
+    SET @bad += N' a row has not the subscription state of its set;';
+IF (SELECT COUNT(*) FROM @res WHERE cid IN ('F2', 'F2s', 'F2u') AND changed = N'no') <> 3
+    SET @bad += N' F2, F2s or F2u changed the view (expected: the view stays on its old clause);';
+IF (SELECT COUNT(*) FROM @res WHERE cid IN ('F2b', 'F2bs', 'F2bu') AND filter_clause = N'a > 1' AND view_clause = N'a > 0') <> 3
+    SET @bad += N' F2b, F2bs or F2bu: expected filter_clause a > 1 with the view still on a > 0;';
+IF (SELECT COUNT(*) FROM @res WHERE cid IN ('F4', 'F4s', 'F4u') AND filter_clause = N'NULL') <> 3
+    SET @bad += N' F4, F4s or F4u did not set filter_clause to NULL;';
 IF NOT EXISTS (SELECT 1 FROM @res WHERE cid = 'F6' AND has_b = N'yes')
     SET @bad += N' F6 removed column b from the view (measured before: without a subscription sp_articlecolumn does not rebuild it);';
-IF NOT EXISTS (SELECT 1 FROM @res WHERE cid = 'F6s' AND has_b = N'no')
-    SET @bad += N' F6s left column b in the view (measured before: with a subscription sp_articlecolumn rebuilds it);';
+IF NOT EXISTS (SELECT 1 FROM @res WHERE cid = 'F6r' AND has_b = N'yes' AND recreated = N'no' AND changed = N'no')
+    SET @bad += N' F6r rebuilt the view (measured before: the reinit flag alone does not make sp_articlecolumn rebuild it);';
+IF (SELECT COUNT(*) FROM @res WHERE cid IN ('F6s', 'F6u') AND has_b = N'no') <> 2
+    SET @bad += N' F6s or F6u left column b in the view (measured before: with a subscription sp_articlecolumn rebuilds it);';
+IF (SELECT COUNT(*) FROM @res WHERE cid IN ('F1u', 'F4u', 'F6u') AND result = N'ok') <> 3
+    SET @bad += N' F1u, F4u or F6u refused without flags on a status 1 subscription;';
 IF @bad <> N''
     RAISERROR (N'14-filter-view: assertion failed:%s', 16, 1, @bad);
 GO

@@ -22,10 +22,15 @@
 #          publisher database's 'ALL' agent to m_sub);
 #   stop   yes: the subscription's distribution agent job is stopped before the drops;
 #          no: it is dropped while it runs. An agent dropped while it runs logs "The process
-#          was successfully stopped" after its row is gone (Task 10): that orphan history
-#          row is counted in the cycle's row (orphan_history=), then deleted by agent id
-#          (the id read before the drop, and only while no agent row has that id), since
-#          the runner's residue guard rejects any orphan history.
+#          was successfully stopped" after its row is gone (Task 10). After the drops the
+#          cycle waits until the agent row is gone and its job no longer runs (and, for a
+#          running agent, until that row is there, up to 30 s), counts the orphan rows of
+#          the cycle's distribution, snapshot and log reader agents, waits 5 s and counts
+#          again (a count that moves fails the run), records them, then deletes them by
+#          agent id, only those of this cycle and only if the count is unchanged at the
+#          deletion, since the runner's residue guard rejects any orphan history. Each
+#          cycle starts, and the run ends, by checking that no orphan row has appeared
+#          since for the agents of the earlier cycles.
 # Every statement of a cycle runs outside a transaction in TRY...CATCH; an error is
 # recorded, and the statement is run once more, the second result recorded as retry=.
 # Errors are taken from three places: the calls (the caught error number, and any
@@ -39,9 +44,9 @@
 #     logreader_after_drop=<running|stopped|dropped, read after the settle>
 #     logreader_agent_left=<rows of MSlogreader_agents for the database>
 #     calls=[step:result ...] retries=[step:result ...|none]
-#     agent_errors=[codes|none] agent_failures=N orphan_history=N (distribution and snapshot
-#     agents of the cycle) orphan_logreader_history=N (the m_trdb log reader the drop removed)
-#     left=[...]
+#     agent_errors=[codes|none] agent_failures=N (both read after the settle)
+#     orphan_dist_history=N orphan_snapshot_history=N orphan_logreader_history=N (the agents
+#     of the cycle; the log reader one is the m_trdb log reader the drop removed) left=[...]
 # Asserted (exit 1 at the first failure, with the rows on stderr): every build step ends ok,
 # the snapshot and a later change are delivered, the log reader of the publication
 # database runs at the drop, nothing of the publication is left after the drops
@@ -69,8 +74,10 @@ fail() { echo "13-transient: $*" >&2; for row in "${rows[@]}"; do echo "row: $ro
 need() { local v; for v in "$@"; do [ -n "${!v}" ] || fail "empty field $v"; done; }
 now() { sql_value "SELECT CONVERT(varchar(23), SYSDATETIME(), 121)"; }
 
-# Agent ids this script dropped; the cleanup deletes their orphan history rows only.
-DROPPED_DIST_IDS=(); DROPPED_LR_IDS=()
+# Agent ids of the cycles already finished: none of them may have an orphan history row
+# (checked at the start of each cycle and before the rows are printed).
+DROPPED_DIST_IDS=(); DROPPED_SNAP_IDS=(); DROPPED_LR_IDS=()
+succeeded=0
 
 # job_running JOB_ID: 1 when the job runs in the current Agent session.
 job_running() {
@@ -89,16 +96,45 @@ stop_job() {
     fail "job $1 still running after 90 s"
 }
 
-delete_orphans() { # removes the orphan history rows of the agents this script dropped
-    local ids
-    if [ "${#DROPPED_DIST_IDS[@]}" -gt 0 ]; then
-        ids=$(IFS=,; echo "${DROPPED_DIST_IDS[*]}")
-        sql -Q "SET NOCOUNT ON; DELETE distribution.dbo.MSdistribution_history WHERE agent_id IN ($ids) AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSdistribution_agents)" </dev/null >&2
-    fi
-    if [ "${#DROPPED_LR_IDS[@]}" -gt 0 ]; then
-        ids=$(IFS=,; echo "${DROPPED_LR_IDS[*]}")
-        sql -Q "SET NOCOUNT ON; DELETE distribution.dbo.MSlogreader_history WHERE agent_id IN ($ids) AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSlogreader_agents)" </dev/null >&2
-    fi
+# orphans AID SID LRID: the orphan history rows of one distribution agent, one snapshot
+# agent and one log reader agent, as "d s l" (a row whose agent id has no agent row).
+orphans() {
+    sql_value "SELECT CONCAT((SELECT COUNT(*) FROM distribution.dbo.MSdistribution_history WHERE agent_id = $1 AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSdistribution_agents)), ' ',
+        (SELECT COUNT(*) FROM distribution.dbo.MSsnapshot_history WHERE agent_id = $2 AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSsnapshot_agents)), ' ',
+        (SELECT COUNT(*) FROM distribution.dbo.MSlogreader_history WHERE agent_id = $3 AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSlogreader_agents)))"
+}
+
+# delete_cycle_orphans AID SID LRID D S L: deletes the orphan history rows of the current
+# cycle's agents only, and only when their counts are still the recorded D S L; fails the
+# run otherwise (a row that arrived after the count would be erased unrecorded).
+delete_cycle_orphans() {
+    local out
+    out=$(sql_value "DECLARE @d int = (SELECT COUNT(*) FROM distribution.dbo.MSdistribution_history WHERE agent_id = $1 AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSdistribution_agents)),
+        @s int = (SELECT COUNT(*) FROM distribution.dbo.MSsnapshot_history WHERE agent_id = $2 AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSsnapshot_agents)),
+        @l int = (SELECT COUNT(*) FROM distribution.dbo.MSlogreader_history WHERE agent_id = $3 AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSlogreader_agents));
+IF @d <> $4 OR @s <> $5 OR @l <> $6
+    SELECT CONCAT(N'mismatch ', @d, N' ', @s, N' ', @l);
+ELSE
+BEGIN
+    DELETE distribution.dbo.MSdistribution_history WHERE agent_id = $1 AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSdistribution_agents);
+    DELETE distribution.dbo.MSsnapshot_history WHERE agent_id = $2 AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSsnapshot_agents);
+    DELETE distribution.dbo.MSlogreader_history WHERE agent_id = $3 AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSlogreader_agents);
+    SELECT N'deleted';
+END") || fail "cannot delete the orphan history rows"
+    [ "$out" = deleted ] || fail "orphan history changed between the count ($4 $5 $6) and the deletion: $out"
+}
+
+# no_late_orphans WHEN: no orphan history row exists for the agents of the finished cycles.
+no_late_orphans() {
+    local d s l n
+    [ "${#DROPPED_DIST_IDS[@]}" -gt 0 ] || return 0
+    d=$(IFS=,; echo "${DROPPED_DIST_IDS[*]}"); s=$(IFS=,; echo "${DROPPED_SNAP_IDS[*]}")
+    l=$(IFS=,; echo "${DROPPED_LR_IDS[*]:-0}")
+    n=$(sql_value "SELECT (SELECT COUNT(*) FROM distribution.dbo.MSdistribution_history WHERE agent_id IN ($d) AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSdistribution_agents))
+        + (SELECT COUNT(*) FROM distribution.dbo.MSsnapshot_history WHERE agent_id IN ($s) AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSsnapshot_agents))
+        + (SELECT COUNT(*) FROM distribution.dbo.MSlogreader_history WHERE agent_id IN ($l) AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSlogreader_agents))") \
+        || fail "cannot count late orphan history rows"
+    [ "$n" = 0 ] || fail "$n orphan history row(s) of an earlier cycle's agents appeared after that cycle ($1)"
 }
 
 cleaned=0
@@ -143,7 +179,15 @@ GO
 USE Sales;
 DROP TABLE IF EXISTS dbo.m_tt;
 SQL
-    delete_orphans || true
+    # On a failed run only: the rows of every agent dropped so far, so that the lab is left
+    # clean (the run is rejected anyway). A successful run has checked there are none.
+    if [ "$succeeded" = 0 ] && [ "${#DROPPED_DIST_IDS[@]}" -gt 0 ]; then
+        local d s l
+        d=$(IFS=,; echo "${DROPPED_DIST_IDS[*]}"); s=$(IFS=,; echo "${DROPPED_SNAP_IDS[*]}"); l=$(IFS=,; echo "${DROPPED_LR_IDS[*]:-0}")
+        sql -Q "SET NOCOUNT ON; DELETE distribution.dbo.MSdistribution_history WHERE agent_id IN ($d) AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSdistribution_agents);
+DELETE distribution.dbo.MSsnapshot_history WHERE agent_id IN ($s) AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSsnapshot_agents);
+DELETE distribution.dbo.MSlogreader_history WHERE agent_id IN ($l) AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSlogreader_agents)" </dev/null >&2 || true
+    fi
     podman exec repllab find /var/opt/mssql/data/ReplData/unc -mindepth 1 -maxdepth 1 -iname '*_m_*' -exec rm -rf {} + >&2 || true
 }
 trap cleanup EXIT
@@ -179,23 +223,27 @@ need sales_lr_job sales_lr_id
 
 # step NAME DB STATEMENTS: runs STATEMENTS in DB outside a transaction, in TRY...CATCH.
 # Sets STEP_RESULT (ok or the error number) and STEP_SEEN (error numbers found in what the
-# call printed: Msg lines of level 11 to 25, 18752 and 1205 by their text).
+# call printed, its caught ERROR_MESSAGE included: Msg lines of level 11 to 25, 18752 and
+# 1205 by their text).
 STEP_RESULT=""; STEP_SEEN=""
 step_once() {
     local out line
     out=$(sql -h -1 <<<"SET NOCOUNT ON; USE [$2];
-DECLARE @e nvarchar(20) = N'ok';
+DECLARE @e nvarchar(20) = N'ok', @m nvarchar(4000) = N'';
 BEGIN TRY
 $3
 END TRY
 BEGIN CATCH
     SET @e = CONVERT(nvarchar(20), ERROR_NUMBER());
+    SET @m = REPLACE(REPLACE(ERROR_MESSAGE(), NCHAR(13), N' '), NCHAR(10), N' ');
 END CATCH;
 WHILE @@TRANCOUNT > 0 ROLLBACK;
-SELECT N'#result|' + @e;" 2>&1) || fail "step $1 in $2: sqlcmd failed"
-    line=$(printf '%s\n' "$out" | grep '^#result|' | tail -n 1 | tr -d '[:space:]')
+SELECT N'#result|' + @e + N'|' + @m;" 2>&1) || fail "step $1 in $2: sqlcmd failed"
+    line=$(printf '%s\n' "$out" | grep '^#result|' | tail -n 1)
     [ -n "$line" ] || fail "step $1 in $2: no result line"
-    STEP_RESULT=${line#\#result|}
+    line=${line#\#result|}
+    STEP_RESULT=${line%%|*}
+    STEP_RESULT=${STEP_RESULT//[[:space:]]/}
     [[ $STEP_RESULT =~ ^(ok|[0-9]+)$ ]] || fail "step $1: unexpected result $STEP_RESULT"
     STEP_SEEN=$(
         printf '%s\n' "$out" | sed -n -E 's/^Msg ([0-9]+), Level (1[1-9]|2[0-5]),.*/\1/p'
@@ -222,8 +270,9 @@ step() {
 }
 
 cycle() { # N DB AGENT STOP
-    local n=$1 db=$2 agent=$3 stop=$4 id pub ind mark lrid added lrleft lorph aid ajob sid lr lrrun lrafter orph i stopped agerr agfail pubs agents jobs res
+    local n=$1 db=$2 agent=$3 stop=$4 id pub ind mark lrid added lrleft aid ajob sid lr lrrun lrafter i stopped agerr agfail pubs agents jobs res c1 c2 od os ol
     id=$(printf 'T%02d' "$n"); pub=m_tr$n
+    no_late_orphans "start of $id"
     calls=""; retries=""; seen=""
     case $agent in own) ind=true ;; shared) ind=false ;; esac
     mark=$(now); need mark
@@ -281,30 +330,36 @@ cycle() { # N DB AGENT STOP
     lrrun=$(job_running "$lr")
     [ "$lrrun" = 1 ] || fail "$id: the log reader of $db is not running at the drop"
 
-    DROPPED_DIST_IDS+=("$aid")
+    DROPPED_DIST_IDS+=("$aid"); DROPPED_SNAP_IDS+=("$sid")
     [ "$db" = Sales ] || DROPPED_LR_IDS+=("$lrid")
     step dropsub "$db" "EXEC sp_dropsubscription @publication = N'$pub', @article = N'all', @subscriber = N'all';"
     step droppub "$db" "EXEC sp_droppublication @publication = N'$pub';"
 
-    # Settle: a running agent dropped with its job logs its last history row a few seconds
-    # after the drop. Wait until it is there (up to 30 s) when the agent was not stopped,
-    # 10 s otherwise.
+    # Settle: wait until the agent row is gone and its job no longer runs, then, when the
+    # agent was dropped running, until its last history row is there (it logs "The process
+    # was successfully stopped." a few seconds after the drop, up to 30 s); count, wait 5 s
+    # more, count again: a count that moves fails the run.
+    wait_until 60 "SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM distribution.dbo.MSdistribution_agents WHERE id = $aid)
+        AND NOT EXISTS (SELECT 1 FROM msdb.dbo.sysjobactivity WHERE session_id = (SELECT MAX(session_id) FROM msdb.dbo.syssessions) AND job_id = '$ajob' AND start_execution_date IS NOT NULL AND stop_execution_date IS NULL) THEN 1 ELSE 0 END" \
+        || fail "$id: the distribution agent is still there or still runs 60 s after the drops"
     if [ "$stopped" = no ]; then
         wait_until 30 "SELECT CASE WHEN EXISTS (SELECT 1 FROM distribution.dbo.MSdistribution_history WHERE agent_id = $aid AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSdistribution_agents)) THEN 1 ELSE 0 END" 2>/dev/null || true
-    else
-        sleep 10
     fi
+    c1=$(orphans "$aid" "$sid" "$lrid"); need c1
+    sleep 5
+    c2=$(orphans "$aid" "$sid" "$lrid"); need c2
+    [ "$c1" = "$c2" ] || fail "$id: orphan history went from $c1 to $c2 during the settle"
+    read -r od os ol <<<"$c2"
+    need od os ol
     lrleft=$(sql_value "SELECT COUNT(*) FROM distribution.dbo.MSlogreader_agents WHERE publisher_db = N'$db'")
     lrafter=stopped; [ "$(job_running "$lr")" = 1 ] && lrafter=running
     [ "$(sql_value "SELECT COUNT(*) FROM msdb.dbo.sysjobs WHERE job_id = '$lr'")" = 0 ] && lrafter=dropped
-    orph=$(sql_value "SELECT (SELECT COUNT(*) FROM distribution.dbo.MSdistribution_history WHERE agent_id = $aid AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSdistribution_agents)) + (SELECT COUNT(*) FROM distribution.dbo.MSsnapshot_history WHERE agent_id = $sid AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSsnapshot_agents))")
-    lorph=$(sql_value "SELECT COUNT(*) FROM distribution.dbo.MSlogreader_history WHERE agent_id = $lrid AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSlogreader_agents)")
     agerr=$(sql_value "SELECT ISNULL(STRING_AGG(CONVERT(nvarchar(4000), c), N',') WITHIN GROUP (ORDER BY c), N'none') FROM (SELECT DISTINCT CASE WHEN ISNULL(error_code, N'') = N'' THEN N'nocode' ELSE CONVERT(nvarchar(100), error_code) END AS c FROM distribution.dbo.MSrepl_errors WHERE time >= '$mark') x")
     agfail=$(sql_value "SELECT (SELECT COUNT(*) FROM distribution.dbo.MSdistribution_history WHERE time >= '$mark' AND runstatus = 6) + (SELECT COUNT(*) FROM distribution.dbo.MSlogreader_history WHERE time >= '$mark' AND runstatus = 6) + (SELECT COUNT(*) FROM distribution.dbo.MSsnapshot_history WHERE time >= '$mark' AND runstatus = 6)")
     pubs=$(sql_value "SELECT COUNT(*) FROM [$db].dbo.syspublications WHERE name = N'$pub'")
     agents=$(sql_value "SELECT COUNT(*) FROM distribution.dbo.MSdistribution_agents a WHERE $apred")
     jobs=$(sql_value "SELECT COUNT(*) FROM msdb.dbo.sysjobs WHERE job_id = '$ajob' OR name LIKE N'%-$pub-%'")
-    need orph lorph agerr agfail pubs agents jobs lrafter lrleft
+    need agerr agfail pubs agents jobs lrafter lrleft
     # The agent errors are numbers too: they join the cycle's list.
     [ "$agerr" = none ] || seen+="${agerr//,/ } "
 
@@ -312,10 +367,10 @@ cycle() { # N DB AGENT STOP
     [ -n "$rt" ] || rt=none
     res=$(echo $seen | tr ' ' '\n' | { grep -v '^$' || true; } | sort -n -u | tr '\n' ',' | sed 's/,$//')
     [ -n "$res" ] || res=none
-    r "$id" "$res" "db=$db agent=$agent dist_agent_stopped=$stopped logreader_added_by_cycle=$added logreader_running=yes logreader_after_drop=$lrafter logreader_agent_left=$lrleft calls=[${calls% }] retries=[$rt] agent_errors=[$agerr] agent_failures=$agfail orphan_history=$orph orphan_logreader_history=$lorph left=[publication=$pubs dist_agent_row=$agents jobs=$jobs]"
+    r "$id" "$res" "db=$db agent=$agent dist_agent_stopped=$stopped logreader_added_by_cycle=$added logreader_running=yes logreader_after_drop=$lrafter logreader_agent_left=$lrleft calls=[${calls% }] retries=[$rt] agent_errors=[$agerr] agent_failures=$agfail orphan_dist_history=$od orphan_snapshot_history=$os orphan_logreader_history=$ol left=[publication=$pubs dist_agent_row=$agents jobs=$jobs]"
     [ "$pubs" = 0 ] && [ "$agents" = 0 ] && [ "$jobs" = 0 ] || fail "$id: the publication is not gone: publication=$pubs dist_agent_row=$agents jobs=$jobs"
 
-    delete_orphans
+    delete_cycle_orphans "$aid" "$sid" "$lrid" "$od" "$os" "$ol"
     sql -Q "SET NOCOUNT ON; ALTER DATABASE m_sub SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE m_sub;" </dev/null >/dev/null
     podman exec repllab find /var/opt/mssql/data/ReplData/unc -mindepth 1 -maxdepth 1 -iname "*_$pub" -exec rm -rf {} + >&2 || true
 }
@@ -327,6 +382,8 @@ for line in "${cycle_lines[@]}"; do
 done
 
 [ "${#rows[@]}" = "$EXPECTED_ROWS" ] || fail "${#rows[@]} rows, expected $EXPECTED_ROWS"
+no_late_orphans "end of the run"
+succeeded=1
 cleanup
 for row in "${rows[@]}"; do printf '%s\n' "$row"; done
 echo "R|TOTAL|${#rows[@]}"
