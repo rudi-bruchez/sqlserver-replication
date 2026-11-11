@@ -31,20 +31,27 @@
 #       duration, and the distinct lines normalized as above.
 #   RS.<m>.filesystem_sa / filesystem_low   sys.dm_os_enumerate_filesystem on the run's
 #       folder as sa / as m_low: ok or the error; files and bytes against find.
-#   RS.<m>.program_names  every program_name sampled among the sessions opened after the
-#       start that belong to the publication's agents (the job names, a name with the
-#       publication's, or one starting with "Snapshot Agent"), and those of the sessions that
-#       blocked the writer, with the snapshot job name as <snapshot_job>, the distribution
+#   RS.<m>.program_names  every distinct program_name sampled among the sessions opened
+#       after the start: agent_sessions, those of the publication's agents (the job names,
+#       a name with the publication's, or one starting with "Snapshot Agent", when the name
+#       mentions no other publication; "Snapshot Agent Smo Connection" mentions none and
+#       may be the baseline agent's), and other_sessions, all the others unfiltered (the
+#       script's own SQLCMD, the baseline agents); then those of the sessions that blocked
+#       the writer. The snapshot job name is shown as <snapshot_job>, the distribution
 #       job name as <distribution_job>, the job ids as <snapshot_job_id> and
-#       <distribution_job_id>, other digits as #.
-#   RS.<m>.sampling_1s / sampling_250ms  sees (the longest sampled wait is at least 80% of
-#       the longest wait the writer measured), under, misses (no sampled wait), or no_wait
-#       (the writer never waited 250 ms); per source (req, wt) in the detail.
+#       <distribution_job_id>, other digits as #. A lower bound: the sampler runs every
+#       250 ms, and a session that opens and closes between two samples is missed.
+#   RS.<m>.sampling_1s / sampling_250ms  sees (the longest sampled lock wait is at least
+#       80% of the writer's longest lock wait), under, misses (no sampled wait), or no_wait
+#       (the writer never waited 250 ms on a lock); per source (req, wt) in the detail. The
+#       writer measures its lock wait per UPDATE (lock_wait, the LCK_M_ delta of
+#       sys.dm_exec_session_wait_stats) apart from the UPDATE's duration (measured), which
+#       can be a log flush stall.
 #   RS.<m>.start_running  the second sp_startpublication_snapshot: rc, @@ERROR, whether
 #       TRY...CATCH caught it, and its messages (job name as <snapshot_job>).
 # And once: RS.m_low.waiting_tasks, RS.m_low.exec_requests, RS.m_low.snapshot_history,
-# what m_low gets on each. Raw values (durations, counts) go to the file SNAP_RAW names,
-# when set; the rows give buckets and comparisons only.
+# what m_low gets on each. Durations are a bucket followed by the raw value,
+# ms<30000(2101); more raw values go to the file SNAP_RAW names, when set.
 #
 # Asserted (exit 1, rows on stderr), from what the spec states as measured: the second
 # start returns 1 with @@ERROR 0 and nothing caught, while the job runs; m_low gets error
@@ -85,6 +92,8 @@ bucket() {
     elif (( v < 30000 )); then echo 'ms<30000'
     else echo 'ms>=30000'; fi
 }
+# bk MS: the bucket followed by the raw value, ms<30000(2101).
+bk() { if [[ $1 =~ ^-?[0-9]+$ ]]; then echo "$(bucket "$1")($1)"; else echo none; fi; }
 # norm PUB: digits to #, the publication name to <pub> (any case), | to /.
 norm() { sed -E -e "s/$1/<pub>/Ig" -e 's/0x[0-9A-Fa-f]+/0x#/g' -e 's/[0-9]+/#/g' -e 's/\|/\//g'; }
 pubdir() { echo "$unc/${srv^^}_SALES_${1^^}"; }
@@ -135,7 +144,7 @@ trap 'exit 1' TERM INT
 left=$(sql_value "SELECT (SELECT COUNT(*) FROM Sales.dbo.syspublications WHERE name LIKE N'm\_%' ESCAPE N'\') + (SELECT COUNT(*) FROM sys.databases WHERE name LIKE N'm\_%' ESCAPE N'\') + (SELECT COUNT(*) FROM Sales.sys.objects WHERE name LIKE N'm\_%' ESCAPE N'\') + (SELECT COUNT(*) FROM sys.server_principals WHERE name LIKE N'm\_%' ESCAPE N'\')")
 left_files=$(podman exec repllab find "$unc" -mindepth 1 -maxdepth 1 -iname '*_m_*')
 if [ "$left" != 0 ] || [ -n "$left_files" ]; then
-    echo "16-snapshot-report-sources: leftovers of an earlier run (objects=$left files=$left_files); removing them and failing" >&2
+    echo "16-snapshot-report-sources: leftovers of an earlier run (objects=$left files=$left_files); failing (remove them first: 15's teardown, or lab/start.sh)" >&2
     exit 1
 fi
 rawlog "=== 16-snapshot-report-sources $(date -u +%FT%TZ)"
@@ -151,7 +160,7 @@ INSERT dbo.m_t2 SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)), 1, 
 CREATE DATABASE m_w;
 GO
 USE m_w;
-CREATE TABLE dbo.wlog (run varchar(60), tbl sysname, spid int, t0 datetime2(3), t1 datetime2(3), ms int, err int NULL);
+CREATE TABLE dbo.wlog (run varchar(60), tbl sysname, spid int, t0 datetime2(3), t1 datetime2(3), ms int, err int NULL, lock_ms bigint NULL);
 CREATE TABLE dbo.ctl (run varchar(60) PRIMARY KEY, stop bit);
 CREATE TABLE dbo.samp (run varchar(60), ival int, ts datetime2(3), src varchar(5), wait_ms bigint, blocker int, wait_type nvarchar(60));
 CREATE TABLE dbo.sess (run varchar(60), session_id int, program_name nvarchar(256), login_time datetime);
@@ -215,12 +224,16 @@ for m in $methods; do
     # The writer, then the two samplers.
     sql -b -Q "SET NOCOUNT ON; INSERT m_w.dbo.ctl VALUES ('$run', 0)" </dev/null >&2
     sql -b -h -1 -Q "SET NOCOUNT ON; SET LOCK_TIMEOUT 120000;
-DECLARE @t0 datetime2(3), @e int, @end datetime2 = DATEADD(second, 600, SYSDATETIME());
+DECLARE @t0 datetime2(3), @e int, @l0 bigint, @l1 bigint, @end datetime2 = DATEADD(second, 600, SYSDATETIME());
 WHILE NOT EXISTS (SELECT 1 FROM m_w.dbo.ctl WHERE run = '$run' AND stop = 1) AND SYSDATETIME() < @end
 BEGIN
+    -- lock_ms: the session's LCK_M_ wait time during the UPDATE, so that a log flush stall
+    -- is not taken for a lock wait.
+    SELECT @l0 = ISNULL(SUM(wait_time_ms), 0) FROM sys.dm_exec_session_wait_stats WHERE session_id = @@SPID AND wait_type LIKE N'LCK[_]M[_]%';
     SET @t0 = SYSDATETIME(); SET @e = NULL;
     BEGIN TRY UPDATE Sales.dbo.m_t2 SET a = a + 1 WHERE id = 1; END TRY BEGIN CATCH SET @e = ERROR_NUMBER(); END CATCH;
-    INSERT m_w.dbo.wlog VALUES ('$run', N'm_t2', @@SPID, @t0, SYSDATETIME(), DATEDIFF(millisecond, @t0, SYSDATETIME()), @e);
+    SELECT @l1 = ISNULL(SUM(wait_time_ms), 0) FROM sys.dm_exec_session_wait_stats WHERE session_id = @@SPID AND wait_type LIKE N'LCK[_]M[_]%';
+    INSERT m_w.dbo.wlog VALUES ('$run', N'm_t2', @@SPID, @t0, SYSDATETIME(), DATEDIFF(millisecond, @t0, SYSDATETIME()), @e, @l1 - @l0);
     WAITFOR DELAY '00:00:00.050';
 END" </dev/null >"$tmp/w.$m" 2>&1 &
     bg+=($!)
@@ -309,7 +322,7 @@ SELECT CONCAT('RES rc1=', @rc1, ' err1=', @e1, ' running=', @running, ' rc2=', @
     read -r s_start s_end s_ms s_bcp s_sch <<<"$sinfo"
     rawlog "$run snapshot_history lines=$(printf '%s\n' "$shl" | grep -c .) gen_ms=$s_ms"
     per=no; [ "$s_bcp" != "bcp=[]" ] && per=yes
-    r "$run.snapshot_history" "per_article_lines=$per" "$s_bcp $s_sch $s_start $s_end gen=$(bucket "$s_ms") lines=[$pats]"
+    r "$run.snapshot_history" "per_article_lines=$per" "$s_bcp $s_sch $s_start $s_end gen=$(bk "$s_ms") lines=[$pats]"
 
     # Distribution history.
     dh_where="FROM distribution.dbo.MSdistribution_history h JOIN distribution.dbo.MSdistribution_agents a ON a.id = h.agent_id WHERE a.subscriber_db = N'$db' AND a.subscriber_id >= 0 AND h.time >= '$smark'"
@@ -329,7 +342,7 @@ SELECT CONCAT('RES rc1=', @rc1, ' err1=', @e1, ' running=', @running, ' rc2=', @
     dline=$(printf '%s\n' "$dhl" | grep '^Delivered snapshot' | tail -n 1 || true)
     names=no; [[ $dline == *"$folder"* ]] && names=yes
     dms=$(sq "SELECT ISNULL(CONVERT(varchar(12), DATEDIFF(millisecond, (SELECT MIN(h.time) $dh_where AND h.comments NOT LIKE N'Distribution agent for subscription added%' AND h.runstatus <> 4), (SELECT MAX(h.time) $dh_where AND h.comments LIKE N'Delivered snapshot%'))), 'none')")
-    r "$run.distribution_history" "bulk_sums_match=$match" "agent=$shared$sums delivered_line_names_run_folder=$names delivery=$(bucket "$dms") lines=[$dpats]"
+    r "$run.distribution_history" "bulk_sums_match=$match" "agent=$shared$sums delivered_line_names_run_folder=$names delivery=$(bk "$dms") lines=[$dpats]"
     rawlog "$run delivery_ms=$dms"
 
     # The run's folder, as sa and as m_low, against find.
@@ -354,35 +367,39 @@ SELECT CONCAT('RES rc1=', @rc1, ' err1=', @e1, ' running=', @running, ' rc2=', @
     done
 
     # program_name of the sessions opened after the start that belong to the agents.
-    progs=$(lines "SELECT DISTINCT CONVERT(nvarchar(4000), program_name) FROM m_w.dbo.sess WHERE run = '$run' AND program_name <> N'SQLCMD'")
+    progs=$(lines "SELECT DISTINCT CONVERT(nvarchar(4000), program_name) FROM m_w.dbo.sess WHERE run = '$run'")
     rawlog "$run sessions: $(printf '%s\n' "$progs" | paste -sd '~' -)"
     relabel() { sed -e "s/$sjid/<snapshot_job_id>/Ig" -e "s/$djid/<distribution_job_id>/Ig" -e "s/$sjob/<snapshot_job>/g" -e "s/$djob/<distribution_job>/g"; }
-    mine=$(printf '%s\n' "$progs" | relabel | grep -e '<snapshot_job' -e '<distribution_job' -e "$p" -e '^Snapshot Agent' | norm "$p" | sort -u | paste -sd '~' - || true)
+    # After norm, the publication's own name is <pub>: a name that mentions another one
+    # (the baseline SalesPub's agent also says "Snapshot Agent ...") is not this agent's.
+    allp=$(printf '%s\n' "$progs" | relabel | norm "$p" | sort -u)
+    mine=$(printf '%s\n' "$allp" | grep -v -E 'Sales:[A-Za-z]|publication [A-Za-z]' | grep -e '<snapshot_job' -e '<distribution_job' -e '<pub>' -e '^Snapshot Agent' | paste -sd '~' - || true)
+    others=$(comm -23 <(printf '%s\n' "$allp" | grep -v '^$') <(printf '%s\n' "$mine" | tr '~' '\n' | grep -v '^$') | paste -sd '~' - || true)
     blockers=$(lines "SELECT DISTINCT CONVERT(nvarchar(4000), program_name) FROM m_w.dbo.blk WHERE run = '$run'" | relabel | norm "$p" | sort -u | paste -sd '~' - || true)
-    r "$run.program_names" "recorded" "agent_sessions=[$mine] writer_blocked_by=[$blockers]"
+    r "$run.program_names" "recorded" "agent_sessions=[$mine] other_sessions=[$others] writer_blocked_by=[$blockers] sampled_every=250ms"
 
     # Sampling against the writer.
     wmax=$(sq "SELECT ISNULL(MAX(ms), 0) FROM m_w.dbo.wlog WHERE run = '$run'")
+    wlock=$(sq "SELECT ISNULL(MAX(lock_ms), 0) FROM m_w.dbo.wlog WHERE run = '$run'")
     rawlog "$run writer: $(sq "SELECT CONCAT(COUNT(*), N' updates, ', SUM(CASE WHEN ms >= 100 THEN 1 ELSE 0 END), N' of 100 ms or more, longest ', MAX(ms)) FROM m_w.dbo.wlog WHERE run = '$run'") other waits sampled: $(sq "SELECT ISNULL(STRING_AGG(CONVERT(nvarchar(4000), CONCAT(ival, N'ms:', wait_type, N'=', mx)), N', '), N'none') FROM (SELECT ival, wait_type, MAX(wait_ms) AS mx FROM m_w.dbo.samp WHERE run = '$run' AND src = 'other' GROUP BY ival, wait_type) x")"
     werr=$(sq "SELECT COUNT(*) FROM m_w.dbo.wlog WHERE run = '$run' AND err IS NOT NULL")
     for ival in 1000 250; do
         name=sampling_1s; [ "$ival" = 250 ] && name=sampling_250ms
-        detail="measured=$(bucket "$wmax")"; [ "$werr" != 0 ] && detail+="(errors)"
+        detail="measured=$(bk "$wmax") lock_wait=$(bk "$wlock")"; [ "$werr" != 0 ] && detail+="(errors)"
         best=0; verdicts=""
         for src in req wt; do
             smax=$(sq "SELECT ISNULL(MAX(wait_ms), -1) FROM m_w.dbo.samp WHERE run = '$run' AND ival = $ival AND src = '$src'")
-            rawlog "$run $name $src sampled_max=$smax measured_max=$wmax"
+            rawlog "$run $name $src sampled_max=$smax measured_max=$wmax lock_max=$wlock"
             if (( smax < 0 )); then v=misses
-            elif (( smax * 10 >= wmax * 8 )); then v=sees
+            elif (( smax * 10 >= wlock * 8 )); then v=sees
             else v=under; fi
             (( smax > best )) && best=$smax
             detail+=" $src=$v"
-            [ "$src" = req ] && detail+="($(bucket "$( (( smax < 0 )) && echo none || echo "$smax")"))" || true
-            [ "$src" = wt ] && detail+="($(bucket "$( (( smax < 0 )) && echo none || echo "$smax")"))" || true
+            detail+="($(bk "$( (( smax < 0 )) && echo none || echo "$smax")"))"
         done
-        if (( wmax < 250 )); then res=no_wait
+        if (( wlock < 250 )); then res=no_wait
         elif (( best <= 0 )); then res=misses
-        elif (( best * 10 >= wmax * 8 )); then res=sees
+        elif (( best * 10 >= wlock * 8 )); then res=sees
         else res=under; fi
         r "$run.$name" "$res" "$detail"
     done

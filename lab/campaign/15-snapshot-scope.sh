@@ -5,8 +5,8 @@
 # leaves a subscription status that awaits a delivery, and extending a subscription that a
 # reinit-flagged change has just marked. Run through lab/campaign.sh.
 #
-# Objects. In Sales: m_t1 (1,000,000 rows with a 100-byte pad), m_t2 (100 rows), m_t3,
-# m_t4, m_t5, m_t6 (one row each). The database m_w holds the writers' log. The
+# Objects. In Sales: m_t1 (1,000,000 rows with a 100-byte pad), m_t2 (100 rows), m_t3 to
+# m_t8 (one row each). The database m_w holds the writers' log. The
 # publications are created per phase (A to E, then F, then B) and dropped as soon as their
 # cases are done, to keep few m_ agents alive (see droppub). Every publication
 # has a snapshot agent whose schedule never fires (@frequency_type = 1,
@@ -30,15 +30,22 @@
 #       the flags, the extension, hist_bcp / hist_schema (tables named by a bulk copy or a
 #       schema script line of the snapshot history), articles (the "A snapshot of N
 #       article(s)" line), delivered (tables applied at the subscriber), gen (the run's
-#       duration), w_<table> (the longest single UPDATE), t2_vs_t1, overlap_t1_t2 (the two
-#       longest waits overlap in time), t1_ends_at_gen_end (within 500 ms of the history's
-#       last line), and the state after the run.
+#       duration), lock_line and first_bcp (the first "Locking published tables" and
+#       "Bulk copying snapshot data" lines, from the generation start, which is the run's
+#       first history line), w_<table> (the longest single UPDATE, and when it began and
+#       ended, from the generation start), t2_vs_t1, overlap_t1_t2 (the two longest waits
+#       overlap in time), t1_ends_at_gen_end (within 500 ms of the history's last line),
+#       t1_starts_at_lock_line (within 500 ms of the Locking line), and the state after.
 #   B.<pub>.<step>   the deferred sequence of the spec on the m_df_ publications: 1a
 #       allow_anonymous false (anon only), 1b immediate_sync false, 2a sp_addarticle m_t3,
 #       2b the extension, 3 generate and wait, 4a immediate_sync true, 4b allow_anonymous
 #       true (anon only), 5a a subscription to m_l_<suffix> added after the restore, 5b the
 #       next run of the agent and what each subscriber receives. On _race: 1b, 2a, 2b, then
-#       race: the agent started and immediate_sync restored at once, without waiting.
+#       race: the agent started and immediate_sync restored at once, without waiting; the
+#       row gives the restore's commit time from the mark and from the agent's first
+#       history line (restore_from_first_line < 0: restored before the agent read the
+#       publication), next to the run's lock_line and first_bcp. 5b also waits 30 s more
+#       for a late delivery to the old subscriber (late_delivery).
 #   C.<method>.<op>   on each m_sc_imm_ publication (ready snapshot, all delivered), each
 #       invalidating operation run in a transaction rolled back, with the first flag
 #       combination that works (f00, f10, f01, f11 in that order); the state is read
@@ -55,11 +62,17 @@
 #       refused), a snapshot, and when the extension was refused, the extension after that
 #       snapshot and a second one; then the other order, extend_then_change: m_t5 added and
 #       extended first, schema_option changed back after, and a snapshot.
+#   D.<non_native|non_concurrent>_pub.<step>   the publication-level mark on the same
+#       publications after that: sp_changepublication sync_method committed with its flags
+#       (native to concurrent, concurrent to concurrent_c), which marks every subscription
+#       row; m_t7 added and extended (by name, then 'all' when the name is refused), a
+#       snapshot; then m_t8 added and extended, the change back, a snapshot.
 #   F.<variant>   writes to an article added to a publication without immediate_sync, and
 #       the delivery of its snapshot: m_fx_dbsnap_before / _during / _none and
 #       m_fx_native_before (article m_t2, subscriber m_f_<variant>), m_t6 added and extended,
 #       then one run: one UPDATE of m_t6 5 s before the start (before), ten UPDATEs in the 5 s
-#       after the start (during), none, and before under native. Result: the tables
+#       after the start (during), none, and before under native; imm_dbsnap_1 to _3 on
+#       immediate_sync publications, with writers on m_t2 and m_t6 as in A. Result: the tables
 #       delivered, with the agent's last failure when nothing was delivered. Added after A
 #       under dbsnap failed to deliver m_t3 with "Could not find stored procedure
 #       'dbo.sp_MSupd_dbom_t3'" while the m_t3 writer ran (two of the four dbsnap rows of the
@@ -75,20 +88,30 @@
 # that a later failure leaves them in the log; R|TOTAL comes last. A watchdog ends the run
 # at the first sign of memory trouble (see memcheck).
 #
-# Values that change between runs (times, durations, job names) never appear raw: a
-# duration is a bucket (ms<1000, ms<30000, ms>=30000: the same run took 2 s on an idle lab
-# and 8 s on a loaded one) and waits are compared; overlap_t1_t2 and t1_ends_at_gen_end are
-# n/a unless both writers waited at least one second. SNAP_RAW, when set, names a file the
-# raw values (durations, offsets) are appended to.
+# A duration is a bucket (ms<1000, ms<30000, ms>=30000: the same run took 2 s on an idle
+# lab and 8 s on a loaded one) followed by its raw value, ms<30000(2101), and offsets are
+# raw; the buckets and the comparisons are what a rerun should reproduce, the raw values
+# are for quoting. overlap_t1_t2, t1_ends_at_gen_end and t1_starts_at_lock_line are n/a
+# unless both writers waited at least one second. SNAP_RAW, when set, names a file more
+# raw values (the writers' statistics, the no-delivery diagnostics) are appended to.
 #
-# Asserted (exit 1, rows on stderr): under native with immediate_sync the writer on m_t2
-# waits about as long as the one on m_t1 (t2_vs_t1=similar, w_t1 at least 250 ms); under
-# dbsnap every writer waits under one second; the deferred sequence with the wait
-# generates only m_t3 before the restore (B.*.3 files=[m_t3]) and leaves every
-# subscription active (status 2) after the restore. Nothing is asserted on what a
-# concurrent generation without immediate_sync covers.
+# Asserted (exit 1, failures last): under native and character with immediate_sync the
+# writer on m_t2 waits about as long as the one on m_t1 (t2_vs_t1=similar; under native,
+# w_t1 at least 250 ms); under dbsnap the writers logged and every one waits under one
+# second; the deferred sequence with the wait generates only m_t3 before the restore and
+# delivers it alone (B.*.3 files=[m_t3], delivered(m_e_*)=[m_t3]), and after the restore
+# every subscription is at status 2 and no article is inactive. Nothing is asserted on
+# what a concurrent generation without immediate_sync covers, on D, E or F.
 set -euo pipefail
 . "$(dirname "$0")/../lib.sh"
+# Every sqlcmd this script starts carries M_CAMPAIGN_TAG in its environment inside the
+# container, so that the watchdog kills only these: lib.sh's sql with the tag passed by
+# name (lib.sh's helpers call this one).
+export M_CAMPAIGN_TAG="15-snapshot-scope.$$"
+sql() {
+    SQLCMDPASSWORD=$MSSQL_SA_PASSWORD podman exec -i -e SQLCMDPASSWORD -e M_CAMPAIGN_TAG repllab \
+        /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -W -s '|' "$@"
+}
 mark=$(sql_value "SELECT CONVERT(varchar(23), SYSDATETIME(), 121)")
 raw=${SNAP_RAW:-/dev/null}
 tmp=$(mktemp -d)
@@ -96,7 +119,7 @@ srv=$(sql_value "SELECT @@SERVERNAME")
 unc=/var/opt/mssql/data/ReplData/unc
 tables="m_t1 m_t2 m_t3 m_t4 m_t5"
 methods="native character concurrent concurrent_c dbsnap"
-fx="dbsnap_before dbsnap_during dbsnap_none native_before"
+fx="dbsnap_before dbsnap_during dbsnap_none native_before imm_dbsnap_1 imm_dbsnap_2 imm_dbsnap_3"
 df_pubs="m_df_native_anon m_df_native_noanon m_df_concurrent_anon m_df_concurrent_noanon m_df_native_race m_df_concurrent_race"
 
 rows=()
@@ -135,7 +158,8 @@ sx() {
 # RESOURCE_SEMAPHORE_QUERY_COMPILE. The script now stops at the first sign of it: a failed
 # call whose output shows 701, 17803 or a login timeout (memcheck), or a watchdog that reads
 # the errorlog and probes a login every 10 s. Either one leaves the reason in $memflag and
-# ends the script; the teardown then stops the m_ agents first, within a deadline.
+# ends the script; the teardown then stops the m_ agents first, within a deadline. The
+# watchdog kills only the sqlcmd processes of this script (M_CAMPAIGN_TAG).
 memflag=$tmp/memory_trouble
 memcheck() { # OUTPUT of a failed call
     if printf '%s\n' "$1" | grep -q -E 'Msg 701,|Msg 17803,|Error: 701|Error: 17803|Login timeout expired|insufficient system memory'; then
@@ -164,8 +188,9 @@ watchdog() { # MAIN_PID ERRORLOG_START_LINE
         if timeout 45 bash -c '. "$1"; sql -l 30 -h -1 -Q "SELECT 1" </dev/null >/dev/null 2>&1' _ "$libsh"; then fails=0; else fails=$(( fails + 1 )); fi
         if [ -n "$hit" ] || (( fails >= 2 )); then
             echo "watchdog: ${hit:-two login probes in a row failed}" >"$memflag"
-            # The clients inside the container first: a hung sqlcmd outlives its podman exec.
-            for p in $(podman exec repllab ps -eo pid,args 2>/dev/null | awk '/[s]qlcmd/ { print $1 }'); do
+            # This script's clients inside the container first (a hung sqlcmd outlives its
+            # podman exec), found by the tag in their environment; no other sqlcmd is touched.
+            for p in $(podman exec repllab sh -c 'exec 2>/dev/null; for d in /proc/[0-9]*; do tr "\0" "\n" < "$d/environ" | grep -qx "M_CAMPAIGN_TAG=$1" && echo "${d#/proc/}"; done' sh "$M_CAMPAIGN_TAG" 2>/dev/null); do
                 podman exec repllab kill -9 "$p" 2>/dev/null || true
             done
             kill_tree "$main"
@@ -203,7 +228,9 @@ state() { sq "SELECT $(state_expr "$1")"; }
 # probe: reads the state of PUB inside the transaction of the first that worked.
 # Prints <cell or refused>|<refusals before it>|<state read in the transaction>.
 flags() {
-    local mode=$1 pub=$2 cells=$3 stmt=$4 inside="" after=""
+    local mode=$1 pub=$2 cells=$3 stmt=$4 inside="" after="" ftime=""
+    # FLAGS_TIME set: a fourth field, the server time after the commit.
+    [ -n "${FLAGS_TIME:-}" ] && ftime=", N'|', CONVERT(varchar(23), SYSDATETIME(), 121)"
     [ "$mode" = probe ] && inside="SET @st = $(state_expr "$pub");"
     [ "$mode" = commit ] && after="IF @ok IS NOT NULL BEGIN SELECT @i = i, @r = r FROM @f WHERE name = @ok; EXEC sp_executesql @stmt, N'@i bit, @r bit', @i = @i, @r = @r; END;"
     sq "DECLARE @f TABLE (k int, i bit, r bit, name varchar(3));
@@ -227,7 +254,7 @@ BEGIN
     SET @k += 1;
 END;
 $after
-SELECT CONCAT(ISNULL(@ok, 'refused'), N'|', CASE WHEN @errs = N'' THEN N'none' ELSE LEFT(@errs, LEN(@errs) - 1) END, N'|', ISNULL(@st, N''))"
+SELECT CONCAT(ISNULL(@ok, 'refused'), N'|', CASE WHEN @errs = N'' THEN N'none' ELSE LEFT(@errs, LEN(@errs) - 1) END, N'|', ISNULL(@st, N'')$ftime)"
 }
 
 # ms bucket.
@@ -238,6 +265,8 @@ bucket() {
     elif (( v < 30000 )); then echo 'ms<30000'
     else echo 'ms>=30000'; fi
 }
+# bk MS: the bucket followed by the raw value, ms<30000(2101).
+bk() { if [[ $1 =~ ^-?[0-9]+$ ]]; then echo "$(bucket "$1")($1)"; else echo none; fi; }
 # B against A: both_short when both under 1000 ms, similar when the shorter is at least
 # 60% of the longer, else shorter or longer.
 compare() {
@@ -305,8 +334,9 @@ done_query() { # PUB MARK
     echo "SELECT CASE WHEN EXISTS (SELECT 1 FROM distribution.dbo.MSsnapshot_history h JOIN distribution.dbo.MSsnapshot_agents a ON a.id = h.agent_id WHERE a.publication = N'$1' AND a.publisher_db = N'Sales' AND h.time >= '$2' AND h.runstatus IN (2, 6)) THEN 1 ELSE 0 END"
 }
 # What the snapshot history of PUB says since MARK:
-# "<final runstatus> <start offset> <end offset> <articles> [bcp tables] [schema tables]".
-tabvals="(VALUES (N'm_t1'), (N'm_t2'), (N'm_t3'), (N'm_t4'), (N'm_t5'), (N'm_t6')) v(t)"
+# "<final runstatus> <start offset> <end offset> <articles> [bcp tables] [schema tables]
+#  <offset of the first Locking published tables line> <offset of the first Bulk copying line>".
+tabvals="(VALUES (N'm_t1'), (N'm_t2'), (N'm_t3'), (N'm_t4'), (N'm_t5'), (N'm_t6'), (N'm_t7'), (N'm_t8')) v(t)"
 gen_info() { # PUB MARK
     sq "DECLARE @m datetime2 = '$2';
 WITH h AS (SELECT h.time, h.runstatus, CONVERT(nvarchar(4000), h.comments) AS c FROM distribution.dbo.MSsnapshot_history h
@@ -318,7 +348,9 @@ SELECT CONCAT(
   CASE WHEN EXISTS (SELECT 1 FROM h WHERE c LIKE N'%snapshot was not generated%') THEN 'not_generated'
        ELSE ISNULL((SELECT TOP 1 CASE WHEN CHARINDEX(N' article(s)', c) > CHARINDEX(N'A snapshot of ', c) + 14 THEN SUBSTRING(c, CHARINDEX(N'A snapshot of ', c) + 14, CHARINDEX(N' article(s)', c) - CHARINDEX(N'A snapshot of ', c) - 14) END FROM h WHERE c LIKE N'%A snapshot of % article(s) was generated%'), 'none') END, ' ',
   '[', ISNULL((SELECT STRING_AGG(t, N',') WITHIN GROUP (ORDER BY t) FROM $tabvals WHERE EXISTS (SELECT 1 FROM h WHERE c LIKE N'%Bulk copied snapshot data for article ''' + t + N'[ '']%')), N''), '] ',
-  '[', ISNULL((SELECT STRING_AGG(t, N',') WITHIN GROUP (ORDER BY t) FROM $tabvals WHERE EXISTS (SELECT 1 FROM h WHERE c LIKE N'%Generating schema scripts for article ''' + t + N'''%')), N''), ']')"
+  '[', ISNULL((SELECT STRING_AGG(t, N',') WITHIN GROUP (ORDER BY t) FROM $tabvals WHERE EXISTS (SELECT 1 FROM h WHERE c LIKE N'%Generating schema scripts for article ''' + t + N'''%')), N''), '] ',
+  ISNULL(CONVERT(varchar(12), DATEDIFF(millisecond, @m, (SELECT MIN(time) FROM h WHERE c LIKE N'%Locking published tables while generating the snapshot%'))), 'none'), ' ',
+  ISNULL(CONVERT(varchar(12), DATEDIFF(millisecond, @m, (SELECT MIN(time) FROM h WHERE c LIKE N'%Bulk copying snapshot data for article%'))), 'none'))"
 }
 # The tables applied at subscriber database DB since MARK, followed by (no_delivery) when
 # the agent logged no "Delivered snapshot" line, with the text of its last failure if any.
@@ -338,12 +370,14 @@ delivered_query() { # DB MARK
 # snap PUB WRITERS_RUN|- DB...: one run of the agent of PUB, waited for, then the
 # deliveries to each DB waited for (up to 150 s each). Sets SNAP_FILES, SNAP_INFO (gen,
 # history, deliveries), SNAP_MARK, SNAP_START, SNAP_END (offsets from SNAP_MARK).
-# RACE, when set, is run right after the start (the restore that does not wait).
+# RACE, when set, is run right after the start (the restore that does not wait). WTABLES,
+# when set, names the writers' tables (default m_t1 m_t2 m_t3).
 snap() {
     local pub=$1 wrun=$2 db before after new info st d
     shift 2
     before=$(folders "$pub")
-    [ "$wrun" != - ] && wstart "$wrun" m_t1 m_t2 m_t3
+    # shellcheck disable=SC2086
+    [ "$wrun" != - ] && wstart "$wrun" ${WTABLES:-m_t1 m_t2 m_t3}
     SNAP_MARK=$(now)
     sx "EXEC sp_startpublication_snapshot @publication = N'$pub'"
     RACE_OUT=""
@@ -359,10 +393,10 @@ snap() {
     # shellcheck disable=SC2086
     SNAP_FILES=$(files_in $new)
     info=$(gen_info "$pub" "$SNAP_MARK")
-    read -r st SNAP_START SNAP_END SNAP_ARTS SNAP_BCP SNAP_SCH <<<"$info"
+    read -r st SNAP_START SNAP_END SNAP_ARTS SNAP_BCP SNAP_SCH SNAP_LOCK SNAP_BCP1 <<<"$info"
     local gen=none
     [ "$SNAP_START" != none ] && [ "$SNAP_END" != none ] && gen=$(( SNAP_END - SNAP_START ))
-    SNAP_INFO="run=$( [ "$st" = 2 ] && echo ok || echo "status$st" ) folders=$(printf '%s\n' "$new" | grep -c . || true) hist_bcp=$SNAP_BCP hist_schema=$SNAP_SCH articles=$SNAP_ARTS gen=$(bucket "$gen")"
+    SNAP_INFO="run=$( [ "$st" = 2 ] && echo ok || echo "status$st" ) folders=$(printf '%s\n' "$new" | grep -c . || true) hist_bcp=$SNAP_BCP hist_schema=$SNAP_SCH articles=$SNAP_ARTS gen=$(bk "$gen") lock_line=$(rel "$SNAP_LOCK") first_bcp=$(rel "$SNAP_BCP1")"
     rawlog "snap $pub gen_ms=$gen files=[$SNAP_FILES] $info"
     local list=("$@")
     if [ "${#DELIV_DBS[@]}" -gt 0 ]; then list=("${DELIV_DBS[@]}"); fi
@@ -370,12 +404,15 @@ snap() {
         d=$(delivered "$db" "$SNAP_MARK")
         SNAP_INFO+=" delivered($db)=$d"
         if [[ $d == *no_delivery* ]]; then
-            rawlog "no delivery to $db since $SNAP_MARK, its agent's lines: $(sq "SELECT CONVERT(nvarchar(4000), LEFT(ISNULL(STRING_AGG(CONVERT(nvarchar(max), CONCAT(CONVERT(varchar(23), h.time, 121), N' ', h.runstatus, N' ', CONVERT(nvarchar(300), h.comments))), N' ~ ') WITHIN GROUP (ORDER BY h.timestamp), N'none'), 4000)) FROM distribution.dbo.MSdistribution_history h JOIN distribution.dbo.MSdistribution_agents a ON a.id = h.agent_id WHERE a.subscriber_db = N'$db' AND a.subscriber_id >= 0 AND h.time >= DATEADD(minute, -2, CONVERT(datetime2, '$SNAP_MARK'))")"
+            rawlog "no delivery to $db since $SNAP_MARK, its agent's lines: $(sq "SELECT CONVERT(nvarchar(4000), LEFT(ISNULL(STRING_AGG(CONVERT(nvarchar(max), CONCAT(CONVERT(varchar(23), h.time, 121), N' ', h.runstatus, N' ', CONVERT(nvarchar(300), h.comments))), N' ~ ') WITHIN GROUP (ORDER BY h.timestamp), N'none'), 4000)) FROM distribution.dbo.MSdistribution_history h JOIN distribution.dbo.MSdistribution_agents a ON a.id = h.agent_id WHERE a.subscriber_db = N'$db' AND a.subscriber_id >= 0 AND h.time >= '$SNAP_MARK'")"
         fi
     done
     DELIV_DBS=()
 }
 DELIV_DBS=()
+# rel OFFSET: an offset from SNAP_MARK given from the generation start (the run's first
+# history line), as +2346, or none.
+rel() { if [[ $1 =~ ^-?[0-9]+$ ]] && [[ $SNAP_START =~ ^-?[0-9]+$ ]]; then printf '%+d\n' $(( $1 - SNAP_START )); else echo none; fi; }
 
 # Writer analysis of RUN against the last snap: sets W_DETAIL.
 wdetail() { # RUN
@@ -388,20 +425,27 @@ wdetail() { # RUN
     IFS=';' read -r -a parts <<<"$s"
     for line in "${parts[@]}"; do
         read -r t ms so eo n e <<<"$line"
-        W_DETAIL+=" w_$t=$(bucket "$ms")"
+        # The longest UPDATE: bucket(ms), then when it began and ended, from the generation start.
+        W_DETAIL+=" w_$t=$(bk "$ms")[$(rel "$so"),$(rel "$eo")]"
         if [ "$e" != 0 ]; then W_DETAIL+="(errors)"; fi
         if [ "$t" = m_t1 ]; then t1=$ms; s1=$so; e1=$eo; fi
         if [ "$t" = m_t2 ]; then t2=$ms; s2=$so; e2=$eo; fi
     done
     W_DETAIL+=" t2_vs_t1=$(compare "$t1" "$t2")"
     if [ "$t1" = none ] || [ "$t2" = none ] || (( t1 < 1000 || t2 < 1000 )); then
-        W_DETAIL+=" overlap_t1_t2=n/a t1_ends_at_gen_end=n/a"
+        W_DETAIL+=" overlap_t1_t2=n/a t1_ends_at_gen_end=n/a t1_starts_at_lock_line=n/a"
     else
         local lo=$(( s1 > s2 ? s1 : s2 )) hi=$(( e1 < e2 ? e1 : e2 ))
         W_DETAIL+=" overlap_t1_t2=$( (( lo < hi )) && echo yes || echo no )"
         if [ "$SNAP_END" != none ]; then
             local dd=$(( e1 - SNAP_END )); dd=${dd#-}
             W_DETAIL+=" t1_ends_at_gen_end=$( (( dd <= 500 )) && echo yes || echo no )"
+        fi
+        if [[ $SNAP_LOCK =~ ^-?[0-9]+$ ]]; then
+            local dl=$(( s1 - SNAP_LOCK )); dl=${dl#-}
+            W_DETAIL+=" t1_starts_at_lock_line=$( (( dl <= 500 )) && echo yes || echo no )"
+        else
+            W_DETAIL+=" t1_starts_at_lock_line=n/a"
         fi
     fi
     W_T1=$t1; W_T2=$t2
@@ -450,7 +494,7 @@ END;
 CLOSE c; DEALLOCATE c;
 DROP VIEW IF EXISTS dbo.m_v1;
 DROP PROCEDURE IF EXISTS dbo.m_f1;
-DROP TABLE IF EXISTS dbo.m_t1, dbo.m_t2, dbo.m_t3, dbo.m_t4, dbo.m_t5, dbo.m_t6;" </dev/null >&2 || true
+DROP TABLE IF EXISTS dbo.m_t1, dbo.m_t2, dbo.m_t3, dbo.m_t4, dbo.m_t5, dbo.m_t6, dbo.m_t7, dbo.m_t8;" </dev/null >&2 || true
     sql -Q "SET NOCOUNT ON;
 DECLARE @d sysname, @s nvarchar(400);
 DECLARE c CURSOR LOCAL FOR SELECT name FROM sys.databases WHERE name LIKE N'm\_%' ESCAPE N'\';
@@ -494,6 +538,8 @@ CREATE TABLE dbo.m_t3 (id int PRIMARY KEY, a int, b int); INSERT dbo.m_t3 VALUES
 CREATE TABLE dbo.m_t4 (id int PRIMARY KEY, a int, b int); INSERT dbo.m_t4 VALUES (1, 1, 1);
 CREATE TABLE dbo.m_t5 (id int PRIMARY KEY, a int, b int); INSERT dbo.m_t5 VALUES (1, 1, 1);
 CREATE TABLE dbo.m_t6 (id int PRIMARY KEY, a int, b int); INSERT dbo.m_t6 VALUES (1, 1, 1);
+CREATE TABLE dbo.m_t7 (id int PRIMARY KEY, a int, b int); INSERT dbo.m_t7 VALUES (1, 1, 1);
+CREATE TABLE dbo.m_t8 (id int PRIMARY KEY, a int, b int); INSERT dbo.m_t8 VALUES (1, 1, 1);
 CREATE DATABASE m_w;
 GO
 USE m_w;
@@ -549,6 +595,8 @@ WHILE @@FETCH_STATUS = 0 BEGIN BEGIN TRY EXEC msdb.dbo.sp_stop_job @job_id = @j;
 CLOSE c; DEALLOCATE c;" </dev/null >/dev/null 2>&1 || true
         sleep 5
     done
+    # A job that stopped during the last sleep counts as stopped.
+    n=$(sql_value "SELECT COUNT(*) $running")
     [ "$n" = 0 ] || { echo "15-snapshot-scope: droppub $pub: its agents still run after 90 s" >&2; exit 1; }
     sx "EXEC sp_dropsubscription @publication = N'$pub', @article = N'all', @subscriber = N'all';
 EXEC sp_droppublication @publication = N'$pub';"
@@ -664,6 +712,40 @@ for v in non_native non_concurrent imm_native imm_concurrent; do
     snap "$p" - "$db"
     r "D.$v.snapshot3" "files=[$SNAP_FILES]" "$SNAP_INFO after:$(state "$p")"
 done
+# The publication-level mark: sp_changepublication sync_method committed with the flags it
+# needs, which on these publications sets every subscription row to 1 (to or from the
+# concurrent family), then m_t7 added and extended (the article by name, then 'all' when
+# the name is refused), a snapshot; then the other order with m_t8 and the change back.
+# On m_sc_non_native the change crosses families (native to concurrent and back), on
+# m_sc_non_concurrent it stays in the concurrent family (concurrent to concurrent_c and
+# back). Both publications are without immediate_sync and fully delivered after the loop.
+ext_named_all() { # PUB DB ARTICLE: the extension by name, then by 'all' if refused.
+    local e
+    e="$3:$(try "EXEC sp_addsubscription @publication = N'$1', @subscriber = N'$srv', @destination_db = N'$2', @subscription_type = N'Push', @sync_type = N'automatic', @article = N'$3';")"
+    if [ "$e" != "$3:ok" ]; then
+        e+=",all:$(try "EXEC sp_addsubscription @publication = N'$1', @subscriber = N'$srv', @destination_db = N'$2', @subscription_type = N'Push', @sync_type = N'automatic', @article = N'all';")"
+    fi
+    echo "$e"
+}
+for v in non_native non_concurrent; do
+    p=m_sc_$v; db=m_d_$v; id=D.${v}_pub
+    if [ "$v" = non_native ]; then from=native; to=concurrent; else from=concurrent; to=concurrent_c; fi
+    sm() { echo "EXEC sp_changepublication @publication = N'$p', @property = N'sync_method', @value = N'$1', @force_invalidate_snapshot = @i, @force_reinit_subscription = @r;"; }
+    r "$id.start" "state" "$(state "$p")"
+    IFS='|' read -r res probe _ <<<"$(flags commit "$p" 4 "$(sm "$to")")"
+    r "$id.change" "$res" "sync_method=$from>$to probe=$probe after:$(state "$p")"
+    IFS='|' read -r res probe _ <<<"$(flags commit "$p" 2 "EXEC sp_addarticle @publication = N'$p', @article = N'm_t7', @source_owner = N'dbo', @source_object = N'm_t7', @force_invalidate_snapshot = @i;")"
+    r "$id.addarticle" "$res" "probe=$probe after:$(state "$p")"
+    r "$id.extend" "$(ext_named_all "$p" "$db" m_t7)" "after:$(state "$p")"
+    snap "$p" - "$db"
+    r "$id.snapshot" "files=[$SNAP_FILES]" "$SNAP_INFO after:$(state "$p")"
+    IFS='|' read -r add probe _ <<<"$(flags commit "$p" 2 "EXEC sp_addarticle @publication = N'$p', @article = N'm_t8', @source_owner = N'dbo', @source_object = N'm_t8', @force_invalidate_snapshot = @i;")"
+    e8=$(ext_named_all "$p" "$db" m_t8)
+    IFS='|' read -r res probe2 _ <<<"$(flags commit "$p" 4 "$(sm "$from")")"
+    r "$id.extend_then_change" "add=$add,extend=$e8,change=$res" "sync_method=$to>$from probe_add=$probe probe_change=$probe2 after:$(state "$p")"
+    snap "$p" - "$db"
+    r "$id.snapshot3" "files=[$SNAP_FILES]" "$SNAP_INFO after:$(state "$p")"
+done
 rawlog "D done after $(( SECONDS - start_s )) s"
 flush
 for m in native concurrent; do droppub "m_sc_imm_$m" "m_d_imm_$m"; done
@@ -697,7 +779,10 @@ for m in native concurrent character; do droppub "m_sc_non_$m" "m_d_non_$m"; don
 # --- F: writes to a new article and its delivery under database snapshot. m_t6 added to
 # m_fx_<variant> (no immediate_sync, article m_t2) and extended, then one run of the agent:
 # before, one UPDATE of m_t6 committed 5 s before the start; during, ten UPDATEs of m_t6, one
-# every 0.5 s from the start; none, no write; native_before, the before case under native.
+# every 0.5 s from the start; none, no write; native_before, the before case under native;
+# imm_dbsnap_1 to _3, the condition that failed in A: an immediate_sync publication (the add
+# extends the subscription) with writers on m_t2 and m_t6, one UPDATE every 50 ms from 2 s
+# before the start to the end of the generation, three times on three publications.
 f_during() {
     local i
     for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -707,19 +792,26 @@ f_during() {
 }
 for v in $fx; do
     sync=database\ snapshot; [[ $v == native_* ]] && sync=native
-    pub "m_fx_$v" "$sync" false false "m_f_$v" m_t2
+    imm=false; [[ $v == imm_* ]] && imm=true
+    pub "m_fx_$v" "$sync" "$imm" false "m_f_$v" m_t2
     initial "m_fx_$v" "m_f_$v"
 done
 for v in $fx; do
     p=m_fx_$v; db=m_f_$v
     IFS='|' read -r add probe _ <<<"$(flags commit "$p" 2 "EXEC sp_addarticle @publication = N'$p', @article = N'm_t6', @source_owner = N'dbo', @source_object = N'm_t6', @force_invalidate_snapshot = @i;")"
-    ext=$(try "EXEC sp_addsubscription @publication = N'$p', @subscriber = N'$srv', @destination_db = N'$db', @subscription_type = N'Push', @sync_type = N'automatic', @article = N'm_t6';")
+    W_DETAIL=""
+    if [[ $v == imm_* ]]; then
+        ext=auto
+    else
+        ext=$(try "EXEC sp_addsubscription @publication = N'$p', @subscriber = N'$srv', @destination_db = N'$db', @subscription_type = N'Push', @sync_type = N'automatic', @article = N'm_t6';")
+    fi
     case $v in
         *_before) sx "UPDATE dbo.m_t6 SET a = a + 1 WHERE id = 1"; sleep 5; snap "$p" - "$db" ;;
         *_during) RACE=f_during snap "$p" - "$db" ;;
+        imm_*) WTABLES="m_t2 m_t6" snap "$p" "F.$v" "$db"; wdetail "F.$v" ;;
         *) snap "$p" - "$db" ;;
     esac
-    r "F.$v" "$(delivered "$db" "$SNAP_MARK")" "add=$add extend=$ext files=[$SNAP_FILES] after:$(state "$p")"
+    r "F.$v" "$(delivered "$db" "$SNAP_MARK")" "add=$add extend=$ext files=[$SNAP_FILES]$W_DETAIL after:$(state "$p")"
 done
 rawlog "F done after $(( SECONDS - start_s )) s"
 flush
@@ -746,7 +838,7 @@ chpub() { # PUB PROPERTY VALUE
     echo "EXEC sp_changepublication @publication = N'$1', @property = N'$2', @value = N'$3', @force_invalidate_snapshot = @i, @force_reinit_subscription = @r;"
 }
 # The restore of the race, run right after the agent starts.
-race_restore() { flags commit "$RACE_PUB" 4 "$(chpub "$RACE_PUB" immediate_sync true)"; }
+race_restore() { FLAGS_TIME=1 flags commit "$RACE_PUB" 4 "$(chpub "$RACE_PUB" immediate_sync true)"; }
 for p in $df_pubs; do
     sfx=${p#m_df_}; e=m_e_$sfx; l=m_l_$sfx
     method=${sfx%_*}
@@ -759,8 +851,11 @@ for p in $df_pubs; do
     r "B.$sfx.2b" "$ext" "article=$art after:$(state "$p")"
     if [[ $p == *_race ]]; then
         RACE_PUB=$p RACE=race_restore snap "$p" - "$e"
-        IFS='|' read -r res probe _ <<<"$RACE_OUT"
-        r "B.$sfx.race" "files=[$SNAP_FILES]" "restore=$res probe=$probe $SNAP_INFO after:$(state "$p")"
+        IFS='|' read -r res probe _ rtime <<<"$RACE_OUT"
+        # The restore's commit time from the mark, and from the agent's first history line.
+        roff=$(sq "SELECT DATEDIFF(millisecond, '$SNAP_MARK', '$rtime')")
+        rawlog "race $p restore_ms=$roff start=$SNAP_START lock=$SNAP_LOCK bcp1=$SNAP_BCP1"
+        r "B.$sfx.race" "files=[$SNAP_FILES]" "restore=$res probe=$probe restore_from_mark=$roff restore_from_first_line=$(rel "$roff") $SNAP_INFO after:$(state "$p")"
         continue
     fi
     snap "$p" - "$e"
@@ -772,7 +867,9 @@ EXEC sp_addpushsubscription_agent @publication = N'$p', @subscriber = N'$srv', @
     r "B.$sfx.5a" "$ext" "after:$(state "$p")"
     DELIV_DBS=("$l" "$e")
     snap "$p" - "$l"
-    r "B.$sfx.5b" "files=[$SNAP_FILES]" "$SNAP_INFO after:$(state "$p")"
+    # Nothing is expected for the old subscriber: 30 s more for a late delivery.
+    late=no; wait_until 30 "$(delivered_query "$e" "$SNAP_MARK")" 2>/dev/null && late=yes
+    r "B.$sfx.5b" "files=[$SNAP_FILES]" "$SNAP_INFO late_delivery($e)=$late after:$(state "$p")"
 done
 rawlog "B done after $(( SECONDS - start_s )) s"
 flush
@@ -782,21 +879,27 @@ flush
 bad=0; fails=()
 control() { fails+=("15-snapshot-scope: control failed: $*"); bad=1; }
 field() { printf '%s\n' "${rows[@]}" | awk -F'|' -v id="$1" -v n="$2" '$2 == id { print $n }'; }
+for m in native character; do
+    d=$(field "A.imm.$m" 4)
+    [[ $d == *" t2_vs_t1=similar "* ]] || control "A.imm.$m: the m_t2 writer does not wait like the m_t1 writer: $d"
+done
 d=$(field A.imm.native 4)
-[[ $d == *" t2_vs_t1=similar "* ]] || control "A.imm.native: the m_t2 writer does not wait like the m_t1 writer: $d"
 [ "${A_NATIVE_T1:-0}" != none ] && (( ${A_NATIVE_T1:-0} >= 250 )) || control "A.imm.native: the m_t1 writer waited under 250 ms: $d"
 for imm in imm non; do
     v=A_DBSNAP_MAX_$imm
-    (( ${!v:-99999} < 1000 )) || control "A.$imm.dbsnap: a writer waited ${!v:-?} ms, not under one second"
+    # 0: the writers logged nothing, which proves nothing.
+    (( ${!v:-0} > 0 && ${!v:-0} < 1000 )) || control "A.$imm.dbsnap: the writers' longest wait is ${!v:-?} ms, not between 1 ms and one second"
 done
 for sfx in native_anon native_noanon concurrent_anon concurrent_noanon; do
     [ "$(field "B.$sfx.3" 3)" = "files=[m_t3]" ] || control "B.$sfx.3 generated $(field "B.$sfx.3" 3), expected files=[m_t3]"
+    [[ $(field "B.$sfx.3" 4) == *" delivered(m_e_$sfx)=[m_t3] "* ]] || control "B.$sfx.3 did not deliver m_t3 alone: $(field "B.$sfx.3" 4)"
     last=4a; [[ $sfx == *_anon ]] && last=4b
     d=$(field "B.$sfx.$last" 4)
     [[ $d =~ subs=\[([^]]*)\] ]] || { control "B.$sfx.$last: no subscription list: $d"; continue; }
     s=${BASH_REMATCH[1]}
     notactive=$(printf '%s\n' "$s" | tr ',' '\n' | grep -v '=2$' || true)
     [ -n "$s" ] && [ -z "$notactive" ] || control "B.$sfx.$last: a subscription is not active after the restore: $s"
+    [[ $d == *" inactive=[] "* ]] || control "B.$sfx.$last: an article is inactive after the restore: $d"
 done
 rawlog "total $(( SECONDS - start_s )) s"
 flush
