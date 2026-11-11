@@ -85,13 +85,17 @@ lab_export() {
 # MSpublisher_databases: sp_addlogreader_agent (and sp_addpublication) insert a row for
 # the publication database that disabling publish does not remove; only the drop of the
 # database's last publication does (Task 10). orphan_agent_history: history rows of the
-# distribution, snapshot and log reader agents whose agent row is gone; dropping an agent
-# normally deletes them (0 on the lab after Tasks 10 and 11).
+# distribution, snapshot and log reader agents whose agent row is gone and that were written
+# at or after the script's start mark ($1 of residue(), SYSDATETIME() taken before the
+# script runs, the same clock as the history `time`): an agent dropped while it runs logs
+# its stop message after its row is gone. Rows with the comment 'Distribution agent for
+# subscription added...' are excluded: sp_droppublication leaves that row of the virtual
+# subscriber agent that sp_addpublication created (measured on 01-articles).
 # The m_ prefix is matched with an escaped LIKE: an unescaped _ matches master, model, msdb.
 residue() {
     local counts files
     counts=$(sql_value "
-DECLARE @p nvarchar(10) = N'm\_%';
+DECLARE @p nvarchar(10) = N'm\_%', @mark datetime = '$1';
 SELECT CONCAT(
   'databases=',               (SELECT COUNT(*) FROM sys.databases WHERE name LIKE @p ESCAPE N'\'),
   ' server_principals=',      (SELECT COUNT(*) FROM sys.server_principals WHERE name LIKE @p ESCAPE N'\'),
@@ -121,9 +125,9 @@ SELECT CONCAT(
                                   AND j.job_id NOT IN (SELECT job_id FROM distribution.dbo.MSsnapshot_agents WHERE job_id IS NOT NULL)
                                   AND j.job_id NOT IN (SELECT job_id FROM distribution.dbo.MSdistribution_agents WHERE job_id IS NOT NULL)),
   ' MSpublisher_databases=',  (SELECT COUNT(*) FROM distribution.dbo.MSpublisher_databases WHERE publisher_db LIKE @p ESCAPE N'\'),
-  ' orphan_agent_history=',   (SELECT COUNT(*) FROM distribution.dbo.MSdistribution_history WHERE agent_id NOT IN (SELECT id FROM distribution.dbo.MSdistribution_agents))
-                            + (SELECT COUNT(*) FROM distribution.dbo.MSsnapshot_history WHERE agent_id NOT IN (SELECT id FROM distribution.dbo.MSsnapshot_agents))
-                            + (SELECT COUNT(*) FROM distribution.dbo.MSlogreader_history WHERE agent_id NOT IN (SELECT id FROM distribution.dbo.MSlogreader_agents)))") || return 1
+  ' orphan_agent_history=',   (SELECT COUNT(*) FROM distribution.dbo.MSdistribution_history WHERE agent_id NOT IN (SELECT id FROM distribution.dbo.MSdistribution_agents) AND [time] >= @mark AND comments NOT LIKE N'Distribution agent for subscription added%')
+                            + (SELECT COUNT(*) FROM distribution.dbo.MSsnapshot_history WHERE agent_id NOT IN (SELECT id FROM distribution.dbo.MSsnapshot_agents) AND [time] >= @mark AND comments NOT LIKE N'Distribution agent for subscription added%')
+                            + (SELECT COUNT(*) FROM distribution.dbo.MSlogreader_history WHERE agent_id NOT IN (SELECT id FROM distribution.dbo.MSlogreader_agents) AND [time] >= @mark AND comments NOT LIKE N'Distribution agent for subscription added%'))") || return 1
     # Snapshot folders are named <PUBLISHER>_<DATABASE>_<PUBLICATION>, upper case;
     # matched in any case all the same, as are files at any depth under data.
     files=$(podman exec repllab find /var/opt/mssql/data/ReplData/unc -iname '*_m_*' 2>&1) || {
@@ -166,6 +170,7 @@ for script in "$@"; do
     name=$(basename "$script"); name=${name%.*}
     log=$work/$name.log
 
+    mark=$(sql_value "SELECT CONVERT(varchar(23), SYSDATETIME(), 121)") || die "cannot read the start mark of $name"
     before_tempdb=$(tempdb_created) || die "cannot read tempdb create_date before $name"
     before_start=$(instance_started) || die "cannot read the instance start time before $name"
     lab_export "$work/before.yaml" || die "export before $name failed: $(cat "$work/before.yaml.err")"
@@ -216,7 +221,7 @@ for script in "$@"; do
     uncaught=$(grep -E '^Msg [0-9]+, Level (1[1-9]|2[0-5])|^Sqlcmd:' "$log" | head -n 3 | tr '\n' ' ')
     [ -z "$uncaught" ] || guard_failed uncaught "$name: $uncaught"
 
-    found=$(residue 2>&1) || guard_failed residue "cannot check residue after $name: $found"
+    found=$(residue "$mark" 2>&1) || guard_failed residue "cannot check residue after $name: $found"
     if [[ $found =~ =[1-9] ]] || [[ $found != *"files=[]" ]]; then
         guard_failed residue "$name left: $found"
     fi
