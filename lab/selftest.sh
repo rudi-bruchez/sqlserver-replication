@@ -22,6 +22,7 @@ fixtures=(
     "sqlvalue-error.sh uncaught"
     "sqlvalue-cut.sh exit"
     "orphan-job.sh residue"
+    "residue-pubdb.sql residue"
     "exit-status.sh exit"
     "truncated.sql truncated"
     "truncated-columns.sql truncated"
@@ -59,6 +60,8 @@ cleanup() {
         orphan-job.sh) query="IF EXISTS (SELECT * FROM msdb.dbo.sysjobs WHERE name = N'REPLLAB-Sales-ghostsub-99')
                 EXEC msdb.dbo.sp_delete_job @job_name = N'REPLLAB-Sales-ghostsub-99';
             SELECT COUNT(*) FROM msdb.dbo.sysjobs WHERE name = N'REPLLAB-Sales-ghostsub-99';" ;;
+        residue-pubdb.sql) query="DELETE distribution.dbo.MSpublisher_databases WHERE publisher_db = N'm_ghostdb';
+            SELECT COUNT(*) FROM distribution.dbo.MSpublisher_databases WHERE publisher_db = N'm_ghostdb';" ;;
         residue-schema.sql) query="EXEC Sales.sys.sp_executesql N'DROP TYPE IF EXISTS dbo.m_t; DROP SCHEMA IF EXISTS m_s;';
             SELECT (SELECT COUNT(*) FROM Sales.sys.types WHERE name = N'm_t') + (SELECT COUNT(*) FROM Sales.sys.schemas WHERE name = N'm_s');" ;;
         residue-file.sh|residue-folder.sh)

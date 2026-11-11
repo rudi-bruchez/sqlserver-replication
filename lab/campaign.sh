@@ -19,8 +19,10 @@
 #   truncated no R| line of exactly 256 characters (sqlcmd's cut of a max column);
 #   uncaught  no "Msg n, Level 11-25" or "Sqlcmd:" line in the output (stderr included);
 #   residue   no m_ object, schema, type, index, login, linked server, publication,
-#             agent, profile, job, snapshot folder or file left, and no msdb job of a
-#             replication agent category that no agent table references;
+#             agent, profile, job, snapshot folder or file left, no msdb job of a
+#             replication agent category that no agent table references, no
+#             MSpublisher_databases row of an m_ database, no agent history row whose
+#             agent is gone;
 #   export    sqlrepl export of Sales identical before and after.
 # restart comes first: after a restart every other check reads a different instance.
 set -uo pipefail
@@ -80,6 +82,11 @@ lab_export() {
 # the subscriber and its MSdistribution_agents row has job_id = newid(), not that job, so
 # this check flags a live pull job. Acceptable: the guard runs after a script, and any pull
 # subscription an m_ script leaves is residue anyway.
+# MSpublisher_databases: sp_addlogreader_agent (and sp_addpublication) insert a row for
+# the publication database that disabling publish does not remove; only the drop of the
+# database's last publication does (Task 10). orphan_agent_history: history rows of the
+# distribution, snapshot and log reader agents whose agent row is gone; dropping an agent
+# normally deletes them (0 on the lab after Tasks 10 and 11).
 # The m_ prefix is matched with an escaped LIKE: an unescaped _ matches master, model, msdb.
 residue() {
     local counts files
@@ -112,7 +119,11 @@ SELECT CONCAT(
                                 WHERE c.name IN (N'REPL-LogReader', N'REPL-Snapshot', N'REPL-Distribution')
                                   AND j.job_id NOT IN (SELECT job_id FROM distribution.dbo.MSlogreader_agents WHERE job_id IS NOT NULL)
                                   AND j.job_id NOT IN (SELECT job_id FROM distribution.dbo.MSsnapshot_agents WHERE job_id IS NOT NULL)
-                                  AND j.job_id NOT IN (SELECT job_id FROM distribution.dbo.MSdistribution_agents WHERE job_id IS NOT NULL)))") || return 1
+                                  AND j.job_id NOT IN (SELECT job_id FROM distribution.dbo.MSdistribution_agents WHERE job_id IS NOT NULL)),
+  ' MSpublisher_databases=',  (SELECT COUNT(*) FROM distribution.dbo.MSpublisher_databases WHERE publisher_db LIKE @p ESCAPE N'\'),
+  ' orphan_agent_history=',   (SELECT COUNT(*) FROM distribution.dbo.MSdistribution_history WHERE agent_id NOT IN (SELECT id FROM distribution.dbo.MSdistribution_agents))
+                            + (SELECT COUNT(*) FROM distribution.dbo.MSsnapshot_history WHERE agent_id NOT IN (SELECT id FROM distribution.dbo.MSsnapshot_agents))
+                            + (SELECT COUNT(*) FROM distribution.dbo.MSlogreader_history WHERE agent_id NOT IN (SELECT id FROM distribution.dbo.MSlogreader_agents)))") || return 1
     # Snapshot folders are named <PUBLISHER>_<DATABASE>_<PUBLICATION>, upper case;
     # matched in any case all the same, as are files at any depth under data.
     files=$(podman exec repllab find /var/opt/mssql/data/ReplData/unc -iname '*_m_*' 2>&1) || {
