@@ -304,6 +304,7 @@ func TestSecretName(t *testing.T) {
 	}{
 		{SecretName("SQL", "repllab", "distributor_admin"), "SQLREPL_SQL_REPLLAB_DISTRIBUTOR_ADMIN"},
 		{SecretName("SQL", `PUB\INST`, "repl.user"), "SQLREPL_SQL_PUB_INST_REPL_USER"},
+		{SecretName("SQL", "caf\u00e9"), "SQLREPL_SQL_CAF_"},
 		{SecretName("WIN", `DOMAIN\svc`), "SQLREPL_WIN_DOMAIN_SVC"},
 	}
 	for _, c := range cases {

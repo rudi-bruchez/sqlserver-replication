@@ -16,18 +16,29 @@ func SecretName(kind string, parts ...string) string {
 	return b.String()
 }
 
+// ASCIIUpper upper-cases the ASCII letters of s and leaves every other
+// character as it is: no Unicode case mapping, so that "ı" and "I" differ.
+func ASCIIUpper(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= 'a' && r <= 'z' {
+			r -= 'a' - 'A'
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// sanitize upper-cases ASCII letters and replaces each character (not each
+// byte) outside A-Z and 0-9 with one "_".
 func sanitize(s string) string {
 	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case c >= 'a' && c <= 'z':
-			c -= 'a' - 'A'
-		case c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
-		default:
-			c = '_'
+	for _, r := range ASCIIUpper(s) {
+		if r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
 		}
-		b.WriteByte(c)
 	}
 	return b.String()
 }

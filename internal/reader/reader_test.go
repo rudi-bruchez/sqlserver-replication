@@ -116,6 +116,18 @@ func TestSecretRegistry(t *testing.T) {
 	if d != "SQLREPL_SQL_A_B__C" {
 		t.Fatalf("distinct name: %q", d)
 	}
+	// ASCII-only upper-casing: dotless i and I are two sources.
+	var u secrets
+	x, f := u.name("SQL", "\u0131")
+	y, g := u.name("SQL", "I")
+	if x == y || f != nil || g != nil {
+		t.Fatalf("dotless i: %q %q %v %v", x, y, f, g)
+	}
+	// Two different characters that both sanitize to "_" collide.
+	z, h := u.name("SQL", "\u00e9")
+	if z != x+"_2" || h == nil {
+		t.Fatalf("collision of non-ASCII sources: %q, %v", z, h)
+	}
 }
 
 func TestFindOnce(t *testing.T) {

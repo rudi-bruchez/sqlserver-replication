@@ -25,9 +25,9 @@ func (s *secrets) name(kind string, parts ...string) (string, *model.Finding) {
 		s.byRaw, s.source = map[string]string{}, map[string]string{}
 	}
 	up := make([]string, 0, len(parts)+1)
-	up = append(up, strings.ToUpper(kind))
+	up = append(up, model.ASCIIUpper(kind))
 	for _, p := range parts {
-		up = append(up, strings.ToUpper(p))
+		up = append(up, model.ASCIIUpper(p))
 	}
 	raw := strings.Join(up, "\x00")
 	if n, ok := s.byRaw[raw]; ok {
