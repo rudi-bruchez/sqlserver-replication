@@ -179,7 +179,7 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 			if filterName != "" {
 				a.Filter.Procedure = &model.ObjectName{Schema: filterSchema, Name: filterName}
 			} else if filterClause != "" {
-				// Measured (lab/measure-filter-clause.sh): such a clause
+				// Measured (lab/campaign/04-filter-clause.sh, case F1): such a clause
 				// filters the snapshot, not the log reader.
 				e.warn("article %s.%s: filter clause without a filter procedure (sp_articlefilter); it filters the snapshot only, changes are replicated unfiltered", p.Name, a.Name)
 			}
