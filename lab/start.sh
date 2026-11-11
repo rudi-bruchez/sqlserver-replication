@@ -12,7 +12,7 @@ esac
 podman rm -f repllab >/dev/null 2>&1 || true
 podman run -d --name repllab --hostname repllab -p 127.0.0.1:11980:1433 \
   -e ACCEPT_EULA=Y -e MSSQL_PID=Developer -e MSSQL_AGENT_ENABLED=true -e MSSQL_MEMORY_LIMIT_MB=4096 \
-  -e MSSQL_SA_PASSWORD="$MSSQL_SA_PASSWORD" "mcr.microsoft.com/mssql/server:$version-latest" >/dev/null
+  -e MSSQL_SA_PASSWORD "mcr.microsoft.com/mssql/server:$version-latest" >/dev/null
 until sql -l 5 -b -Q "SELECT 1" >/dev/null 2>&1; do sleep 2; done
 podman exec -u 0 repllab bash -c 'mkdir -p /var/opt/mssql/data/ReplData && chown mssql /var/opt/mssql/data/ReplData'
 sql -l 5 -b < setup.sql | grep -E '^(Msg|Job)' -A1 || true

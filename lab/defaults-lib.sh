@@ -31,7 +31,7 @@ def_fail() { echo "$DEF_SCRIPT: $*" >&2; exit 1; }
 
 # sqlraw QUERY: the full value of a max column (no -W, -y 0 does not cut at 256).
 sqlraw() {
-    podman exec -i -e SQLCMDPASSWORD="$MSSQL_SA_PASSWORD" "$DEF_CONTAINER" \
+    SQLCMDPASSWORD=$MSSQL_SA_PASSWORD podman exec -i -e SQLCMDPASSWORD "$DEF_CONTAINER" \
         /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -b -y 0 -Q "SET NOCOUNT ON; $1" </dev/null
 }
 

@@ -48,12 +48,12 @@ out=$lab/results/$version/distributor-defaults.txt
 
 # lab_sql: sqlcmd on repllab (lib.sh's sql, before it is redefined for m-fresh).
 lab_sql() {
-    podman exec -i -e SQLCMDPASSWORD="$MSSQL_SA_PASSWORD" repllab \
+    SQLCMDPASSWORD=$MSSQL_SA_PASSWORD podman exec -i -e SQLCMDPASSWORD repllab \
         /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -W -s '|' "$@"
 }
 # From here sql, sql_value and try_in talk to m-fresh.
 sql() {
-    podman exec -i -e SQLCMDPASSWORD="$MSSQL_SA_PASSWORD" m-fresh \
+    SQLCMDPASSWORD=$MSSQL_SA_PASSWORD podman exec -i -e SQLCMDPASSWORD m-fresh \
         /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -W -s '|' "$@"
 }
 running() { [ "$(podman inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" = true ]; }
@@ -82,7 +82,7 @@ running repllab && { echo "distributor-defaults: repllab still runs after SHUTDO
 
 podman run -d --name m-fresh --hostname m-fresh -p 127.0.0.1:11981:1433 \
   -e ACCEPT_EULA=Y -e MSSQL_PID=Developer -e MSSQL_AGENT_ENABLED=true -e MSSQL_MEMORY_LIMIT_MB=4096 \
-  -e MSSQL_SA_PASSWORD="$MSSQL_SA_PASSWORD" "mcr.microsoft.com/mssql/server:$version-latest" >/dev/null
+  -e MSSQL_SA_PASSWORD "mcr.microsoft.com/mssql/server:$version-latest" >/dev/null
 for _ in $(seq 1 90); do sql -l 5 -b -Q "SELECT 1" </dev/null >/dev/null 2>&1 && break; sleep 2; done
 podman exec -u 0 m-fresh bash -c 'mkdir -p /var/opt/mssql/ReplData && chown mssql /var/opt/mssql/ReplData'
 banner=$(sql_value "SELECT LEFT(@@VERSION, CHARINDEX(CHAR(10), @@VERSION + CHAR(10)) - 1)")

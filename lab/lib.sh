@@ -1,5 +1,8 @@
 # Helpers for the lab scripts. Source it; needs MSSQL_SA_PASSWORD in the environment.
 # The password reaches sqlcmd as SQLCMDPASSWORD, never on a command line.
+# Exported so that `podman exec -e SQLCMDPASSWORD` and `podman run -e MSSQL_SA_PASSWORD`
+# pass it by name: a value on the podman command line is visible to ps.
+export MSSQL_SA_PASSWORD
 
 # sql [sqlcmd args...]: sqlcmd inside the repllab container, standard input passed
 # through (feed a script with `sql < file.sql`). No -b: sqlcmd then exits 0 on an
@@ -17,7 +20,7 @@
 #   campaign.sh's truncated check. Cast the query's column to nvarchar(4000), and
 #   use a .sh under set -e so that the failure ends the script and trips the exit guard.
 sql() {
-    podman exec -i -e SQLCMDPASSWORD="$MSSQL_SA_PASSWORD" repllab \
+    SQLCMDPASSWORD=$MSSQL_SA_PASSWORD podman exec -i -e SQLCMDPASSWORD repllab \
         /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -W -s '|' "$@"
 }
 
