@@ -1,0 +1,556 @@
+# Microsoft SQL Server 2022 (RTM-CU27-GDR) (KB5126934) - 16.0.4305.5 (X64)
+R|D.sp_addpublication.transactional.@taskid|no-column|column=no-column: backward compatibility only, not stored declared=0 call=ok
+R|D.sp_addpublication.transactional.@restricted|no-column|column=no-column: publication security of SQL Server 7.0, not stored declared=N'false' call=ok
+R|D.sp_addpublication.transactional.@sync_method|0|column=Sales.dbo.syspublications.sync_method (0 native, 1 character, 3 concurrent, 4 concurrent_c) declared=NULL call=ok
+R|D.sp_addpublication.transactional.@repl_freq|0|column=syspublications.repl_freq (0 continuous, 1 snapshot) declared=N'continuous' call=ok
+R|D.sp_addpublication.transactional.@description|null|column=syspublications.description declared=NULL call=ok
+R|D.sp_addpublication.transactional.@status|0|column=syspublications.status (0 inactive, 1 active) declared=N'inactive' call=ok
+R|D.sp_addpublication.transactional.@independent_agent|0|column=syspublications.independent_agent declared=N'false' call=ok
+R|D.sp_addpublication.transactional.@immediate_sync|0|column=syspublications.immediate_sync declared=NULL call=ok
+R|D.sp_addpublication.transactional.@enabled_for_internet|0|column=syspublications.enabled_for_internet declared=N'false' call=ok
+R|D.sp_addpublication.transactional.@allow_push|1|column=syspublications.allow_push declared=N'true' call=ok
+R|D.sp_addpublication.transactional.@allow_pull|0|column=syspublications.allow_pull declared=N'false' call=ok
+R|D.sp_addpublication.transactional.@allow_anonymous|0|column=syspublications.allow_anonymous declared=N'false' call=ok
+R|D.sp_addpublication.transactional.@allow_sync_tran|0|column=syspublications.allow_sync_tran declared=N'false' call=ok
+R|D.sp_addpublication.transactional.@autogen_sync_procs|0|column=syspublications.autogen_sync_procs declared=NULL call=ok
+R|D.sp_addpublication.transactional.@retention|336|column=syspublications.retention (hours) declared=336 call=ok
+R|D.sp_addpublication.transactional.@allow_queued_tran|0|column=syspublications.allow_queued_tran declared=N'false' call=ok
+R|D.sp_addpublication.transactional.@snapshot_in_defaultfolder|1|column=syspublications.snapshot_in_defaultfolder declared=N'true' call=ok
+R|D.sp_addpublication.transactional.@alt_snapshot_folder|null|column=syspublications.alt_snapshot_folder declared=NULL call=ok
+R|D.sp_addpublication.transactional.@pre_snapshot_script|null|column=syspublications.pre_snapshot_script declared=NULL call=ok
+R|D.sp_addpublication.transactional.@post_snapshot_script|null|column=syspublications.post_snapshot_script declared=NULL call=ok
+R|D.sp_addpublication.transactional.@compress_snapshot|0|column=syspublications.compress_snapshot declared=N'false' call=ok
+R|D.sp_addpublication.transactional.@ftp_address|null|column=syspublications.ftp_address declared=NULL call=ok
+R|D.sp_addpublication.transactional.@ftp_port|21|column=syspublications.ftp_port declared=21 call=ok
+R|D.sp_addpublication.transactional.@ftp_subdirectory|null|column=syspublications.ftp_subdirectory declared=NULL call=ok
+R|D.sp_addpublication.transactional.@ftp_login|anonymous|column=syspublications.ftp_login declared=N'anonymous' call=ok
+R|D.sp_addpublication.transactional.@ftp_password|null|column=syspublications.ftp_password (secret) declared=NULL call=ok
+R|D.sp_addpublication.transactional.@allow_dts|0|column=syspublications.allow_dts declared=N'false' call=ok
+R|D.sp_addpublication.transactional.@allow_subscription_copy|0|column=syspublications.allow_subscription_copy declared=N'false' call=ok
+R|D.sp_addpublication.transactional.@conflict_policy|null|column=syspublications.conflict_policy declared=NULL call=ok
+R|D.sp_addpublication.transactional.@centralized_conflicts|null|column=syspublications.centralized_conflicts declared=NULL call=ok
+R|D.sp_addpublication.transactional.@conflict_retention|14|column=syspublications.conflict_retention (days) declared=14 call=ok
+R|D.sp_addpublication.transactional.@queue_type|null|column=syspublications.queue_type declared=NULL call=ok
+R|D.sp_addpublication.transactional.@add_to_active_directory|null|column=syspublications.ad_guidname (NULL: not in Active Directory) declared=N'false' call=ok
+R|D.sp_addpublication.transactional.@logreader_job_name|REPLLAB-Sales-<id>|column=distribution.dbo.MSlogreader_agents.name of the publication database (Sales has one before the call; sp_addpublication creates one in a database that has none) declared=NULL call=ok
+R|D.sp_addpublication.transactional.@qreader_job_name|no-row|column=distribution.dbo.MSqreader_agents.name (one queue reader per distributor, created for queued updating only) declared=NULL call=ok
+R|D.sp_addpublication.transactional.@publisher|repllab|column=distribution.dbo.MSpublications.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addpublication.transactional.@allow_initialize_from_backup|0|column=syspublications.allow_initialize_from_backup declared=NULL call=ok
+R|D.sp_addpublication.transactional.@replicate_ddl|1|column=syspublications.replicate_ddl declared=NULL call=ok
+R|D.sp_addpublication.transactional.@enabled_for_p2p|0|column=syspublications.options bit 0x1 (Learn) declared=N'false' call=ok
+R|D.sp_addpublication.transactional.@publish_local_changes_only|0|column=syspublications.options bit 0x2 (Learn) declared=N'false' call=ok
+R|D.sp_addpublication.transactional.@enabled_for_het_sub|0|column=syspublications.options bit 0x4 (Learn) declared=N'false' call=ok
+R|D.sp_addpublication.transactional.@p2p_conflictdetection|0|column=syspublications.options bit 0x8 (Learn) declared=N'false' call=ok
+R|D.sp_addpublication.transactional.@p2p_originator_id|null|column=syspublications.originator_id declared=NULL call=ok
+R|D.sp_addpublication.transactional.@p2p_continue_onconflict|options=0|column=syspublications.options, bit not documented: whole value declared=N'false' call=ok
+R|D.sp_addpublication.transactional.@allow_partition_switch|options=0|column=syspublications.options, bit not documented: whole value declared=N'false' call=ok
+R|D.sp_addpublication.transactional.@replicate_partition_switch|options=0|column=syspublications.options, bit not documented: whole value declared=NULL call=ok
+R|D.sp_addpublication.transactional.@allow_drop|options=0|column=syspublications.options, bit not documented: whole value declared=N'false' call=ok
+R|D.sp_addpublication.transactional.@p2p_conflictdetection_policy|0|column=syspublications.options bit 0x100 (Learn: lastwriter) declared=N'originatorid' call=ok
+R|D.sp_addpublication_snapshot.transactional.@frequency_type|4|column=msdb.dbo.sysschedules.freq_type of the agent job declared=4 call=ok
+R|D.sp_addpublication_snapshot.transactional.@frequency_interval|1|column=msdb.dbo.sysschedules.freq_interval of the agent job declared=1 call=ok
+R|D.sp_addpublication_snapshot.transactional.@frequency_subday|4|column=msdb.dbo.sysschedules.freq_subday_type of the agent job declared=4 call=ok
+R|D.sp_addpublication_snapshot.transactional.@frequency_subday_interval|5|column=msdb.dbo.sysschedules.freq_subday_interval of the agent job declared=5 call=ok
+R|D.sp_addpublication_snapshot.transactional.@frequency_relative_interval|1|column=msdb.dbo.sysschedules.freq_relative_interval of the agent job declared=1 call=ok
+R|D.sp_addpublication_snapshot.transactional.@frequency_recurrence_factor|0|column=msdb.dbo.sysschedules.freq_recurrence_factor of the agent job declared=0 call=ok
+R|D.sp_addpublication_snapshot.transactional.@active_start_date|today|column=msdb.dbo.sysschedules.active_start_date of the agent job (today = the day of the run) declared=0 call=ok
+R|D.sp_addpublication_snapshot.transactional.@active_end_date|99991231|column=msdb.dbo.sysschedules.active_end_date of the agent job declared=99991231 call=ok
+R|D.sp_addpublication_snapshot.transactional.@active_start_time_of_day|0|column=msdb.dbo.sysschedules.active_start_time of the agent job declared=0 call=ok
+R|D.sp_addpublication_snapshot.transactional.@active_end_time_of_day|235959|column=msdb.dbo.sysschedules.active_end_time of the agent job declared=235959 call=ok
+R|D.sp_addpublication_snapshot.transactional.@snapshot_job_name|REPLLAB-Sales-m_dp_tran-<id>|column=msdb.dbo.sysjobs.name of the agent job (distribution.dbo.MSsnapshot_agents.job_id) declared=NULL call=ok
+R|D.sp_addpublication_snapshot.transactional.@publisher_security_mode|1|column=distribution.dbo.MSsnapshot_agents.publisher_security_mode declared=NULL call=ok
+R|D.sp_addpublication_snapshot.transactional.@publisher_login|''|column=distribution.dbo.MSsnapshot_agents.publisher_login declared=NULL call=ok
+R|D.sp_addpublication_snapshot.transactional.@publisher_password|set|column=distribution.dbo.MSsnapshot_agents.publisher_password (secret; sp_addpublication already wrote one) declared=NULL call=ok
+R|D.sp_addpublication_snapshot.transactional.@job_login|null|column=distribution.dbo.MSsnapshot_agents.job_login declared=NULL call=ok
+R|D.sp_addpublication_snapshot.transactional.@job_password|null|column=distribution.dbo.MSsnapshot_agents.job_password (secret) declared=NULL call=ok
+R|D.sp_addpublication_snapshot.transactional.@publisher|repllab|column=distribution.dbo.MSsnapshot_agents.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addpublication_snapshot.transactional.@distributor_security_mode|1|column=msdb.dbo.sysjobsteps.command of the snapshot agent job, switch -DistributorSecurityMode declared=NULL call=ok
+R|D.sp_addpublication_snapshot.transactional.@distributor_login|absent|column=msdb.dbo.sysjobsteps.command of the snapshot agent job, switch -DistributorLogin declared=NULL call=ok
+R|D.sp_addpublication_snapshot.transactional.@distributor_password|absent|column=msdb.dbo.sysjobsteps.command of the snapshot agent job, switch -DistributorPassword (secret) declared=NULL call=ok
+R|D.sp_addpublication_snapshot.transactional.@job_security_mode|no-column|column=no-column: Managed Instance only (refused with 41989 elsewhere, 07-changes) declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@taskid|no-column|column=no-column: backward compatibility only, not stored declared=0 call=ok
+R|D.sp_addpublication.snapshot.@restricted|no-column|column=no-column: publication security of SQL Server 7.0, not stored declared=N'false' call=ok
+R|D.sp_addpublication.snapshot.@sync_method|0|column=Sales.dbo.syspublications.sync_method (0 native, 1 character, 3 concurrent, 4 concurrent_c) declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@repl_freq|1|column=syspublications.repl_freq (0 continuous, 1 snapshot) declared=N'continuous' passed call=ok
+R|D.sp_addpublication.snapshot.@description|null|column=syspublications.description declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@status|0|column=syspublications.status (0 inactive, 1 active) declared=N'inactive' call=ok
+R|D.sp_addpublication.snapshot.@independent_agent|0|column=syspublications.independent_agent declared=N'false' call=ok
+R|D.sp_addpublication.snapshot.@immediate_sync|0|column=syspublications.immediate_sync declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@enabled_for_internet|0|column=syspublications.enabled_for_internet declared=N'false' call=ok
+R|D.sp_addpublication.snapshot.@allow_push|1|column=syspublications.allow_push declared=N'true' call=ok
+R|D.sp_addpublication.snapshot.@allow_pull|0|column=syspublications.allow_pull declared=N'false' call=ok
+R|D.sp_addpublication.snapshot.@allow_anonymous|0|column=syspublications.allow_anonymous declared=N'false' call=ok
+R|D.sp_addpublication.snapshot.@allow_sync_tran|0|column=syspublications.allow_sync_tran declared=N'false' call=ok
+R|D.sp_addpublication.snapshot.@autogen_sync_procs|0|column=syspublications.autogen_sync_procs declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@retention|336|column=syspublications.retention (hours) declared=336 call=ok
+R|D.sp_addpublication.snapshot.@allow_queued_tran|0|column=syspublications.allow_queued_tran declared=N'false' call=ok
+R|D.sp_addpublication.snapshot.@snapshot_in_defaultfolder|1|column=syspublications.snapshot_in_defaultfolder declared=N'true' call=ok
+R|D.sp_addpublication.snapshot.@alt_snapshot_folder|null|column=syspublications.alt_snapshot_folder declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@pre_snapshot_script|null|column=syspublications.pre_snapshot_script declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@post_snapshot_script|null|column=syspublications.post_snapshot_script declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@compress_snapshot|0|column=syspublications.compress_snapshot declared=N'false' call=ok
+R|D.sp_addpublication.snapshot.@ftp_address|null|column=syspublications.ftp_address declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@ftp_port|21|column=syspublications.ftp_port declared=21 call=ok
+R|D.sp_addpublication.snapshot.@ftp_subdirectory|null|column=syspublications.ftp_subdirectory declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@ftp_login|anonymous|column=syspublications.ftp_login declared=N'anonymous' call=ok
+R|D.sp_addpublication.snapshot.@ftp_password|null|column=syspublications.ftp_password (secret) declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@allow_dts|0|column=syspublications.allow_dts declared=N'false' call=ok
+R|D.sp_addpublication.snapshot.@allow_subscription_copy|0|column=syspublications.allow_subscription_copy declared=N'false' call=ok
+R|D.sp_addpublication.snapshot.@conflict_policy|null|column=syspublications.conflict_policy declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@centralized_conflicts|null|column=syspublications.centralized_conflicts declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@conflict_retention|14|column=syspublications.conflict_retention (days) declared=14 call=ok
+R|D.sp_addpublication.snapshot.@queue_type|null|column=syspublications.queue_type declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@add_to_active_directory|null|column=syspublications.ad_guidname (NULL: not in Active Directory) declared=N'false' call=ok
+R|D.sp_addpublication.snapshot.@logreader_job_name|REPLLAB-Sales-<id>|column=distribution.dbo.MSlogreader_agents.name of the publication database (Sales has one before the call; sp_addpublication creates one in a database that has none) declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@qreader_job_name|no-row|column=distribution.dbo.MSqreader_agents.name (one queue reader per distributor, created for queued updating only) declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@publisher|repllab|column=distribution.dbo.MSpublications.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@allow_initialize_from_backup|0|column=syspublications.allow_initialize_from_backup declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@replicate_ddl|1|column=syspublications.replicate_ddl declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@enabled_for_p2p|0|column=syspublications.options bit 0x1 (Learn) declared=N'false' call=ok
+R|D.sp_addpublication.snapshot.@publish_local_changes_only|0|column=syspublications.options bit 0x2 (Learn) declared=N'false' call=ok
+R|D.sp_addpublication.snapshot.@enabled_for_het_sub|0|column=syspublications.options bit 0x4 (Learn) declared=N'false' call=ok
+R|D.sp_addpublication.snapshot.@p2p_conflictdetection|0|column=syspublications.options bit 0x8 (Learn) declared=N'false' call=ok
+R|D.sp_addpublication.snapshot.@p2p_originator_id|null|column=syspublications.originator_id declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@p2p_continue_onconflict|options=0|column=syspublications.options, bit not documented: whole value declared=N'false' call=ok
+R|D.sp_addpublication.snapshot.@allow_partition_switch|options=0|column=syspublications.options, bit not documented: whole value declared=N'false' call=ok
+R|D.sp_addpublication.snapshot.@replicate_partition_switch|options=0|column=syspublications.options, bit not documented: whole value declared=NULL call=ok
+R|D.sp_addpublication.snapshot.@allow_drop|options=0|column=syspublications.options, bit not documented: whole value declared=N'false' call=ok
+R|D.sp_addpublication.snapshot.@p2p_conflictdetection_policy|0|column=syspublications.options bit 0x100 (Learn: lastwriter) declared=N'originatorid' call=ok
+R|D.sp_addarticle.table.native.@source_table|dbo.m_t|column=Sales.dbo.sysarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.table.native.@destination_table|m_t|column=sysarticles.dest_table declared=NULL call=ok
+R|D.sp_addarticle.table.native.@vertical_partition|2/2|column=Sales.dbo.sysarticlecolumns rows of the article / columns of the table declared=N'false' call=ok
+R|D.sp_addarticle.table.native.@type|1|column=sysarticles.type (1 logbased) declared=NULL call=ok
+R|D.sp_addarticle.table.native.@filter|0|column=sysarticles.filter (object id of the filter procedure, 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.native.@sync_object|syncobj_0x<hex>|column=sysarticles.sync_objid (the generated view) declared=NULL call=ok
+R|D.sp_addarticle.table.native.@ins_cmd|CALL [dbo].[sp_MSins_dbom_t]|column=sysarticles.ins_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.native.@del_cmd|CALL [dbo].[sp_MSdel_dbom_t]|column=sysarticles.del_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.native.@upd_cmd|SCALL [dbo].[sp_MSupd_dbom_t]|column=sysarticles.upd_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.native.@creation_script|null|column=sysarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.table.native.@description|null|column=sysarticles.description declared=NULL call=ok
+R|D.sp_addarticle.table.native.@pre_creation_cmd|1|column=sysarticles.pre_creation_cmd (0 none, 1 drop, 2 delete, 3 truncate) declared=N'drop' call=ok
+R|D.sp_addarticle.table.native.@filter_clause|null|column=sysarticles.filter_clause declared=NULL call=ok
+R|D.sp_addarticle.table.native.@schema_option|0x0000000000030073|column=sysarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.table.native.@destination_owner|dbo|column=sysarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.table.native.@status|16|column=sysarticles.status declared=NULL call=ok
+R|D.sp_addarticle.table.native.@source_owner|dbo|column=sysarticles.objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.table.native.@sync_object_owner|dbo|column=sysarticles.sync_objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.table.native.@filter_owner|0|column=sysarticles.filter (schema; 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.native.@source_object|m_t|column=sysarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.table.native.@artid|assigned|column=sysarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.table.native.@auto_identity_range|no-row|column=distribution.dbo.MSrepl_identity_range.identity_support declared=NULL call=ok
+R|D.sp_addarticle.table.native.@pub_identity_range|no-row|column=MSrepl_identity_range.pub_range declared=NULL call=ok
+R|D.sp_addarticle.table.native.@identity_range|no-row|column=MSrepl_identity_range.range declared=NULL call=ok
+R|D.sp_addarticle.table.native.@threshold|no-row|column=MSrepl_identity_range.threshold declared=NULL call=ok
+R|D.sp_addarticle.table.native.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.table.native.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers, not stored for a SQL Server one declared=1 call=ok
+R|D.sp_addarticle.table.native.@identityrangemanagementoption|no-row|column=MSrepl_identity_range.identity_support (no row: not managed) declared=NULL call=ok
+R|D.sp_addarticle.table.native.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.table.native.@fire_triggers_on_snapshot|0|column=sysarticles.fire_triggers_on_snapshot declared=N'false' call=ok
+R|D.sp_addarticle.table.concurrent.@source_table|dbo.m_t|column=Sales.dbo.sysarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@destination_table|m_t|column=sysarticles.dest_table declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@vertical_partition|2/2|column=Sales.dbo.sysarticlecolumns rows of the article / columns of the table declared=N'false' call=ok
+R|D.sp_addarticle.table.concurrent.@type|1|column=sysarticles.type (1 logbased) declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@filter|0|column=sysarticles.filter (object id of the filter procedure, 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@sync_object|syncobj_0x<hex>|column=sysarticles.sync_objid (the generated view) declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@ins_cmd|CALL [dbo].[sp_MSins_dbom_t]|column=sysarticles.ins_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@del_cmd|CALL [dbo].[sp_MSdel_dbom_t]|column=sysarticles.del_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@upd_cmd|SCALL [dbo].[sp_MSupd_dbom_t]|column=sysarticles.upd_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@creation_script|null|column=sysarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@description|null|column=sysarticles.description declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@pre_creation_cmd|1|column=sysarticles.pre_creation_cmd (0 none, 1 drop, 2 delete, 3 truncate) declared=N'drop' call=ok
+R|D.sp_addarticle.table.concurrent.@filter_clause|null|column=sysarticles.filter_clause declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@schema_option|0x0000000000030073|column=sysarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@destination_owner|dbo|column=sysarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@status|16|column=sysarticles.status declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@source_owner|dbo|column=sysarticles.objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@sync_object_owner|dbo|column=sysarticles.sync_objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@filter_owner|0|column=sysarticles.filter (schema; 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@source_object|m_t|column=sysarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.table.concurrent.@artid|assigned|column=sysarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@auto_identity_range|no-row|column=distribution.dbo.MSrepl_identity_range.identity_support declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@pub_identity_range|no-row|column=MSrepl_identity_range.pub_range declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@identity_range|no-row|column=MSrepl_identity_range.range declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@threshold|no-row|column=MSrepl_identity_range.threshold declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.table.concurrent.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers, not stored for a SQL Server one declared=1 call=ok
+R|D.sp_addarticle.table.concurrent.@identityrangemanagementoption|no-row|column=MSrepl_identity_range.identity_support (no row: not managed) declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.table.concurrent.@fire_triggers_on_snapshot|0|column=sysarticles.fire_triggers_on_snapshot declared=N'false' call=ok
+R|D.sp_addarticle.table.character.@source_table|dbo.m_t|column=Sales.dbo.sysarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.table.character.@destination_table|m_t|column=sysarticles.dest_table declared=NULL call=ok
+R|D.sp_addarticle.table.character.@vertical_partition|2/2|column=Sales.dbo.sysarticlecolumns rows of the article / columns of the table declared=N'false' call=ok
+R|D.sp_addarticle.table.character.@type|1|column=sysarticles.type (1 logbased) declared=NULL call=ok
+R|D.sp_addarticle.table.character.@filter|0|column=sysarticles.filter (object id of the filter procedure, 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.character.@sync_object|syncobj_0x<hex>|column=sysarticles.sync_objid (the generated view) declared=NULL call=ok
+R|D.sp_addarticle.table.character.@ins_cmd|SQL|column=sysarticles.ins_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.character.@del_cmd|SQL|column=sysarticles.del_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.character.@upd_cmd|SQL|column=sysarticles.upd_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.character.@creation_script|null|column=sysarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.table.character.@description|null|column=sysarticles.description declared=NULL call=ok
+R|D.sp_addarticle.table.character.@pre_creation_cmd|1|column=sysarticles.pre_creation_cmd (0 none, 1 drop, 2 delete, 3 truncate) declared=N'drop' call=ok
+R|D.sp_addarticle.table.character.@filter_clause|null|column=sysarticles.filter_clause declared=NULL call=ok
+R|D.sp_addarticle.table.character.@schema_option|0x0000000000030073|column=sysarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.table.character.@destination_owner|null|column=sysarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.table.character.@status|16|column=sysarticles.status declared=NULL call=ok
+R|D.sp_addarticle.table.character.@source_owner|dbo|column=sysarticles.objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.table.character.@sync_object_owner|dbo|column=sysarticles.sync_objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.table.character.@filter_owner|0|column=sysarticles.filter (schema; 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.character.@source_object|m_t|column=sysarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.table.character.@artid|assigned|column=sysarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.table.character.@auto_identity_range|no-row|column=distribution.dbo.MSrepl_identity_range.identity_support declared=NULL call=ok
+R|D.sp_addarticle.table.character.@pub_identity_range|no-row|column=MSrepl_identity_range.pub_range declared=NULL call=ok
+R|D.sp_addarticle.table.character.@identity_range|no-row|column=MSrepl_identity_range.range declared=NULL call=ok
+R|D.sp_addarticle.table.character.@threshold|no-row|column=MSrepl_identity_range.threshold declared=NULL call=ok
+R|D.sp_addarticle.table.character.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.table.character.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers, not stored for a SQL Server one declared=1 call=ok
+R|D.sp_addarticle.table.character.@identityrangemanagementoption|no-row|column=MSrepl_identity_range.identity_support (no row: not managed) declared=NULL call=ok
+R|D.sp_addarticle.table.character.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.table.character.@fire_triggers_on_snapshot|0|column=sysarticles.fire_triggers_on_snapshot declared=N'false' call=ok
+R|D.sp_addarticle.table.snapshot-pub.@source_table|dbo.m_t|column=Sales.dbo.sysarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@destination_table|m_t|column=sysarticles.dest_table declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@vertical_partition|2/2|column=Sales.dbo.sysarticlecolumns rows of the article / columns of the table declared=N'false' call=ok
+R|D.sp_addarticle.table.snapshot-pub.@type|1|column=sysarticles.type (1 logbased) declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@filter|0|column=sysarticles.filter (object id of the filter procedure, 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@sync_object|syncobj_0x<hex>|column=sysarticles.sync_objid (the generated view) declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@ins_cmd|SQL|column=sysarticles.ins_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@del_cmd|SQL|column=sysarticles.del_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@upd_cmd|SQL|column=sysarticles.upd_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@creation_script|null|column=sysarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@description|null|column=sysarticles.description declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@pre_creation_cmd|1|column=sysarticles.pre_creation_cmd (0 none, 1 drop, 2 delete, 3 truncate) declared=N'drop' call=ok
+R|D.sp_addarticle.table.snapshot-pub.@filter_clause|null|column=sysarticles.filter_clause declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@schema_option|0x0000000000030071|column=sysarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@destination_owner|dbo|column=sysarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@status|16|column=sysarticles.status declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@source_owner|dbo|column=sysarticles.objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@sync_object_owner|dbo|column=sysarticles.sync_objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@filter_owner|0|column=sysarticles.filter (schema; 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@source_object|m_t|column=sysarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.table.snapshot-pub.@artid|assigned|column=sysarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@auto_identity_range|no-row|column=distribution.dbo.MSrepl_identity_range.identity_support declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@pub_identity_range|no-row|column=MSrepl_identity_range.pub_range declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@identity_range|no-row|column=MSrepl_identity_range.range declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@threshold|no-row|column=MSrepl_identity_range.threshold declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.table.snapshot-pub.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers, not stored for a SQL Server one declared=1 call=ok
+R|D.sp_addarticle.table.snapshot-pub.@identityrangemanagementoption|no-row|column=MSrepl_identity_range.identity_support (no row: not managed) declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.table.snapshot-pub.@fire_triggers_on_snapshot|0|column=sysarticles.fire_triggers_on_snapshot declared=N'false' call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@source_table|m_s.m_t|column=Sales.dbo.sysarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@destination_table|m_t|column=sysarticles.dest_table declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@vertical_partition|2/2|column=Sales.dbo.sysarticlecolumns rows of the article / columns of the table declared=N'false' call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@type|1|column=sysarticles.type (1 logbased) declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@filter|0|column=sysarticles.filter (object id of the filter procedure, 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@sync_object|syncobj_0x<hex>|column=sysarticles.sync_objid (the generated view) declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@ins_cmd|CALL [dbo].[m_ins]|column=sysarticles.ins_cmd declared=NULL passed call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@del_cmd|CALL [dbo].[sp_MSdel_m_sm_t]|column=sysarticles.del_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@upd_cmd|SCALL [dbo].[sp_MSupd_m_sm_t]|column=sysarticles.upd_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@creation_script|null|column=sysarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@description|null|column=sysarticles.description declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@pre_creation_cmd|1|column=sysarticles.pre_creation_cmd (0 none, 1 drop, 2 delete, 3 truncate) declared=N'drop' call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@filter_clause|null|column=sysarticles.filter_clause declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@schema_option|0x0000000000030073|column=sysarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@destination_owner|m_s|column=sysarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@status|16|column=sysarticles.status declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@source_owner|m_s|column=sysarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@sync_object_owner|dbo|column=sysarticles.sync_objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@filter_owner|0|column=sysarticles.filter (schema; 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@source_object|m_t|column=sysarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@artid|assigned|column=sysarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@auto_identity_range|no-row|column=distribution.dbo.MSrepl_identity_range.identity_support declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@pub_identity_range|no-row|column=MSrepl_identity_range.pub_range declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@identity_range|no-row|column=MSrepl_identity_range.range declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@threshold|no-row|column=MSrepl_identity_range.threshold declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers, not stored for a SQL Server one declared=1 call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@identityrangemanagementoption|no-row|column=MSrepl_identity_range.identity_support (no row: not managed) declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.table.non-dbo-schema.@fire_triggers_on_snapshot|0|column=sysarticles.fire_triggers_on_snapshot declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.@source_table|dbo.m_v|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@destination_table|m_v|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.@type|64|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.view-schema-only.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@destination_owner|dbo|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@source_owner|dbo|column=sysschemaarticles.objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@source_object|m_v|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.view-schema-only.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.view-schema-only.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.@source_table|dbo.m_p|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@destination_table|m_p|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.@type|32|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.proc-schema-only.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@destination_owner|dbo|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@source_owner|dbo|column=sysschemaarticles.objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@source_object|m_p|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.proc-schema-only.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.proc-schema-only.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.@source_table|dbo.m_f|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@destination_table|m_f|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.@type|128|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.func-schema-only.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@destination_owner|dbo|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@source_owner|dbo|column=sysschemaarticles.objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@source_object|m_f|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.func-schema-only.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.func-schema-only.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_articlefilter.table.@filter_name|0|column=Sales.dbo.sysarticles.filter (object id of the filter procedure, 0 none) declared=NULL call=ok
+R|D.sp_articlefilter.table.@filter_clause|null|column=sysarticles.filter_clause declared=NULL call=ok
+R|D.sp_articlefilter.table.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_articlefilter.table.@force_reinit_subscription|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_articlefilter.table.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_articleview.table.@view_name|syncobj_0x<hex>|column=Sales.dbo.sysarticles.sync_objid (the view) declared=NULL call=ok
+R|D.sp_articleview.table.@filter_clause|null|column=sysarticles.filter_clause declared=NULL call=ok
+R|D.sp_articleview.table.@change_active|no-column|column=no-column: a flag of the call (allows changing an active publication) declared=0 call=ok
+R|D.sp_articleview.table.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_articleview.table.@force_reinit_subscription|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_articleview.table.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_articleview.table.@refreshsynctranprocs|no-column|column=no-column: a flag of the call (regenerates synctran procedures) declared=1 call=ok
+R|D.sp_articleview.table.@internal|no-column|column=no-column: internal use declared=0 call=ok
+R|D.sp_articlecolumn.table.@column|2/2|column=Sales.dbo.sysarticlecolumns rows of the article / columns of the table declared=NULL call=ok
+R|D.sp_articlecolumn.table.@operation|2/2|column=sysarticlecolumns rows of the article / columns of the table (add adds, drop removes) declared=N'add' call=ok
+R|D.sp_articlecolumn.table.@refresh_synctran_procs|no-column|column=no-column: a flag of the call declared=1 call=ok
+R|D.sp_articlecolumn.table.@ignore_distributor|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_articlecolumn.table.@change_active|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_articlecolumn.table.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_articlecolumn.table.@force_reinit_subscription|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_articlecolumn.table.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_articlecolumn.table.@internal|no-column|column=no-column: internal use declared=0 call=ok
+R|D.sp_addsubscription.push.@article|1/1|column=Sales.dbo.syssubscriptions rows of the subscription / articles of the publication declared='all' call=ok
+R|D.sp_addsubscription.push.@subscriber|REPLLAB|column=syssubscriptions.srvname declared=NULL passed call=ok
+R|D.sp_addsubscription.push.@destination_db|m_dsub1|column=syssubscriptions.dest_db declared=NULL passed call=ok
+R|D.sp_addsubscription.push.@sync_type|sync_type=1 nosync_type=0|column=syssubscriptions.sync_type and nosync_type (1 automatic) declared='automatic' call=ok
+R|D.sp_addsubscription.push.@status|1|column=syssubscriptions.status (0 inactive, 1 subscribed, 2 active) declared=NULL call=ok
+R|D.sp_addsubscription.push.@subscription_type|0|column=syssubscriptions.subscription_type (0 push, 1 pull) declared='push' call=ok
+R|D.sp_addsubscription.push.@update_mode|0|column=syssubscriptions.update_mode (0 read only) declared='read only' call=ok
+R|D.sp_addsubscription.push.@loopback_detection|1|column=syssubscriptions.loopback_detection declared=NULL call=ok
+R|D.sp_addsubscription.push.@frequency_type|64|column=msdb.dbo.sysschedules.freq_type of the agent job declared=NULL call=ok
+R|D.sp_addsubscription.push.@frequency_interval|0|column=msdb.dbo.sysschedules.freq_interval of the agent job declared=NULL call=ok
+R|D.sp_addsubscription.push.@frequency_relative_interval|0|column=msdb.dbo.sysschedules.freq_relative_interval of the agent job declared=NULL call=ok
+R|D.sp_addsubscription.push.@frequency_recurrence_factor|0|column=msdb.dbo.sysschedules.freq_recurrence_factor of the agent job declared=NULL call=ok
+R|D.sp_addsubscription.push.@frequency_subday|0|column=msdb.dbo.sysschedules.freq_subday_type of the agent job declared=NULL call=ok
+R|D.sp_addsubscription.push.@frequency_subday_interval|0|column=msdb.dbo.sysschedules.freq_subday_interval of the agent job declared=NULL call=ok
+R|D.sp_addsubscription.push.@active_start_time_of_day|0|column=msdb.dbo.sysschedules.active_start_time of the agent job declared=NULL call=ok
+R|D.sp_addsubscription.push.@active_end_time_of_day|235959|column=msdb.dbo.sysschedules.active_end_time of the agent job declared=NULL call=ok
+R|D.sp_addsubscription.push.@active_start_date|today|column=msdb.dbo.sysschedules.active_start_date of the agent job (today = the day of the run) declared=NULL call=ok
+R|D.sp_addsubscription.push.@active_end_date|99991231|column=msdb.dbo.sysschedules.active_end_date of the agent job declared=NULL call=ok
+R|D.sp_addsubscription.push.@optional_command_line|-Subscriber [repllab] -SubscriberDB [m_dsub1] -Publisher [repllab] -Distributor [repllab] -DistributorSecurityMode 1 -PublisherDB [Sales]    -Continuous|column=msdb.dbo.sysjobsteps.command of the agent job the call created declared=NULL call=ok
+R|D.sp_addsubscription.push.@reserved|no-column|column=no-column: internal use declared=NULL call=ok
+R|D.sp_addsubscription.push.@enabled_for_syncmgr|no-column|column=no-column: Windows Synchronization Manager of a pull subscriber, nothing stored by sp_addsubscription declared=NULL call=ok
+R|D.sp_addsubscription.push.@offloadagent|0|column=distribution.dbo.MSdistribution_agents.offload_enabled declared=0 call=ok
+R|D.sp_addsubscription.push.@offloadserver|null|column=distribution.dbo.MSdistribution_agents.offload_server declared=NULL call=ok
+R|D.sp_addsubscription.push.@dts_package_name|null|column=distribution.dbo.MSdistribution_agents.dts_package_name declared=NULL call=ok
+R|D.sp_addsubscription.push.@dts_package_password|null|column=distribution.dbo.MSdistribution_agents.dts_package_password (secret) declared=NULL call=ok
+R|D.sp_addsubscription.push.@dts_package_location|0|column=distribution.dbo.MSdistribution_agents.dts_package_location (0 distributor, 1 subscriber) declared=NULL call=ok
+R|D.sp_addsubscription.push.@distribution_job_name|no-column|column=no-column: informational only (Learn), not stored declared=NULL call=ok
+R|D.sp_addsubscription.push.@publisher|repllab|column=distribution.dbo.MSsubscriptions.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addsubscription.push.@backupdevicetype|no-column|column=no-column: read only when sync_type is initialize with backup declared='logical' call=ok
+R|D.sp_addsubscription.push.@backupdevicename|no-column|column=no-column: read only when sync_type is initialize with backup declared=null call=ok
+R|D.sp_addsubscription.push.@mediapassword|no-column|column=no-column: read only when sync_type is initialize with backup declared=null call=ok
+R|D.sp_addsubscription.push.@password|no-column|column=no-column: read only when sync_type is initialize with backup declared=null call=ok
+R|D.sp_addsubscription.push.@fileidhint|no-column|column=no-column: read only when sync_type is initialize with backup declared=null call=ok
+R|D.sp_addsubscription.push.@unload|no-column|column=no-column: read only when sync_type is initialize with backup declared=1 call=ok
+R|D.sp_addsubscription.push.@subscriptionlsn|publisher_seqno|column=distribution.dbo.MSsubscriptions.subscription_seqno (set from the parameter only with initialize from lsn) declared=null call=ok
+R|D.sp_addsubscription.push.@subscriptionstreams|null|column=distribution.dbo.MSdistribution_agents.subscriptionstreams declared=null call=ok
+R|D.sp_addsubscription.push.@subscriber_type|null|column=distribution.dbo.MSdistribution_agents.subscriber_type (0 SQL Server) declared=0 call=ok
+R|D.sp_addsubscription.push.@memory_optimized|0|column=distribution.dbo.MSdistribution_agents.memory_optimized declared=0 call=ok
+R|D.sp_addsubscription.push.@subscriber_security_mode|1|column=distribution.dbo.MSdistribution_agents.subscriber_security_mode declared=NULL call=ok
+R|D.sp_addsubscription.push.@subscriber_login|''|column=distribution.dbo.MSdistribution_agents.subscriber_login declared=NULL call=ok
+R|D.sp_addsubscription.push.@subscriber_password|set|column=distribution.dbo.MSdistribution_agents.subscriber_password (secret) declared=NULL call=ok
+R|D.sp_addpushsubscription_agent.push.@subscriber|repllab|column=distribution.dbo.MSdistribution_agents.subscriber_id (server name) declared=NULL passed call=ok
+R|D.sp_addpushsubscription_agent.push.@subscriber_db|m_dsub1|column=distribution.dbo.MSdistribution_agents.subscriber_db declared=NULL passed call=ok
+R|D.sp_addpushsubscription_agent.push.@subscriber_security_mode|1|column=distribution.dbo.MSdistribution_agents.subscriber_security_mode declared=1 call=ok
+R|D.sp_addpushsubscription_agent.push.@subscriber_login|''|column=distribution.dbo.MSdistribution_agents.subscriber_login declared=NULL call=ok
+R|D.sp_addpushsubscription_agent.push.@subscriber_password|set|column=distribution.dbo.MSdistribution_agents.subscriber_password (secret) declared=NULL call=ok
+R|D.sp_addpushsubscription_agent.push.@job_login|null|column=distribution.dbo.MSdistribution_agents.job_login declared=NULL call=ok
+R|D.sp_addpushsubscription_agent.push.@job_password|null|column=distribution.dbo.MSdistribution_agents.job_password (secret) declared=NULL call=ok
+R|D.sp_addpushsubscription_agent.push.@job_name|repllab-Sales-repllab-<id>|column=msdb.dbo.sysjobs.name of the agent job (distribution.dbo.MSdistribution_agents.job_id) declared=NULL call=ok
+R|D.sp_addpushsubscription_agent.push.@frequency_type|64|column=msdb.dbo.sysschedules.freq_type of the agent job declared=64 call=ok
+R|D.sp_addpushsubscription_agent.push.@frequency_interval|0|column=msdb.dbo.sysschedules.freq_interval of the agent job declared=1 call=ok
+R|D.sp_addpushsubscription_agent.push.@frequency_relative_interval|0|column=msdb.dbo.sysschedules.freq_relative_interval of the agent job declared=1 call=ok
+R|D.sp_addpushsubscription_agent.push.@frequency_recurrence_factor|0|column=msdb.dbo.sysschedules.freq_recurrence_factor of the agent job declared=0 call=ok
+R|D.sp_addpushsubscription_agent.push.@frequency_subday|0|column=msdb.dbo.sysschedules.freq_subday_type of the agent job declared=4 call=ok
+R|D.sp_addpushsubscription_agent.push.@frequency_subday_interval|0|column=msdb.dbo.sysschedules.freq_subday_interval of the agent job declared=5 call=ok
+R|D.sp_addpushsubscription_agent.push.@active_start_time_of_day|0|column=msdb.dbo.sysschedules.active_start_time of the agent job declared=0 call=ok
+R|D.sp_addpushsubscription_agent.push.@active_end_time_of_day|235959|column=msdb.dbo.sysschedules.active_end_time of the agent job declared=235959 call=ok
+R|D.sp_addpushsubscription_agent.push.@active_start_date|today|column=msdb.dbo.sysschedules.active_start_date of the agent job (today = the day of the run) declared=0 call=ok
+R|D.sp_addpushsubscription_agent.push.@active_end_date|99991231|column=msdb.dbo.sysschedules.active_end_date of the agent job declared=99991231 call=ok
+R|D.sp_addpushsubscription_agent.push.@dts_package_name|null|column=distribution.dbo.MSdistribution_agents.dts_package_name declared=NULL call=ok
+R|D.sp_addpushsubscription_agent.push.@dts_package_password|empty|column=distribution.dbo.MSdistribution_agents.dts_package_password (secret) declared=NULL call=ok
+R|D.sp_addpushsubscription_agent.push.@dts_package_location|0|column=distribution.dbo.MSdistribution_agents.dts_package_location (0 distributor, 1 subscriber) declared=N'distributor' call=ok
+R|D.sp_addpushsubscription_agent.push.@enabled_for_syncmgr|no-column|column=no-column: Windows Synchronization Manager, no column for a push agent declared='false' call=ok
+R|D.sp_addpushsubscription_agent.push.@distribution_job_name|no-column|column=no-column: informational only (Learn), not stored declared=NULL call=ok
+R|D.sp_addpushsubscription_agent.push.@publisher|repllab|column=distribution.dbo.MSdistribution_agents.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addpushsubscription_agent.push.@subscriber_provider|null|column=distribution.dbo.MSdistribution_agents.subscriber_provider declared=NULL call=ok
+R|D.sp_addpushsubscription_agent.push.@subscriber_datasrc|null|column=distribution.dbo.MSdistribution_agents.subscriber_datasrc declared=NULL call=ok
+R|D.sp_addpushsubscription_agent.push.@subscriber_location|null|column=distribution.dbo.MSdistribution_agents.subscriber_location declared=NULL call=ok
+R|D.sp_addpushsubscription_agent.push.@subscriber_provider_string|null|column=distribution.dbo.MSdistribution_agents.subscriber_provider_string declared=NULL call=ok
+R|D.sp_addpushsubscription_agent.push.@subscriber_catalog|null|column=distribution.dbo.MSdistribution_agents.subscriber_catalog declared=NULL call=ok
+R|D.sp_addpushsubscription_agent.push.@job_security_mode|no-column|column=no-column: Managed Instance only (refused with 41989 elsewhere, 07-changes) declared=NULL call=ok
+R|D.sp_addsubscription.pull.@article|1/1|column=Sales.dbo.syssubscriptions rows of the subscription / articles of the publication declared='all' call=ok
+R|D.sp_addsubscription.pull.@subscriber|REPLLAB|column=syssubscriptions.srvname declared=NULL passed call=ok
+R|D.sp_addsubscription.pull.@destination_db|m_dsub2|column=syssubscriptions.dest_db declared=NULL passed call=ok
+R|D.sp_addsubscription.pull.@sync_type|sync_type=1 nosync_type=0|column=syssubscriptions.sync_type and nosync_type (1 automatic) declared='automatic' call=ok
+R|D.sp_addsubscription.pull.@status|1|column=syssubscriptions.status (0 inactive, 1 subscribed, 2 active) declared=NULL call=ok
+R|D.sp_addsubscription.pull.@subscription_type|1|column=syssubscriptions.subscription_type (0 push, 1 pull) declared='push' passed call=ok
+R|D.sp_addsubscription.pull.@update_mode|0|column=syssubscriptions.update_mode (0 read only) declared='read only' call=ok
+R|D.sp_addsubscription.pull.@loopback_detection|1|column=syssubscriptions.loopback_detection declared=NULL call=ok
+R|D.sp_addsubscription.pull.@frequency_type|no-job|column=msdb.dbo.sysschedules.freq_type of the agent job declared=NULL call=ok
+R|D.sp_addsubscription.pull.@frequency_interval|no-job|column=msdb.dbo.sysschedules.freq_interval of the agent job declared=NULL call=ok
+R|D.sp_addsubscription.pull.@frequency_relative_interval|no-job|column=msdb.dbo.sysschedules.freq_relative_interval of the agent job declared=NULL call=ok
+R|D.sp_addsubscription.pull.@frequency_recurrence_factor|no-job|column=msdb.dbo.sysschedules.freq_recurrence_factor of the agent job declared=NULL call=ok
+R|D.sp_addsubscription.pull.@frequency_subday|no-job|column=msdb.dbo.sysschedules.freq_subday_type of the agent job declared=NULL call=ok
+R|D.sp_addsubscription.pull.@frequency_subday_interval|no-job|column=msdb.dbo.sysschedules.freq_subday_interval of the agent job declared=NULL call=ok
+R|D.sp_addsubscription.pull.@active_start_time_of_day|no-job|column=msdb.dbo.sysschedules.active_start_time of the agent job declared=NULL call=ok
+R|D.sp_addsubscription.pull.@active_end_time_of_day|no-job|column=msdb.dbo.sysschedules.active_end_time of the agent job declared=NULL call=ok
+R|D.sp_addsubscription.pull.@active_start_date|no-job|column=msdb.dbo.sysschedules.active_start_date of the agent job (today = the day of the run) declared=NULL call=ok
+R|D.sp_addsubscription.pull.@active_end_date|no-job|column=msdb.dbo.sysschedules.active_end_date of the agent job declared=NULL call=ok
+R|D.sp_addsubscription.pull.@optional_command_line|no-job|column=msdb.dbo.sysjobsteps.command of the agent job the call created declared=NULL call=ok
+R|D.sp_addsubscription.pull.@reserved|no-column|column=no-column: internal use declared=NULL call=ok
+R|D.sp_addsubscription.pull.@enabled_for_syncmgr|no-column|column=no-column: Windows Synchronization Manager of a pull subscriber, nothing stored by sp_addsubscription declared=NULL call=ok
+R|D.sp_addsubscription.pull.@offloadagent|0|column=distribution.dbo.MSdistribution_agents.offload_enabled declared=0 call=ok
+R|D.sp_addsubscription.pull.@offloadserver|null|column=distribution.dbo.MSdistribution_agents.offload_server declared=NULL call=ok
+R|D.sp_addsubscription.pull.@dts_package_name|null|column=distribution.dbo.MSdistribution_agents.dts_package_name declared=NULL call=ok
+R|D.sp_addsubscription.pull.@dts_package_password|null|column=distribution.dbo.MSdistribution_agents.dts_package_password (secret) declared=NULL call=ok
+R|D.sp_addsubscription.pull.@dts_package_location|0|column=distribution.dbo.MSdistribution_agents.dts_package_location (0 distributor, 1 subscriber) declared=NULL call=ok
+R|D.sp_addsubscription.pull.@distribution_job_name|no-column|column=no-column: informational only (Learn), not stored declared=NULL call=ok
+R|D.sp_addsubscription.pull.@publisher|repllab|column=distribution.dbo.MSsubscriptions.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addsubscription.pull.@backupdevicetype|no-column|column=no-column: read only when sync_type is initialize with backup declared='logical' call=ok
+R|D.sp_addsubscription.pull.@backupdevicename|no-column|column=no-column: read only when sync_type is initialize with backup declared=null call=ok
+R|D.sp_addsubscription.pull.@mediapassword|no-column|column=no-column: read only when sync_type is initialize with backup declared=null call=ok
+R|D.sp_addsubscription.pull.@password|no-column|column=no-column: read only when sync_type is initialize with backup declared=null call=ok
+R|D.sp_addsubscription.pull.@fileidhint|no-column|column=no-column: read only when sync_type is initialize with backup declared=null call=ok
+R|D.sp_addsubscription.pull.@unload|no-column|column=no-column: read only when sync_type is initialize with backup declared=1 call=ok
+R|D.sp_addsubscription.pull.@subscriptionlsn|publisher_seqno|column=distribution.dbo.MSsubscriptions.subscription_seqno (set from the parameter only with initialize from lsn) declared=null call=ok
+R|D.sp_addsubscription.pull.@subscriptionstreams|null|column=distribution.dbo.MSdistribution_agents.subscriptionstreams declared=null call=ok
+R|D.sp_addsubscription.pull.@subscriber_type|null|column=distribution.dbo.MSdistribution_agents.subscriber_type (0 SQL Server) declared=0 call=ok
+R|D.sp_addsubscription.pull.@memory_optimized|0|column=distribution.dbo.MSdistribution_agents.memory_optimized declared=0 call=ok
+R|D.sp_addsubscription.pull.@subscriber_security_mode|1|column=distribution.dbo.MSdistribution_agents.subscriber_security_mode declared=NULL call=ok
+R|D.sp_addsubscription.pull.@subscriber_login|''|column=distribution.dbo.MSdistribution_agents.subscriber_login declared=NULL call=ok
+R|D.sp_addsubscription.pull.@subscriber_password|set|column=distribution.dbo.MSdistribution_agents.subscriber_password (secret) declared=NULL call=ok
+R|D.sp_addpullsubscription.pull.@publisher_db|Sales|column=<subscription db>.dbo.MSreplication_subscriptions.publisher_db declared=NULL passed call=ok
+R|D.sp_addpullsubscription.pull.@independent_agent|1|column=<subscription db>.dbo.MSreplication_subscriptions.independent_agent declared='true' call=ok
+R|D.sp_addpullsubscription.pull.@subscription_type|2|column=<subscription db>.dbo.MSreplication_subscriptions.subscription_type (0 push, 1 pull, 2 anonymous) declared='anonymous' call=ok
+R|D.sp_addpullsubscription.pull.@description|null|column=<subscription db>.dbo.MSreplication_subscriptions.description declared=NULL call=ok
+R|D.sp_addpullsubscription.pull.@update_mode|0|column=<subscription db>.dbo.MSreplication_subscriptions.update_mode (0 read only) declared='read only' call=ok
+R|D.sp_addpullsubscription.pull.@immediate_sync|1|column=<subscription db>.dbo.MSreplication_subscriptions.immediate_sync declared=1 call=ok
+R|D.sp_addpullsubscription_agent.pull.@publisher_db|Sales|column=<subscription db>.dbo.MSsubscription_properties.publisher_db declared=NULL passed call=ok
+R|D.sp_addpullsubscription_agent.pull.@subscriber|[repllab]|column=msdb.dbo.sysjobsteps.command of the pull agent job, switch -Subscriber declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@subscriber_db|[m_dsub2]|column=msdb.dbo.sysjobsteps.command of the pull agent job, switch -SubscriberDB declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@subscriber_security_mode|1|column=msdb.dbo.sysjobsteps.command of the pull agent job, switch -SubscriberSecurityMode declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@subscriber_login|absent|column=msdb.dbo.sysjobsteps.command of the pull agent job, switch -SubscriberLogin declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@subscriber_password|absent|column=msdb.dbo.sysjobsteps.command of the pull agent job, switch -SubscriberPassword (secret) declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@distributor|repllab|column=<subscription db>.dbo.MSsubscription_properties.distributor declared=@publisher call=ok
+R|D.sp_addpullsubscription_agent.pull.@distribution_db|no-column|column=no-column: not in MSsubscription_properties; the step command, printed under @optional_command_line, has no switch for it declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@distributor_security_mode|1|column=<subscription db>.dbo.MSsubscription_properties.distributor_security_mode declared=1 call=ok
+R|D.sp_addpullsubscription_agent.pull.@distributor_login|''|column=<subscription db>.dbo.MSsubscription_properties.distributor_login declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@distributor_password|set|column=<subscription db>.dbo.MSsubscription_properties.distributor_password (secret) declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@optional_command_line|-Publisher [repllab] -PublisherDB [Sales] -Publication [m_ps] -Distributor [repllab] -SubscriptionType 2 -Subscriber [repllab] -SubscriberSecurityMode 1 -SubscriberDB [m_dsub2]|column=msdb.dbo.sysjobsteps.command of the pull agent job (the parameter is appended to it) declared='' call=ok
+R|D.sp_addpullsubscription_agent.pull.@frequency_type|no-schedule|column=msdb.dbo.sysschedules.freq_type of the agent job declared=2 call=ok
+R|D.sp_addpullsubscription_agent.pull.@frequency_interval|no-schedule|column=msdb.dbo.sysschedules.freq_interval of the agent job declared=1 call=ok
+R|D.sp_addpullsubscription_agent.pull.@frequency_relative_interval|no-schedule|column=msdb.dbo.sysschedules.freq_relative_interval of the agent job declared=1 call=ok
+R|D.sp_addpullsubscription_agent.pull.@frequency_recurrence_factor|no-schedule|column=msdb.dbo.sysschedules.freq_recurrence_factor of the agent job declared=1 call=ok
+R|D.sp_addpullsubscription_agent.pull.@frequency_subday|no-schedule|column=msdb.dbo.sysschedules.freq_subday_type of the agent job declared=1 call=ok
+R|D.sp_addpullsubscription_agent.pull.@frequency_subday_interval|no-schedule|column=msdb.dbo.sysschedules.freq_subday_interval of the agent job declared=1 call=ok
+R|D.sp_addpullsubscription_agent.pull.@active_start_time_of_day|no-schedule|column=msdb.dbo.sysschedules.active_start_time of the agent job declared=0 call=ok
+R|D.sp_addpullsubscription_agent.pull.@active_end_time_of_day|no-schedule|column=msdb.dbo.sysschedules.active_end_time of the agent job declared=0 call=ok
+R|D.sp_addpullsubscription_agent.pull.@active_start_date|no-schedule|column=msdb.dbo.sysschedules.active_start_date of the agent job (today = the day of the run) declared=0 call=ok
+R|D.sp_addpullsubscription_agent.pull.@active_end_date|no-schedule|column=msdb.dbo.sysschedules.active_end_date of the agent job declared=0 call=ok
+R|D.sp_addpullsubscription_agent.pull.@distribution_jobid|agent_job_id|column=<subscription db>.dbo.MSreplication_subscriptions.agent_id (output) declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@encrypted_distributor_password|no-column|column=no-column: a flag of the call (how @distributor_password is passed) declared=0 call=ok
+R|D.sp_addpullsubscription_agent.pull.@enabled_for_syncmgr|0|column=<subscription db>.dbo.MSsubscription_properties.enabled_for_syncmgr declared='false' call=ok
+R|D.sp_addpullsubscription_agent.pull.@ftp_address|null|column=<subscription db>.dbo.MSsubscription_properties.ftp_address declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@ftp_port|null|column=<subscription db>.dbo.MSsubscription_properties.ftp_port declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@ftp_login|null|column=<subscription db>.dbo.MSsubscription_properties.ftp_login declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@ftp_password|null|column=<subscription db>.dbo.MSsubscription_properties.ftp_password (secret) declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@alt_snapshot_folder|null|column=<subscription db>.dbo.MSsubscription_properties.alt_snapshot_folder declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@working_directory|null|column=<subscription db>.dbo.MSsubscription_properties.working_directory declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@use_ftp|0|column=<subscription db>.dbo.MSsubscription_properties.use_ftp declared='false' call=ok
+R|D.sp_addpullsubscription_agent.pull.@publication_type|0|column=<subscription db>.dbo.MSsubscription_properties.publication_type (0 transactional) declared=0 call=ok
+R|D.sp_addpullsubscription_agent.pull.@dts_package_name|null|column=<subscription db>.dbo.MSsubscription_properties.dts_package_name declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@dts_package_password|null|column=<subscription db>.dbo.MSsubscription_properties.dts_package_password (secret) declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@dts_package_location|1|column=<subscription db>.dbo.MSsubscription_properties.dts_package_location (0 distributor, 1 subscriber) declared=N'subscriber' call=ok
+R|D.sp_addpullsubscription_agent.pull.@reserved|no-column|column=no-column: internal use declared=N'' call=ok
+R|D.sp_addpullsubscription_agent.pull.@offloadagent|0|column=<subscription db>.dbo.MSsubscription_properties.offload_agent declared='false' call=ok
+R|D.sp_addpullsubscription_agent.pull.@offloadserver|null|column=<subscription db>.dbo.MSsubscription_properties.offload_server declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@job_name|repllab-Sales-m_ps-repllab-m_dsub2-<guid>|column=msdb.dbo.sysjobs.name of the pull agent job declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@job_login|null|column=<subscription db>.dbo.MSsubscription_properties.job_login declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@job_password|null|column=<subscription db>.dbo.MSsubscription_properties.job_password (secret) declared=NULL call=ok
+R|D.sp_addpullsubscription_agent.pull.@job_security_mode|no-column|column=no-column: Managed Instance only (refused with 41989 elsewhere, 07-changes) declared=NULL call=ok
+R|D.sp_replicationdboption.publish.@ignore_distributor|no-column|column=no-column: a flag of the call (do not connect to the distributor) declared=0 call=ok
+R|D.sp_replicationdboption.publish.@from_scripting|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addlogreader_agent.publication-db.@job_login|null|column=distribution.dbo.MSlogreader_agents.job_login declared=NULL call=ok
+R|D.sp_addlogreader_agent.publication-db.@job_password|null|column=distribution.dbo.MSlogreader_agents.job_password (secret) declared=NULL call=ok
+R|D.sp_addlogreader_agent.publication-db.@job_name|REPLLAB-m_pubdb-<id>|column=msdb.dbo.sysjobs.name of the agent job (distribution.dbo.MSlogreader_agents.job_id) declared=NULL call=ok
+R|D.sp_addlogreader_agent.publication-db.@publisher_security_mode|1|column=distribution.dbo.MSlogreader_agents.publisher_security_mode declared=NULL call=ok
+R|D.sp_addlogreader_agent.publication-db.@publisher_login|''|column=distribution.dbo.MSlogreader_agents.publisher_login declared=NULL call=ok
+R|D.sp_addlogreader_agent.publication-db.@publisher_password|set|column=distribution.dbo.MSlogreader_agents.publisher_password (secret) declared=NULL call=ok
+R|D.sp_addlogreader_agent.publication-db.@publisher|repllab|column=distribution.dbo.MSlogreader_agents.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addlogreader_agent.publication-db.@job_security_mode|no-column|column=no-column: Managed Instance only (refused with 41989 elsewhere, 07-changes) declared=NULL call=ok
+R|D.sp_add_agent_profile.agent-type-3.@profile_id|assigned|column=msdb.dbo.MSagent_profiles.profile_id (output) declared=NULL call=ok
+R|D.sp_add_agent_profile.agent-type-3.@profile_type|1|column=MSagent_profiles.type (0 system, 1 custom) declared=1 call=ok
+R|D.sp_add_agent_profile.agent-type-3.@description|null|column=MSagent_profiles.description declared=NULL call=ok
+R|D.sp_add_agent_profile.agent-type-3.@default|0|column=MSagent_profiles.def_profile declared=0 call=ok
+R|TOTAL|554

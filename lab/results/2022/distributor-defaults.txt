@@ -1,0 +1,41 @@
+# Microsoft SQL Server 2022 (RTM-CU27-GDR) (KB5126934) - 16.0.4305.5 (X64)
+R|X.sp_adddistributor.msdb|5001|msg=User must be in the master database.
+R|X.sp_adddistributor.tempdb|5001|msg=User must be in the master database.
+R|X.sp_adddistributor.master|ok|msg=none
+R|D.sp_adddistributor.fresh.@heartbeat_interval|10|column=msdb.dbo.MSdistributor value of property heartbeat_interval (minutes; also the schedule of Replication agents checkup) declared=10 call=ok from master
+R|D.sp_adddistributor.fresh.@password|set|column=master.sys.sql_logins.password_hash of distributor_admin (secret; the linked login of repl_distributor uses it) declared=NULL call=ok from master
+R|D.sp_adddistributor.fresh.@from_scripting|no-column|column=no-column: a flag of the call (skips the Replication agents checkup job) declared=0 call=ok from master
+R|D.sp_adddistributor.fresh.@security_mode|uses_self_credential=0 remote_name=distributor_admin|column=master.sys.linked_logins of repl_distributor (uses_self_credential, remote_name) declared=NULL call=ok from master
+R|D.sp_adddistributor.fresh.@multi_subnet_failover|null|column=master.sys.servers.provider_string of repl_distributor declared=0 call=ok from master
+R|X.sp_adddistributiondb.msdb|ok|msg=none
+R|X.sp_adddistributiondb.tempdb|ok|msg=none
+R|X.sp_adddistributiondb.master|ok|msg=none
+R|D.sp_adddistributiondb.fresh.@data_folder|/var/opt/mssql//DATA|column=master.sys.master_files of the distribution database, data file folder declared=NULL call=ok from master
+R|D.sp_adddistributiondb.fresh.@data_file|distribution.MDF|column=master.sys.master_files of the distribution database, data file name declared=NULL call=ok from master
+R|D.sp_adddistributiondb.fresh.@data_file_size|13 MB|column=master.sys.master_files of the distribution database, data file size at creation declared=5 call=ok from master
+R|D.sp_adddistributiondb.fresh.@log_folder|/var/opt/mssql//DATA|column=master.sys.master_files of the distribution database, log file folder declared=NULL call=ok from master
+R|D.sp_adddistributiondb.fresh.@log_file|distribution.LDF|column=master.sys.master_files of the distribution database, log file name declared=NULL call=ok from master
+R|D.sp_adddistributiondb.fresh.@log_file_size|9 MB|column=master.sys.master_files of the distribution database, log file size at creation declared=0 call=ok from master
+R|D.sp_adddistributiondb.fresh.@min_distretention|0|column=msdb.dbo.MSdistributiondbs.min_distretention (hours) declared=0 call=ok from master
+R|D.sp_adddistributiondb.fresh.@max_distretention|72|column=MSdistributiondbs.max_distretention (hours) declared=72 call=ok from master
+R|D.sp_adddistributiondb.fresh.@history_retention|48|column=MSdistributiondbs.history_retention (hours) declared=48 call=ok from master
+R|D.sp_adddistributiondb.fresh.@security_mode|no-column|column=no-column: checked by the procedure (0 needs @login, 21694), stored nowhere declared=1 call=ok from master
+R|D.sp_adddistributiondb.fresh.@login|no-column|column=no-column: checked by the procedure, stored nowhere declared=NULL call=ok from master
+R|D.sp_adddistributiondb.fresh.@password|no-column|column=no-column: read by the procedure, stored nowhere declared=NULL call=ok from master
+R|D.sp_adddistributiondb.fresh.@createmode|no-column|column=no-column: how the database is created declared=1 call=ok from master
+R|D.sp_adddistributiondb.fresh.@from_scripting|no-column|column=no-column: a flag of the call declared=0 call=ok from master
+R|D.sp_adddistributiondb.fresh.@deletebatchsize_xact|5000|column=MSdistributiondbs.deletebatchsize_xact declared=5000 call=ok from master
+R|D.sp_adddistributiondb.fresh.@deletebatchsize_cmd|2000|column=MSdistributiondbs.deletebatchsize_cmd declared=2000 call=ok from master
+R|X.sp_adddistpublisher.msdb|ok|msg=none
+R|X.sp_adddistpublisher.tempdb|ok|msg=none
+R|X.sp_adddistpublisher.master|ok|msg=none
+R|D.sp_adddistpublisher.fresh.@security_mode|1|column=msdb.dbo.MSdistpublishers.security_mode declared=1 call=ok from master
+R|D.sp_adddistpublisher.fresh.@login|''|column=msdb.dbo.MSdistpublishers.login declared=NULL call=ok from master
+R|D.sp_adddistpublisher.fresh.@password|set|column=msdb.dbo.MSdistpublishers.password (secret) declared=NULL call=ok from master
+R|D.sp_adddistpublisher.fresh.@working_directory|/var/opt/mssql/ReplData|column=msdb.dbo.MSdistpublishers.working_directory declared=NULL call=ok from master
+R|D.sp_adddistpublisher.fresh.@trusted|0|column=msdb.dbo.MSdistpublishers.trusted declared='false' call=ok from master
+R|D.sp_adddistpublisher.fresh.@encrypted_password|no-column|column=no-column: a flag of the call (how @password is passed) declared=0 call=ok from master
+R|D.sp_adddistpublisher.fresh.@thirdparty_flag|0|column=msdb.dbo.MSdistpublishers.thirdparty_flag declared=0 call=ok from master
+R|D.sp_adddistpublisher.fresh.@publisher_type|MSSQLSERVER|column=msdb.dbo.MSdistpublishers.publisher_type declared=N'MSSQLSERVER' call=ok from master
+R|D.sp_adddistpublisher.fresh.@storage_connection_string|null|column=msdb.dbo.MSdistpublishers.storage_connection_string (secret) declared=NULL call=ok from master
+R|TOTAL|39

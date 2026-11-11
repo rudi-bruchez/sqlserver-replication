@@ -1,0 +1,72 @@
+# Microsoft SQL Server 2022 (RTM-CU27-GDR) (KB5126934) - 16.0.4305.5 (X64)
+R|X.sp_addpublication.master|14013|prereq=none undo=none msg=This database is not enabled for publication.
+R|X.sp_addarticle.master|14013|prereq=none undo=none msg=This database is not enabled for publication.
+R|X.sp_articlefilter.master|208|prereq=ok undo=ok msg=Invalid object name 'syspublications'.
+R|X.sp_articleview.master|208|prereq=ok undo=ok msg=Invalid object name 'dbo.syspublications'.
+R|X.sp_articlecolumn.master|14013|prereq=ok undo=ok msg=This database is not enabled for publication.
+R|X.sp_addsubscription.push.master|14013|prereq=none undo=none msg=This database is not enabled for publication.
+R|X.sp_addsubscription.pull.master|14013|prereq=none undo=none msg=This database is not enabled for publication.
+R|X.sp_addpushsubscription_agent.master|14013|prereq=ok undo=ok msg=This database is not enabled for publication.
+R|X.sp_addpullsubscription.master|21481|prereq=none undo=none msg=Cannot create replication subscription(s) in the master database. Choose another database for creating subscriptions.
+R|X.sp_addpullsubscription_agent.master|20017|prereq=21481 undo=none msg=The subscription on the Subscriber does not exist.
+R|X.sp_addlogreader_agent.master|14013|prereq=none undo=none msg=This database is not enabled for publication.
+R|X.sp_addpublication_snapshot.master|18757|prereq=ok undo=ok msg=Unable to execute procedure. The database is not published. Execute the procedure in a database that is published for replication.
+R|X.sp_add_agent_profile.master|ok|prereq=none undo=ok msg=none
+R|X.sp_replicationdboption.master|ok|prereq=none undo=ok msg=none
+R|X.sp_addpublication.msdb|14013|prereq=none undo=none msg=This database is not enabled for publication.
+R|X.sp_addarticle.msdb|14013|prereq=none undo=none msg=This database is not enabled for publication.
+R|X.sp_articlefilter.msdb|208|prereq=ok undo=ok msg=Invalid object name 'syspublications'.
+R|X.sp_articleview.msdb|208|prereq=ok undo=ok msg=Invalid object name 'dbo.syspublications'.
+R|X.sp_articlecolumn.msdb|14013|prereq=ok undo=ok msg=This database is not enabled for publication.
+R|X.sp_addsubscription.push.msdb|14013|prereq=none undo=none msg=This database is not enabled for publication.
+R|X.sp_addsubscription.pull.msdb|14013|prereq=none undo=none msg=This database is not enabled for publication.
+R|X.sp_addpushsubscription_agent.msdb|14013|prereq=ok undo=ok msg=This database is not enabled for publication.
+R|X.sp_addpullsubscription.msdb|ok|prereq=none undo=ok msg=none
+R|X.sp_addpullsubscription_agent.msdb|ok|prereq=ok undo=ok msg=none
+R|X.sp_addlogreader_agent.msdb|14013|prereq=none undo=none msg=This database is not enabled for publication.
+R|X.sp_addpublication_snapshot.msdb|18757|prereq=ok undo=ok msg=Unable to execute procedure. The database is not published. Execute the procedure in a database that is published for replication.
+R|X.sp_add_agent_profile.msdb|ok|prereq=none undo=ok msg=none
+R|X.sp_replicationdboption.msdb|ok|prereq=none undo=ok msg=none
+R|X.sp_addpublication.distribution|14013|prereq=none undo=none msg=This database is not enabled for publication.
+R|X.sp_addarticle.distribution|14013|prereq=none undo=none msg=This database is not enabled for publication.
+R|X.sp_articlefilter.distribution|20026|prereq=ok undo=ok msg=The publication 'm_cx' does not exist.
+R|X.sp_articleview.distribution|20026|prereq=ok undo=ok msg=The publication 'm_cx' does not exist.
+R|X.sp_articlecolumn.distribution|4406|prereq=ok undo=ok msg=Update or insert of view or function 'dbo.sysarticlecolumns' failed because it contains a derived or constant field.
+R|X.sp_addsubscription.push.distribution|14013|prereq=none undo=none msg=This database is not enabled for publication.
+R|X.sp_addsubscription.pull.distribution|14013|prereq=none undo=none msg=This database is not enabled for publication.
+R|X.sp_addpushsubscription_agent.distribution|14013|prereq=ok undo=ok msg=This database is not enabled for publication.
+R|X.sp_addpullsubscription.distribution|ok|prereq=none undo=ok msg=none
+R|X.sp_addpullsubscription_agent.distribution|ok|prereq=ok undo=ok msg=none
+R|X.sp_addlogreader_agent.distribution|14013|prereq=none undo=none msg=This database is not enabled for publication.
+R|X.sp_addpublication_snapshot.distribution|18757|prereq=ok undo=ok msg=Unable to execute procedure. The database is not published. Execute the procedure in a database that is published for replication.
+R|X.sp_add_agent_profile.distribution|ok|prereq=none undo=ok msg=none
+R|X.sp_replicationdboption.distribution|ok|prereq=none undo=ok msg=none
+R|X.sp_addpublication.Sales|ok|prereq=none undo=ok msg=none
+R|X.sp_addarticle.Sales|ok|prereq=none undo=ok msg=none
+R|X.sp_articlefilter.Sales|ok|prereq=ok undo=ok msg=none
+R|X.sp_articleview.Sales|ok|prereq=ok undo=ok msg=none
+R|X.sp_articlecolumn.Sales|ok|prereq=ok undo=ok msg=none
+R|X.sp_addsubscription.push.Sales|ok|prereq=none undo=ok msg=none
+R|X.sp_addsubscription.pull.Sales|ok|prereq=none undo=ok msg=none
+R|X.sp_addpushsubscription_agent.Sales|ok|prereq=ok undo=ok msg=none
+R|X.sp_addpullsubscription.Sales|ok|prereq=none undo=ok msg=none
+R|X.sp_addpullsubscription_agent.Sales|ok|prereq=ok undo=ok msg=none
+R|X.sp_addlogreader_agent.Sales|21831|prereq=none undo=none msg=The logreader agent already exists. Use 'sp_changelogreader_agent' to change any settings/properties.
+R|X.sp_addpublication_snapshot.Sales|ok|prereq=ok undo=ok msg=none
+R|X.sp_add_agent_profile.Sales|ok|prereq=none undo=ok msg=none
+R|X.sp_replicationdboption.Sales|ok|prereq=none undo=ok msg=none
+R|X.sp_addpublication.m_ctx|14013|prereq=none undo=none msg=This database is not enabled for publication.
+R|X.sp_addarticle.m_ctx|14013|prereq=none undo=none msg=This database is not enabled for publication.
+R|X.sp_articlefilter.m_ctx|208|prereq=ok undo=ok msg=Invalid object name 'syspublications'.
+R|X.sp_articleview.m_ctx|208|prereq=ok undo=ok msg=Invalid object name 'dbo.syspublications'.
+R|X.sp_articlecolumn.m_ctx|14013|prereq=ok undo=ok msg=This database is not enabled for publication.
+R|X.sp_addsubscription.push.m_ctx|14013|prereq=none undo=none msg=This database is not enabled for publication.
+R|X.sp_addsubscription.pull.m_ctx|14013|prereq=none undo=none msg=This database is not enabled for publication.
+R|X.sp_addpushsubscription_agent.m_ctx|14013|prereq=ok undo=ok msg=This database is not enabled for publication.
+R|X.sp_addpullsubscription.m_ctx|ok|prereq=none undo=ok msg=none
+R|X.sp_addpullsubscription_agent.m_ctx|ok|prereq=ok undo=ok msg=none
+R|X.sp_addlogreader_agent.m_ctx|ok|prereq=ok undo=ok msg=none
+R|X.sp_addpublication_snapshot.m_ctx|18757|prereq=ok undo=ok msg=Unable to execute procedure. The database is not published. Execute the procedure in a database that is published for replication.
+R|X.sp_add_agent_profile.m_ctx|ok|prereq=none undo=ok msg=none
+R|X.sp_replicationdboption.m_ctx|ok|prereq=none undo=ok msg=none
+R|TOTAL|70
