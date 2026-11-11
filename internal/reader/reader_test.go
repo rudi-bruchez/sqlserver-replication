@@ -299,6 +299,7 @@ func TestMaskPasswordsToEndOfLine(t *testing.T) {
 		`-DistributorSecurityMode 0 -DistributorLogin rv dist -DistributorPassword Thr0w away -Distributor x`: `-DistributorSecurityMode 0 -DistributorLogin rv dist -DistributorPassword ********`,
 		`-DistributorPassword [Rv THROW3 tail] -Distributor [x]`:                                              `-DistributorPassword ********`,
 		`-DistributorPassword p"w x" -Distributor [x]`:                                                        `-DistributorPassword ********`,
+		`-DistributorLogin u-DistributorPassword sec ret`:                                                     `-DistributorLogin u-DistributorPassword ********`,
 		`-a /SubscriberPASSWORD s3 cret -b`:                                                                   `-a /SubscriberPASSWORD ********`,
 	}
 	for in, want := range cases {
@@ -308,24 +309,28 @@ func TestMaskPasswordsToEndOfLine(t *testing.T) {
 	}
 }
 
-func TestRawSwitch(t *testing.T) {
+func TestLoginSwitch(t *testing.T) {
 	cases := []struct {
-		cmd, name, want string
-		present         bool
+		cmd, want string
+		ok        bool
 	}{
-		{`-Publisher [P] -DistributorSecurityMode 0 -DistributorLogin rv dist -DistributorPassword Thr0w away -Distributor x`, "DistributorLogin", "rv dist", true},
-		{`-DistributorSecurityMode 0 -DistributorLogin rv"q]x -DistributorPassword Thr0w away -Distributor [x]`, "DistributorLogin", `rv"q]x`, true},
-		{`-DistributorSecurityMode 0 -DistributorLogin rv_u6adbz -DistributorPassword p`, "DistributorLogin", "rv_u6adbz", true},
-		{`-DistributorLogin -DistributorPassword p`, "DistributorLogin", "", true},
-		{`-DistributorLogin`, "DistributorLogin", "", true},
-		{`-Publisher [P]`, "DistributorLogin", "", false},
-		{`-DistributorLogin a -DistributorLogin b`, "DistributorLogin", "a", true}, // first occurrence
-		{`-DistributorSecurityMode 0 -DistributorLogin  rv  -Distributor [x]`, "DistributorLogin", "rv", true},
+		{`-Publisher [P] -DistributorSecurityMode 0 -DistributorLogin rv dist -DistributorPassword Thr0w away -Distributor x`, "rv dist", true},
+		{`-DistributorSecurityMode 0 -DistributorLogin rv"q]x -DistributorPassword Thr0w away -Distributor [x]`, `rv"q]x`, true},
+		{`-DistributorSecurityMode 0 -DistributorLogin rv_u6adbz -DistributorPassword p`, "rv_u6adbz", true},
+		{`-DistributorLogin u /DistributorPassword sec ret`, "u", true},
+		{`-DistributorLogin a -DistributorLogin b -DistributorPassword p`, "", false}, // second switch inside the span
+		{`-DistributorLogin -DistributorPassword p`, "", false},
+		{`-DistributorLogin u`, "", false},
+		{`-DistributorLogin u -Output /tmp/x -DistributorPassword p`, "", false},
+		{`-DistributorLogin a -Publisher b -DistributorPassword p`, "", false},
+		{`-DistributorLogin u-DistributorPassword sec ret`, "", false},
+		{`-DistributorLogin my password -DistributorPassword p`, "", false},
+		{`-Publisher [P]`, "", false},
 	}
 	for _, c := range cases {
-		got, present := rawSwitch(c.cmd, c.name)
-		if got != c.want || present != c.present {
-			t.Errorf("rawSwitch(%q, %q) = %q, %v; want %q, %v", c.cmd, c.name, got, present, c.want, c.present)
+		got, ok := loginSwitch(c.cmd)
+		if got != c.want || ok != c.ok {
+			t.Errorf("loginSwitch(%q) = %q, %v; want %q, %v", c.cmd, got, ok, c.want, c.ok)
 		}
 	}
 }
@@ -339,6 +344,14 @@ func TestDistributorConnection(t *testing.T) {
 		finding       string // path suffix of the unreadable finding, "" for none
 	}{
 		{"windows default", `-Publisher [P] -Distributor [D]`, "windows", "", "", ""},
+		{"windows with trailing switch", `-Publisher [P] -DistributorSecurityMode 1 -OutputVerboseLevel 2`, "windows", "", "", ""},
+		{"sql with trailing switch", `-DistributorSecurityMode 0 -DistributorLogin u -DistributorPassword p -OutputVerboseLevel 2`, "sql", "u", "SQLREPL_SQL_DIST_U", ""},
+		{"login with switch", `-DistributorSecurityMode 0 -DistributorLogin u -Output /tmp/x -DistributorPassword p`, "sql", "", "", ".distributor_connection.login"},
+		{"login with known switch", `-DistributorSecurityMode 0 -DistributorLogin a -Publisher b -DistributorPassword p`, "sql", "", "", ".distributor_connection.login"},
+		{"slash password switch", `-DistributorSecurityMode 0 -DistributorLogin u /DistributorPassword sec ret`, "sql", "u", "SQLREPL_SQL_DIST_U", ""},
+		{"glued password switch", `-DistributorSecurityMode 0 -DistributorLogin u-DistributorPassword sec ret`, "sql", "", "", ".distributor_connection.login"},
+		{"glued mode switch", `-Publisher [R]-DistributorSecurityMode 0 -DistributorLogin u -DistributorPassword p`, "", "", "", ".distributor_connection"},
+		{"glued login switch", `-DistributorSecurityMode 0 [R]-DistributorLogin u -DistributorPassword p`, "", "", "", ".distributor_connection"},
 		{"sql with spaces", `-DistributorSecurityMode 0 -DistributorLogin rv dist` + tail, "sql", "rv dist", "SQLREPL_SQL_DIST_RV_DIST", ""},
 		{"sql with quote", `-DistributorSecurityMode 0 -DistributorLogin rv"q]x` + tail, "sql", `rv"q]x`, "SQLREPL_SQL_DIST_RV_Q_X", ""},
 		{"sql login missing", `-DistributorSecurityMode 0` + tail, "sql", "", "", ".distributor_connection.login"},

@@ -135,6 +135,14 @@ func (e *exporter) distributorConnection(path string, a *model.Agent, command st
 	unreadable := func(p, format string, args ...any) {
 		e.find(model.FindingUnreadable, p, format, args...)
 	}
+	// A switch name glued to the text before it is not a switch the server
+	// wrote: reading around it could default a SQL connection to Windows.
+	for _, name := range []string{"Distributor", "DistributorSecurityMode", "DistributorLogin"} {
+		if gluedSwitch(command, name) {
+			unreadable(cpath, "-%s is not preceded by whitespace in the command line", name)
+			return
+		}
+	}
 	// -Distributor is bracketed by the server: an unbalanced bracket or quote
 	// means the line is not what the server wrote.
 	if _, present, balanced := bracketedSwitch(command, "Distributor"); present && !balanced {
@@ -142,7 +150,13 @@ func (e *exporter) distributorConnection(path string, a *model.Agent, command st
 		return
 	}
 	mode := 1
-	if v, present := rawSwitch(command, "DistributorSecurityMode"); present {
+	if rest, present := switchStart(command, "DistributorSecurityMode"); present {
+		// The value is the first token: the step can carry other switches
+		// after it (-OutputVerboseLevel 2).
+		v := rest
+		if i := strings.IndexAny(rest, " \t\r\n"); i >= 0 {
+			v = rest[:i]
+		}
 		n, err := strconv.Atoi(v)
 		if err != nil {
 			unreadable(cpath, "-DistributorSecurityMode %q is not a number", v)
@@ -152,10 +166,10 @@ func (e *exporter) distributorConnection(path string, a *model.Agent, command st
 	}
 	c := &model.Connection{Security: model.Ptr(decode.SecurityMode(mode))}
 	if mode == 0 {
-		login, _ := rawSwitch(command, "DistributorLogin")
-		if login == "" {
-			a.DistributorConnection = c
-			unreadable(model.Join(cpath, "login"), "SQL Server authentication without a -DistributorLogin value in the command line")
+		a.DistributorConnection = c
+		login, ok := loginSwitch(command)
+		if !ok {
+			unreadable(model.Join(cpath, "login"), "the -DistributorLogin value of the command line cannot be told from the other switches")
 			return
 		}
 		c.Login = model.Ptr(login)
@@ -164,15 +178,51 @@ func (e *exporter) distributorConnection(path string, a *model.Agent, command st
 			distributor = e.cfg.Distributor.Server
 		}
 		c.PasswordSecret = model.Ptr(e.secret(model.Join(cpath, "password_secret"), "SQL", distributor, login))
+		return
 	}
 	a.DistributorConnection = c
 }
 
-// snapshotSwitches are the switches sp_addpublication_snapshot writes. Only
-// the first four are bracketed by the server; the logins and the password are
-// written raw (measured), so a value may hold spaces, quotes and brackets and
-// runs up to the next of these switches.
-var snapshotSwitches = regexp.MustCompile(`(?i)\s-(?:Publisher|PublisherDB|Distributor|Publication|DistributorSecurityMode|DistributorLogin|DistributorPassword)(?:\s|$)`)
+var (
+	loginEnd    = regexp.MustCompile(`(?i)\s[-/]DistributorPassword(?:\s|$)`)
+	otherSwitch = regexp.MustCompile(`\s[-/][A-Za-z]`)
+)
+
+// loginSwitch reads -DistributorLogin, which the server writes raw, as
+// " -DistributorLogin <login> -DistributorPassword <password>" (measured): the
+// login is the text up to the following password switch. ok is false when the
+// switch is absent or empty, no password switch follows, the span holds
+// another switch-like token, or the value contains "password": the login
+// cannot then be told from the rest of the line. The first occurrence of a
+// repeated switch is kept; which one the agent honours is not measured.
+func loginSwitch(cmd string) (login string, ok bool) {
+	rest, present := switchStart(cmd, "DistributorLogin")
+	if !present {
+		return "", false
+	}
+	loc := loginEnd.FindStringIndex(" " + rest)
+	if loc == nil {
+		return "", false
+	}
+	span := rest[:loc[0]]
+	login = strings.TrimSpace(span)
+	if login == "" || otherSwitch.MatchString(" "+span) || strings.Contains(strings.ToLower(login), "password") {
+		return "", false
+	}
+	return login, true
+}
+
+// gluedSwitch reports whether -name occurs as a whole word that is not at the
+// start of the line or preceded by whitespace.
+func gluedSwitch(cmd, name string) bool {
+	re := regexp.MustCompile(`(?i)-` + regexp.QuoteMeta(name) + `(?:\s|$)`)
+	for _, loc := range re.FindAllStringIndex(cmd, -1) {
+		if loc[0] > 0 && !strings.ContainsRune(" \t\r\n", rune(cmd[loc[0]-1])) {
+			return true
+		}
+	}
+	return false
+}
 
 // switchStart returns what follows the first occurrence of -name as a whole
 // word preceded by whitespace or the start of the line, and whether it was
@@ -185,20 +235,6 @@ func switchStart(cmd, name string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimLeft(cmd[loc[1]:], " \t\r\n"), true
-}
-
-// rawSwitch returns the unprocessed value of a switch the server writes
-// unquoted: the text up to the next known switch or the end of the line,
-// trimmed. present is true for a switch with no value.
-func rawSwitch(cmd, name string) (string, bool) {
-	rest, ok := switchStart(cmd, name)
-	if !ok {
-		return "", false
-	}
-	if loc := snapshotSwitches.FindStringIndex(" " + rest); loc != nil {
-		rest = rest[:loc[0]]
-	}
-	return strings.TrimSpace(rest), true
 }
 
 // bracketedSwitch returns the value of a switch the server writes in brackets

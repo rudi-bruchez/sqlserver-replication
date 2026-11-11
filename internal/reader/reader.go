@@ -416,7 +416,7 @@ func (e *exporter) publicationByName(name string) *model.Publication {
 	return nil
 }
 
-var passwordArg = regexp.MustCompile(`(?is)((?:^|\s)[-/]\w*password\s+).*$`)
+var passwordArg = regexp.MustCompile(`(?is)([-/]\w*password\s+).*$`)
 
 // maskPasswords hides everything from the value of the first -*Password (or
 // /*Password) switch to the end of the line. The server writes the password
