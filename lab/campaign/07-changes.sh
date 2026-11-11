@@ -49,6 +49,7 @@ r() { rows+=("R|$1|$2|$3"); }
 want() { [ -z "${M_ONLY:-}" ] || [[ " $M_ONLY " == *" $1 "* ]]; }
 
 teardown() {
+    stop_m_agents
     sql -Q "SET NOCOUNT ON; USE Sales;
 DECLARE @p sysname;
 DECLARE c CURSOR LOCAL FOR SELECT name FROM dbo.syspublications WHERE name LIKE N'm\_%' ESCAPE N'\';

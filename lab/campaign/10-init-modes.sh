@@ -91,6 +91,7 @@ cleaned=0
 cleanup() {
     [ "$cleaned" = 1 ] && return
     cleaned=1
+    stop_m_agents
     local d
     sql -Q "SET NOCOUNT ON; USE Sales;
 BEGIN TRY IF EXISTS (SELECT 1 FROM dbo.syspublications WHERE name = N'$pub')

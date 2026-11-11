@@ -63,6 +63,7 @@ SELECT @e"
 }
 
 teardown() { # PUB : everything of one publication, and the subscriber database
+    stop_m_agents
     sql -Q "SET NOCOUNT ON; USE Sales;
 BEGIN TRY IF EXISTS (SELECT 1 FROM dbo.syspublications WHERE name = N'$1')
     EXEC sp_dropsubscription @publication = N'$1', @article = N'all', @subscriber = N'all'; END TRY BEGIN CATCH END CATCH;

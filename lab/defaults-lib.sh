@@ -241,33 +241,5 @@ SELECT N'#result|' + @e + N'|' + @m;" 2>&1) || def_fail "try_in $1 failed: $(pri
     [[ $TRY_RESULT =~ ^(ok|[0-9]+|rc-?[0-9]+)$ ]] || def_fail "try_in $1: unexpected result $TRY_RESULT"
 }
 
-# stop_m_agents: stops the running agent jobs of m_ objects (distribution agents of m_
-# subscriber databases, pull agents running in an m_ database, log readers of m_
-# databases, snapshot agents of m_ publications) and waits until they have stopped. An
-# agent dropped while it runs logs "The process was successfully stopped" after its agent
-# row is gone, leaving an orphan history row (seen once in fix round 1 of Task 10).
-stop_m_agents() {
-    local jobs="SELECT CONVERT(uniqueidentifier, job_id) AS job_id FROM distribution.dbo.MSdistribution_agents WHERE local_job = 1 AND subscriber_db LIKE N'm\_%' ESCAPE N'\'
- UNION SELECT CONVERT(uniqueidentifier, job_id) FROM distribution.dbo.MSlogreader_agents WHERE publisher_db LIKE N'm\_%' ESCAPE N'\'
- UNION SELECT CONVERT(uniqueidentifier, job_id) FROM distribution.dbo.MSsnapshot_agents WHERE local_job = 1 AND publication LIKE N'm\_%' ESCAPE N'\'
- UNION SELECT job_id FROM msdb.dbo.sysjobsteps WHERE subsystem = N'Distribution' AND database_name LIKE N'm\_%' ESCAPE N'\'"
-    local running="SELECT ja.job_id FROM msdb.dbo.sysjobactivity ja WHERE ja.session_id = (SELECT MAX(session_id) FROM msdb.dbo.syssessions) AND ja.start_execution_date IS NOT NULL AND ja.stop_execution_date IS NULL AND ja.job_id IN ($jobs)"
-    # A job asked to stop while it is starting can keep running (seen in 12-contexts):
-    # the stop is repeated until none runs, for up to 90 s.
-    local i left
-    for i in $(seq 1 18); do
-        left=$(sql -b -h -1 -Q "SET NOCOUNT ON; DECLARE @j uniqueidentifier, @n int = 0;
-DECLARE c CURSOR LOCAL FOR $running;
-OPEN c; FETCH NEXT FROM c INTO @j;
-WHILE @@FETCH_STATUS = 0 BEGIN SET @n += 1; BEGIN TRY EXEC msdb.dbo.sp_stop_job @job_id = @j; END TRY BEGIN CATCH END CATCH; FETCH NEXT FROM c INTO @j; END;
-CLOSE c; DEALLOCATE c;
-SELECT @n;" </dev/null 2>&1) || def_fail "cannot stop the m_ agent jobs: $left"
-        left=$(printf '%s\n' "$left" | sed 's/[[:space:]]//g' | grep -v '^$' | tail -n 1)
-        [ "$left" = 0 ] && return 0
-        sleep 5
-    done
-    def_fail "m_ agent jobs still running after 90 s: $(sql_value "SELECT ISNULL(STRING_AGG(CONVERT(nvarchar(4000), j.name), N', '), N'none') FROM msdb.dbo.sysjobs j WHERE j.job_id IN ($running)" 2>&1)"
-}
-
 # value ID: the result field of a row already recorded.
 value() { printf '%s\n' "${rows[@]}" | awk -F'|' -v id="$1" '$2 == id { print $3 }'; }

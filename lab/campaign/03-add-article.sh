@@ -31,6 +31,7 @@ cleaned=0
 cleanup() {
     [ "$cleaned" = 1 ] && return
     cleaned=1
+    stop_m_agents
     sql >&2 <<'SQL' || true
 SET NOCOUNT ON;
 USE Sales;

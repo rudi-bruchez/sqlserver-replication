@@ -67,6 +67,7 @@ need() { local v; for v in "$@"; do [ -n "${!v}" ] || { echo "08-pull: empty fie
 now() { sql_value "SELECT CONVERT(varchar(23), SYSDATETIME(), 121)"; }
 
 teardown() {
+    stop_m_agents
     sql -Q "SET NOCOUNT ON;
 DECLARE @d sysname, @s nvarchar(400);
 DECLARE c CURSOR LOCAL FOR SELECT name FROM sys.databases WHERE name IN (N'm_psub1', N'm_psub2');
