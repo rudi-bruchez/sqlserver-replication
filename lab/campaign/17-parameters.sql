@@ -22,6 +22,10 @@ WHERE o.schema_id = SCHEMA_ID(N'sys')
                  N'sp_add_agent_parameter', N'sp_update_agent_profile')
 ORDER BY o.name, p.parameter_id;
 
-SELECT CAST(N'R|' + id + N'|' + result + N'|' + detail AS nvarchar(4000)) FROM @r
-UNION ALL SELECT N'R|TOTAL|' + CONVERT(nvarchar(10), COUNT(*)) FROM @r;
+-- The row order of a SELECT is only the one ORDER BY gives; seq keeps the
+-- order of the INSERT, and the total comes last.
+SELECT line FROM (
+    SELECT seq, CAST(N'R|' + id + N'|' + result + N'|' + detail AS nvarchar(4000)) AS line FROM @r
+    UNION ALL SELECT 2147483647, N'R|TOTAL|' + CONVERT(nvarchar(10), COUNT(*)) FROM @r
+) AS rows ORDER BY seq;
 GO
