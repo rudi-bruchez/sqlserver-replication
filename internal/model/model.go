@@ -126,6 +126,15 @@ type Connection struct {
 // Agent describes a replication agent and its SQL Server Agent job.
 type Agent struct {
 	JobName *string `yaml:"job_name,omitempty"`
+	// JobEnabled is msdb.dbo.sysjobs.enabled of the agent's job.
+	JobEnabled *bool `yaml:"job_enabled,omitempty"`
+	// JobLogin is the Windows account the agent job runs under, empty when
+	// the row has none. JobPasswordSecret names its password secret.
+	JobLogin          *string `yaml:"job_login,omitempty"`
+	JobPasswordSecret *string `yaml:"job_password_secret,omitempty"`
+	// DistributorConnection is how a snapshot agent connects to the
+	// distributor, read from its command line.
+	DistributorConnection *Connection `yaml:"distributor_connection,omitempty"`
 	// Profile is the name of the agent profile, empty when the agent uses
 	// the default profile of its type.
 	Profile *string `yaml:"profile,omitempty"`

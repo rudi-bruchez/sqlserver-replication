@@ -4,7 +4,9 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/rudi-bruchez/sqlserver-replication/internal/decode"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
@@ -17,6 +19,10 @@ type agentRow struct {
 	profileID    int
 	jobID        string
 	stepUID      string
+	jobLogin     string
+	// snapshot is set for a snapshot agent, whose command line carries the
+	// distributor connection.
+	snapshot bool
 }
 
 // agent builds the model of an agent: profile, job, run-as account, command
@@ -31,13 +37,22 @@ func (e *exporter) agent(path, label string, r agentRow, secretParts ...string) 
 			"SQL", append(secretParts, r.login)...))
 	}
 
+	a.JobLogin = model.Ptr(r.jobLogin)
+	if r.jobLogin != "" {
+		a.JobPasswordSecret = model.Ptr(e.secret(model.Join(path, "job_password_secret"), "WIN", r.jobLogin))
+	}
+
 	if r.jobID == "" {
 		e.find(model.FindingIncomplete, path, "%s: no SQL Server Agent job recorded", label)
 		return a, nil
 	}
-	var jobName, runAs, command string
-	var stepFound int
-	err := e.src.Distributor.QueryRowContext(e.ctx, qJob, r.jobID, r.stepUID).Scan(&jobName, &runAs, &command, &stepFound)
+	var jobName, command string
+	var enabled, stepFound int
+	var proxyID sql.NullInt32
+	var proxyFound int
+	var credential sql.NullString
+	err := e.src.Distributor.QueryRowContext(e.ctx, qJob, r.jobID, r.stepUID).Scan(
+		&jobName, &enabled, &proxyID, &proxyFound, &credential, &command, &stepFound)
 	if err == sql.ErrNoRows {
 		e.find(model.FindingIncomplete, path, "%s: job %s recorded by replication no longer exists in msdb", label, r.jobID)
 		return a, nil
@@ -46,13 +61,23 @@ func (e *exporter) agent(path, label string, r agentRow, secretParts ...string) 
 		return a, err
 	}
 	a.JobName = model.Ptr(jobName)
+	a.JobEnabled = model.Ptr(enabled != 0)
 	if stepFound == 0 {
 		// Without a step, run_as and command were not read: they stay nil,
 		// since "" for run_as would claim the Agent service account.
 		e.find(model.FindingIncomplete, path, "%s: job %s has no replication step; command and run-as account not exported", label, jobName)
 	} else {
-		a.RunAs = model.Ptr(runAs)
+		if ra, ok := runAs(proxyID, proxyFound != 0, credential); ok {
+			a.RunAs = ra
+		} else {
+			// "" would claim the Agent service account: run_as stays nil.
+			e.find(model.FindingUnreadable, model.Join(path, "run_as"),
+				"the job step runs under proxy %d, whose credential this login cannot see", proxyID.Int32)
+		}
 		a.Command = model.Ptr(maskPasswords(strings.TrimSpace(command)))
+		if r.snapshot {
+			e.distributorConnection(path, &a, command)
+		}
 	}
 
 	rows, err := e.src.Distributor.QueryContext(e.ctx, qJobSchedules, r.jobID)
@@ -87,11 +112,118 @@ func (e *exporter) agent(path, label string, r agentRow, secretParts ...string) 
 	return a, rows.Err()
 }
 
+// runAs gives the account of a job step: "" when it has no proxy (the Agent
+// service account), nil and false when the proxy or its credential cannot be
+// seen, otherwise the credential identity.
+func runAs(proxyID sql.NullInt32, proxyFound bool, credential sql.NullString) (*string, bool) {
+	if !proxyID.Valid {
+		return model.Ptr(""), true
+	}
+	if !proxyFound || !credential.Valid {
+		return nil, false
+	}
+	return model.Ptr(credential.String), true
+}
+
+// distributorConnection reads the connection of a snapshot agent to the
+// distributor from the switches of its command line. An absent security mode
+// is 1, Windows authentication.
+func (e *exporter) distributorConnection(path string, a *model.Agent, command string) {
+	cpath := model.Join(path, "distributor_connection")
+	mode := 1
+	if v, ok := commandSwitch(command, "DistributorSecurityMode"); ok {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			e.find(model.FindingIncomplete, cpath, "-DistributorSecurityMode %q is not a number", v)
+			return
+		}
+		mode = n
+	}
+	c := &model.Connection{Security: model.Ptr(decode.SecurityMode(mode))}
+	if mode == 0 {
+		login, _ := commandSwitch(command, "DistributorLogin")
+		c.Login = model.Ptr(login)
+		distributor := ""
+		if e.cfg.Distributor != nil {
+			distributor = e.cfg.Distributor.Server
+		}
+		c.PasswordSecret = model.Ptr(e.secret(model.Join(cpath, "password_secret"), "SQL", distributor, login))
+	}
+	a.DistributorConnection = c
+}
+
+// commandSwitch finds -name in an agent command line, case-insensitively and
+// as a whole token, and returns the next token with one level of [...] or
+// "..." removed. A bracketed name ([...], with ]] for a literal ]) or a quoted
+// string is one token whatever spaces it holds.
+func commandSwitch(cmd, name string) (string, bool) {
+	toks := tokenize(cmd)
+	for i := 0; i+1 < len(toks); i++ {
+		if strings.EqualFold(toks[i], "-"+name) {
+			return unwrap(toks[i+1]), true
+		}
+	}
+	return "", false
+}
+
+func tokenize(s string) []string {
+	var toks []string
+	var cur strings.Builder
+	in := false
+	r := []rune(s)
+	for i := 0; i < len(r); i++ {
+		c := r[i]
+		switch {
+		case unicode.IsSpace(c):
+			if in {
+				toks = append(toks, cur.String())
+				cur.Reset()
+				in = false
+			}
+		case c == '[' || c == '"':
+			in = true
+			cur.WriteRune(c)
+			end := ']'
+			if c == '"' {
+				end = '"'
+			}
+			for i++; i < len(r); i++ {
+				cur.WriteRune(r[i])
+				if r[i] == end {
+					if end == ']' && i+1 < len(r) && r[i+1] == ']' {
+						i++
+						cur.WriteRune(r[i])
+						continue
+					}
+					break
+				}
+			}
+		default:
+			in = true
+			cur.WriteRune(c)
+		}
+	}
+	if in {
+		toks = append(toks, cur.String())
+	}
+	return toks
+}
+
+func unwrap(t string) string {
+	if len(t) >= 2 && t[0] == '[' && t[len(t)-1] == ']' {
+		return strings.ReplaceAll(t[1:len(t)-1], "]]", "]")
+	}
+	if len(t) >= 2 && t[0] == '"' && t[len(t)-1] == '"' {
+		return t[1 : len(t)-1]
+	}
+	return t
+}
+
 func (e *exporter) readLogReaderAgent() error {
 	var name string
 	var r agentRow
 	err := e.src.Distributor.QueryRowContext(e.ctx, e.distQuery(qLogReaderAgent), e.publisherID, e.src.Database).Scan(
-		&name, &r.securityMode, &r.login, &r.profileID, &r.jobID, &r.stepUID)
+		&name, &r.securityMode, &r.login, &r.profileID, &r.jobID, &r.stepUID, &r.jobLogin)
 	if err == sql.ErrNoRows {
 		if len(e.cfg.Publications) > 0 {
 			e.find(model.FindingIncomplete, "publisher.log_reader_agent", "no log reader agent found for %s.%s", e.cfg.Publisher.Server, e.src.Database)
@@ -122,10 +254,11 @@ func (e *exporter) readSnapshotAgents() error {
 	for rows.Next() {
 		var f found
 		if err := rows.Scan(&f.publication, &f.row.securityMode, &f.row.login, &f.row.profileID,
-			&f.row.jobID, &f.row.stepUID); err != nil {
+			&f.row.jobID, &f.row.stepUID, &f.row.jobLogin); err != nil {
 			rows.Close()
 			return err
 		}
+		f.row.snapshot = true
 		all = append(all, f)
 	}
 	rows.Close()
@@ -170,7 +303,7 @@ func (e *exporter) readDistributionAgents() error {
 		var f found
 		if err := rows.Scan(&f.publication, &f.subscriber, &f.database, &f.subscriptionType,
 			&f.row.securityMode, &f.row.login, &f.row.profileID, &f.row.jobID, &f.row.stepUID,
-			&f.streams, &f.memoryOptimized); err != nil {
+			&f.streams, &f.memoryOptimized, &f.row.jobLogin); err != nil {
 			rows.Close()
 			return err
 		}

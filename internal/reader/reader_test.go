@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -219,5 +220,74 @@ func TestSplitFilePath(t *testing.T) {
 		if folder != c.folder || file != c.file {
 			t.Errorf("splitFilePath(%q) = %q, %q, want %q, %q", c.in, folder, file, c.folder, c.file)
 		}
+	}
+}
+
+func TestCommandSwitch(t *testing.T) {
+	lab := `-Publisher [REPLLAB] -PublisherDB [Sales] -Distributor [REPLLAB] -Publication [SalesPub] -DistributorSecurityMode 1`
+	cases := []struct {
+		cmd, name, want string
+		ok              bool
+	}{
+		{lab, "DistributorSecurityMode", "1", true},
+		{lab, "Distributor", "REPLLAB", true},
+		{lab, "DistributorLogin", "", false},
+		{lab, "PublisherDB", "Sales", true},
+		{lab, "Publisher", "REPLLAB", true},
+		{`-DistributorSecurityMode 0 -distributorlogin "repl user" -x 1`, "DistributorLogin", "repl user", true},
+		{`-Publication [a]]b] -Continuous`, "Publication", "a]b", true},
+		{`-Publication [a b] -Continuous`, "Publication", "a b", true},
+		{`-PublisherDB [Sales]`, "Publisher", "", false},
+		{`-Continuous -Publisher`, "Publisher", "", false},
+	}
+	for _, c := range cases {
+		got, ok := commandSwitch(c.cmd, c.name)
+		if got != c.want || ok != c.ok {
+			t.Errorf("commandSwitch(%q, %q) = %q, %v; want %q, %v", c.cmd, c.name, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+func TestRunAs(t *testing.T) {
+	cases := []struct {
+		name  string
+		proxy sql.NullInt32
+		found bool
+		cred  sql.NullString
+		want  *string
+		ok    bool
+	}{
+		{"no proxy", sql.NullInt32{}, false, sql.NullString{}, model.Ptr(""), true},
+		{"proxy not found", sql.NullInt32{Int32: 3, Valid: true}, false, sql.NullString{}, nil, false},
+		{"null credential", sql.NullInt32{Int32: 3, Valid: true}, true, sql.NullString{}, nil, false},
+		{"credential", sql.NullInt32{Int32: 3, Valid: true}, true, sql.NullString{String: `DOMAIN\svc`, Valid: true}, model.Ptr(`DOMAIN\svc`), true},
+	}
+	for _, c := range cases {
+		got, ok := runAs(c.proxy, c.found, c.cred)
+		if ok != c.ok || (got == nil) != (c.want == nil) || (got != nil && *got != *c.want) {
+			t.Errorf("%s: runAs = %v, %v; want %v, %v", c.name, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+// TestAgentSQLSecret feeds a SQL authentication row to agent(), which stops
+// before any query because the row has no job.
+func TestAgentSQLSecret(t *testing.T) {
+	e := &exporter{cfg: &model.Config{}, found: map[string]bool{}, profiles: map[int]profileRow{}}
+	a, err := e.agent("publisher.log_reader_agent", "log reader", agentRow{securityMode: 0, login: "repl user", jobLogin: `DOM\svc`}, "PUB-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`^SQLREPL_[A-Z0-9_]+$`)
+	for what, got := range map[string]*string{"connection": a.Connection.PasswordSecret, "job": a.JobPasswordSecret} {
+		if got == nil || !re.MatchString(*got) {
+			t.Errorf("%s secret = %v", what, got)
+		}
+	}
+	if got := *a.Connection.PasswordSecret; got != "SQLREPL_SQL_PUB_1_REPL_USER" {
+		t.Errorf("connection secret = %s", got)
+	}
+	if got := *a.JobPasswordSecret; got != "SQLREPL_WIN_DOM_SVC" {
+		t.Errorf("job secret = %s", got)
 	}
 }

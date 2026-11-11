@@ -286,3 +286,63 @@ func TestReadLabSnapshotPublication(t *testing.T) {
 		}
 	}
 }
+
+// The lab has no proxy and no Windows job account: job_login is NULL and no
+// job step has a proxy. The unreadable branch of run_as is covered by TestRunAs.
+func TestReadLabAgents(t *testing.T) {
+	cfg := labRead(t).Config
+	type named struct {
+		what string
+		a    *model.Agent
+	}
+	var all, snapshots, others []named
+	if a := cfg.Publisher.LogReaderAgent; a != nil {
+		all = append(all, named{"log reader", a})
+		others = append(others, named{"log reader", a})
+	}
+	for i := range cfg.Publisher.SharedDistributionAgents {
+		s := &cfg.Publisher.SharedDistributionAgents[i]
+		n := named{"shared " + s.Key(), &s.DistributionAgent.Agent}
+		all, others = append(all, n), append(others, n)
+	}
+	for _, p := range cfg.Publications {
+		if p.SnapshotAgent != nil {
+			n := named{p.Name + " snapshot", p.SnapshotAgent}
+			all, snapshots = append(all, n), append(snapshots, n)
+		}
+		for _, s := range p.Subscriptions {
+			if s.DistributionAgent != nil {
+				n := named{p.Name + " " + s.Key(), &s.DistributionAgent.Agent}
+				all, others = append(all, n), append(others, n)
+			}
+		}
+	}
+	if len(snapshots) < 2 || len(others) < 3 {
+		t.Fatalf("found %d snapshot agents and %d other agents, want at least 2 and 3", len(snapshots), len(others))
+	}
+	for _, n := range all {
+		a := n.a
+		if a.JobEnabled == nil || !*a.JobEnabled {
+			t.Errorf("%s: job_enabled = %v, want true", n.what, a.JobEnabled)
+		}
+		if a.JobLogin == nil || *a.JobLogin != "" {
+			t.Errorf("%s: job_login = %v, want empty", n.what, a.JobLogin)
+		}
+		if a.JobPasswordSecret != nil {
+			t.Errorf("%s: job_password_secret = %v, want nil", n.what, *a.JobPasswordSecret)
+		}
+		if a.RunAs == nil || *a.RunAs != "" {
+			t.Errorf("%s: run_as = %v, want empty", n.what, a.RunAs)
+		}
+	}
+	for _, n := range snapshots {
+		if c := n.a.DistributorConnection; c == nil || c.Security == nil || *c.Security != "windows" {
+			t.Errorf("%s: distributor_connection = %+v, want windows", n.what, c)
+		}
+	}
+	for _, n := range others {
+		if n.a.DistributorConnection != nil {
+			t.Errorf("%s: distributor_connection = %+v, want nil", n.what, n.a.DistributorConnection)
+		}
+	}
+}

@@ -269,9 +269,20 @@ func (p Publisher) OmittedOK(key string, parents []Step) bool {
 	return ok && len(c.Publications) == 0
 }
 
-// OmittedOK of Agent has no condition yet; the structs that inline an Agent
+// OmittedOK: no job login has no password secret, and only the snapshot and
+// pull agents have a distributor connection. The structs that inline an Agent
 // delegate to it.
 func (a Agent) OmittedOK(key string, parents []Step) bool {
+	switch key {
+	case "job_password_secret":
+		return a.JobLogin == nil || *a.JobLogin == ""
+	case "distributor_connection":
+		if len(parents) == 0 {
+			return true
+		}
+		k := parents[len(parents)-1].Key
+		return k != "snapshot_agent" && k != "pull_agent"
+	}
 	return false
 }
 

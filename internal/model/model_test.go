@@ -78,6 +78,8 @@ func fullConfig() *Config {
 	agent := func(job string) Agent {
 		return Agent{
 			JobName:    Ptr(job),
+			JobEnabled: Ptr(true),
+			JobLogin:   Ptr(""),
 			Profile:    Ptr(""),
 			RunAs:      Ptr(""),
 			Connection: &Connection{Security: Ptr("windows"), Login: Ptr(""), PasswordSecret: Ptr("")},
@@ -87,6 +89,10 @@ func fullConfig() *Config {
 			}),
 			Command: Ptr("-Publisher [S]"),
 		}
+	}
+	snapshotAgent := func(a Agent) *Agent {
+		a.DistributorConnection = &Connection{Security: Ptr("windows")}
+		return &a
 	}
 	proc := &ObjectName{Schema: "dbo", Name: "sp_MSins_dboT"}
 	return &Config{
@@ -150,7 +156,7 @@ func fullConfig() *Config {
 				FTP: &FTP{Address: Ptr(""), Port: Ptr(0), Subdirectory: Ptr(""),
 					Login: Ptr("anonymous"), PasswordSecret: Ptr("ftp/P")},
 			},
-			SnapshotAgent: Ptr(agent("snapshot")),
+			SnapshotAgent: snapshotAgent(agent("snapshot")),
 			Articles: []Article{
 				{
 					Name:                   "T",
@@ -330,6 +336,32 @@ func TestSecretName(t *testing.T) {
 	for _, c := range cases {
 		if c.got != c.want {
 			t.Errorf("got %q, want %q", c.got, c.want)
+		}
+	}
+}
+
+func TestAgentOmittedOK(t *testing.T) {
+	empty := ""
+	login := `DOM\svc`
+	snap := []Step{{Key: "snapshot_agent", Value: &Publication{}}}
+	logr := []Step{{Key: "log_reader_agent", Value: &Publisher{}}}
+	cases := []struct {
+		name string
+		a    Agent
+		key  string
+		p    []Step
+		want bool
+	}{
+		{"no login", Agent{}, "job_password_secret", snap, true},
+		{"empty login", Agent{JobLogin: &empty}, "job_password_secret", snap, true},
+		{"login", Agent{JobLogin: &login}, "job_password_secret", snap, false},
+		{"snapshot connection", Agent{}, "distributor_connection", snap, false},
+		{"log reader connection", Agent{}, "distributor_connection", logr, true},
+		{"other key", Agent{}, "run_as", logr, false},
+	}
+	for _, c := range cases {
+		if got := c.a.OmittedOK(c.key, c.p); got != c.want {
+			t.Errorf("%s: OmittedOK(%s) = %v, want %v", c.name, c.key, got, c.want)
 		}
 	}
 }
