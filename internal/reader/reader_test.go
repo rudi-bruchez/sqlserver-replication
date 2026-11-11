@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -17,8 +18,8 @@ import (
 
 func TestMaskPasswords(t *testing.T) {
 	cases := map[string]string{
-		`-Publisher [P] -PublisherPassword secret -Continuous`:    `-Publisher [P] -PublisherPassword ******** -Continuous`,
-		`-SubscriberPassword "with space" -DistributorPassword x`: `-SubscriberPassword ******** -DistributorPassword ********`,
+		`-Publisher [P] -PublisherPassword secret -Continuous`:    `-Publisher [P] -PublisherPassword ********`,
+		`-SubscriberPassword "with space" -DistributorPassword x`: `-SubscriberPassword ********`,
 		`-Subscriber [S] -SubscriberDB [db] -Distributor [D]`:     `-Subscriber [S] -SubscriberDB [db] -Distributor [D]`,
 	}
 	for in, want := range cases {
@@ -289,5 +290,98 @@ func TestAgentSQLSecret(t *testing.T) {
 	}
 	if got := *a.JobPasswordSecret; got != "SQLREPL_WIN_DOM_SVC" {
 		t.Errorf("job secret = %s", got)
+	}
+}
+
+// The server writes the password raw: nothing may follow the mask.
+func TestMaskPasswordsToEndOfLine(t *testing.T) {
+	cases := map[string]string{
+		`-DistributorSecurityMode 0 -DistributorLogin rv dist -DistributorPassword Thr0w away -Distributor x`: `-DistributorSecurityMode 0 -DistributorLogin rv dist -DistributorPassword ********`,
+		`-DistributorPassword [Rv THROW3 tail] -Distributor [x]`:                                              `-DistributorPassword ********`,
+		`-DistributorPassword p"w x" -Distributor [x]`:                                                        `-DistributorPassword ********`,
+		`-a /SubscriberPASSWORD s3 cret -b`:                                                                   `-a /SubscriberPASSWORD ********`,
+	}
+	for in, want := range cases {
+		if got := maskPasswords(in); got != want {
+			t.Errorf("maskPasswords(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestRawSwitch(t *testing.T) {
+	cases := []struct {
+		cmd, name, want string
+		present         bool
+	}{
+		{`-Publisher [P] -DistributorSecurityMode 0 -DistributorLogin rv dist -DistributorPassword Thr0w away -Distributor x`, "DistributorLogin", "rv dist", true},
+		{`-DistributorSecurityMode 0 -DistributorLogin rv"q]x -DistributorPassword Thr0w away -Distributor [x]`, "DistributorLogin", `rv"q]x`, true},
+		{`-DistributorSecurityMode 0 -DistributorLogin rv_u6adbz -DistributorPassword p`, "DistributorLogin", "rv_u6adbz", true},
+		{`-DistributorLogin -DistributorPassword p`, "DistributorLogin", "", true},
+		{`-DistributorLogin`, "DistributorLogin", "", true},
+		{`-Publisher [P]`, "DistributorLogin", "", false},
+		{`-DistributorLogin a -DistributorLogin b`, "DistributorLogin", "a", true}, // first occurrence
+		{`-DistributorSecurityMode 0 -DistributorLogin  rv  -Distributor [x]`, "DistributorLogin", "rv", true},
+	}
+	for _, c := range cases {
+		got, present := rawSwitch(c.cmd, c.name)
+		if got != c.want || present != c.present {
+			t.Errorf("rawSwitch(%q, %q) = %q, %v; want %q, %v", c.cmd, c.name, got, present, c.want, c.present)
+		}
+	}
+}
+
+func TestDistributorConnection(t *testing.T) {
+	const tail = ` -DistributorPassword Thr0w away -Distributor [x]`
+	cases := []struct {
+		name, cmd     string
+		security      string // "" when distributor_connection is nil
+		login, secret string
+		finding       string // path suffix of the unreadable finding, "" for none
+	}{
+		{"windows default", `-Publisher [P] -Distributor [D]`, "windows", "", "", ""},
+		{"sql with spaces", `-DistributorSecurityMode 0 -DistributorLogin rv dist` + tail, "sql", "rv dist", "SQLREPL_SQL_DIST_RV_DIST", ""},
+		{"sql with quote", `-DistributorSecurityMode 0 -DistributorLogin rv"q]x` + tail, "sql", `rv"q]x`, "SQLREPL_SQL_DIST_RV_Q_X", ""},
+		{"sql login missing", `-DistributorSecurityMode 0` + tail, "sql", "", "", ".distributor_connection.login"},
+		{"sql login empty", `-DistributorSecurityMode 0 -DistributorLogin -DistributorPassword p`, "sql", "", "", ".distributor_connection.login"},
+		{"switch without value", `-Publisher [P] -DistributorSecurityMode`, "", "", "", ".distributor_connection"},
+		{"non numeric mode", `-DistributorSecurityMode abc -Distributor [D]`, "", "", "", ".distributor_connection"},
+		{"unbalanced bracket", `-DistributorSecurityMode 1 -Distributor [D`, "", "", "", ".distributor_connection"},
+		{"unbalanced quote", `-DistributorSecurityMode 1 -Distributor "D`, "", "", "", ".distributor_connection"},
+	}
+	for _, c := range cases {
+		e := &exporter{cfg: &model.Config{Distributor: &model.Distributor{Server: "DIST"}}, found: map[string]bool{}}
+		var a model.Agent
+		e.distributorConnection("a", &a, c.cmd)
+		dc := a.DistributorConnection
+		if c.security == "" {
+			if dc != nil {
+				t.Errorf("%s: distributor_connection = %+v, want nil", c.name, dc)
+			}
+		} else if dc == nil || *dc.Security != c.security {
+			t.Errorf("%s: distributor_connection = %+v, want %s", c.name, dc, c.security)
+		} else {
+			if c.login != "" && (dc.Login == nil || *dc.Login != c.login) {
+				t.Errorf("%s: login = %v, want %q", c.name, dc.Login, c.login)
+			}
+			if c.login == "" && dc.Login != nil {
+				t.Errorf("%s: login = %q, want nil", c.name, *dc.Login)
+			}
+			if (dc.PasswordSecret == nil) != (c.secret == "") || (c.secret != "" && *dc.PasswordSecret != c.secret) {
+				t.Errorf("%s: password_secret = %v, want %q", c.name, dc.PasswordSecret, c.secret)
+			}
+		}
+		var got []string
+		for _, f := range e.cfg.Findings {
+			if f.Kind == model.FindingUnreadable {
+				got = append(got, f.Path)
+			}
+		}
+		want := []string(nil)
+		if c.finding != "" {
+			want = []string{"a" + c.finding}
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: unreadable findings %q, want %q", c.name, got, want)
+		}
 	}
 }

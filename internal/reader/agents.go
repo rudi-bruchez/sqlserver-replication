@@ -3,10 +3,10 @@ package reader
 import (
 	"database/sql"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/rudi-bruchez/sqlserver-replication/internal/decode"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
@@ -127,21 +127,37 @@ func runAs(proxyID sql.NullInt32, proxyFound bool, credential sql.NullString) (*
 
 // distributorConnection reads the connection of a snapshot agent to the
 // distributor from the switches of its command line. An absent security mode
-// is 1, Windows authentication.
+// is 1, Windows authentication. Whatever cannot be read leaves
+// distributor_connection (or its login) nil with an unreadable finding: never
+// a default and never a secret name built from a guess.
 func (e *exporter) distributorConnection(path string, a *model.Agent, command string) {
 	cpath := model.Join(path, "distributor_connection")
+	unreadable := func(p, format string, args ...any) {
+		e.find(model.FindingUnreadable, p, format, args...)
+	}
+	// -Distributor is bracketed by the server: an unbalanced bracket or quote
+	// means the line is not what the server wrote.
+	if _, present, balanced := bracketedSwitch(command, "Distributor"); present && !balanced {
+		unreadable(cpath, "the command line has an unbalanced bracket or quote after -Distributor")
+		return
+	}
 	mode := 1
-	if v, ok := commandSwitch(command, "DistributorSecurityMode"); ok {
+	if v, present := rawSwitch(command, "DistributorSecurityMode"); present {
 		n, err := strconv.Atoi(v)
 		if err != nil {
-			e.find(model.FindingIncomplete, cpath, "-DistributorSecurityMode %q is not a number", v)
+			unreadable(cpath, "-DistributorSecurityMode %q is not a number", v)
 			return
 		}
 		mode = n
 	}
 	c := &model.Connection{Security: model.Ptr(decode.SecurityMode(mode))}
 	if mode == 0 {
-		login, _ := commandSwitch(command, "DistributorLogin")
+		login, _ := rawSwitch(command, "DistributorLogin")
+		if login == "" {
+			a.DistributorConnection = c
+			unreadable(model.Join(cpath, "login"), "SQL Server authentication without a -DistributorLogin value in the command line")
+			return
+		}
 		c.Login = model.Ptr(login)
 		distributor := ""
 		if e.cfg.Distributor != nil {
@@ -152,71 +168,90 @@ func (e *exporter) distributorConnection(path string, a *model.Agent, command st
 	a.DistributorConnection = c
 }
 
-// commandSwitch finds -name in an agent command line, case-insensitively and
-// as a whole token, and returns the next token with one level of [...] or
-// "..." removed. A bracketed name ([...], with ]] for a literal ]) or a quoted
-// string is one token whatever spaces it holds.
+// snapshotSwitches are the switches sp_addpublication_snapshot writes. Only
+// the first four are bracketed by the server; the logins and the password are
+// written raw (measured), so a value may hold spaces, quotes and brackets and
+// runs up to the next of these switches.
+var snapshotSwitches = regexp.MustCompile(`(?i)\s-(?:Publisher|PublisherDB|Distributor|Publication|DistributorSecurityMode|DistributorLogin|DistributorPassword)(?:\s|$)`)
+
+// switchStart returns what follows the first occurrence of -name as a whole
+// word preceded by whitespace or the start of the line, and whether it was
+// found. The first occurrence is kept when a switch is repeated; which one
+// the agent honours is not measured.
+func switchStart(cmd, name string) (string, bool) {
+	re := regexp.MustCompile(`(?i)(?:^|\s)-` + regexp.QuoteMeta(name) + `(?:\s|$)`)
+	loc := re.FindStringIndex(cmd)
+	if loc == nil {
+		return "", false
+	}
+	return strings.TrimLeft(cmd[loc[1]:], " \t\r\n"), true
+}
+
+// rawSwitch returns the unprocessed value of a switch the server writes
+// unquoted: the text up to the next known switch or the end of the line,
+// trimmed. present is true for a switch with no value.
+func rawSwitch(cmd, name string) (string, bool) {
+	rest, ok := switchStart(cmd, name)
+	if !ok {
+		return "", false
+	}
+	if loc := snapshotSwitches.FindStringIndex(" " + rest); loc != nil {
+		rest = rest[:loc[0]]
+	}
+	return strings.TrimSpace(rest), true
+}
+
+// bracketedSwitch returns the value of a switch the server writes in brackets
+// (or quotes) with one level of [...] (]] undoubled) or "..." removed.
+// balanced is false when a bracket or quote is not closed.
+func bracketedSwitch(cmd, name string) (value string, present, balanced bool) {
+	rest, ok := switchStart(cmd, name)
+	if !ok {
+		return "", false, true
+	}
+	if rest == "" {
+		return "", true, true
+	}
+	var end rune
+	switch rest[0] {
+	case '[':
+		end = ']'
+	case '"':
+		end = '"'
+	default:
+		if i := strings.IndexAny(rest, " \t\r\n"); i >= 0 {
+			rest = rest[:i]
+		}
+		return rest, true, true
+	}
+	r := []rune(rest)
+	for i := 1; i < len(r); i++ {
+		if r[i] != end {
+			continue
+		}
+		if end == ']' && i+1 < len(r) && r[i+1] == ']' {
+			i++
+			continue
+		}
+		inner := string(r[1:i])
+		if end == ']' {
+			inner = strings.ReplaceAll(inner, "]]", "]")
+		}
+		return inner, true, true
+	}
+	return "", true, false
+}
+
+// commandSwitch returns the value of -name with one level of [...] or "..."
+// removed, matching the switch case-insensitively as a whole word. ok is
+// false when the switch is absent, has no value or has an unbalanced bracket
+// or quote.
 func commandSwitch(cmd, name string) (string, bool) {
-	toks := tokenize(cmd)
-	for i := 0; i+1 < len(toks); i++ {
-		if strings.EqualFold(toks[i], "-"+name) {
-			return unwrap(toks[i+1]), true
-		}
+	v, present, balanced := bracketedSwitch(cmd, name)
+	if !present || !balanced || v == "" {
+		return "", false
 	}
-	return "", false
-}
-
-func tokenize(s string) []string {
-	var toks []string
-	var cur strings.Builder
-	in := false
-	r := []rune(s)
-	for i := 0; i < len(r); i++ {
-		c := r[i]
-		switch {
-		case unicode.IsSpace(c):
-			if in {
-				toks = append(toks, cur.String())
-				cur.Reset()
-				in = false
-			}
-		case c == '[' || c == '"':
-			in = true
-			cur.WriteRune(c)
-			end := ']'
-			if c == '"' {
-				end = '"'
-			}
-			for i++; i < len(r); i++ {
-				cur.WriteRune(r[i])
-				if r[i] == end {
-					if end == ']' && i+1 < len(r) && r[i+1] == ']' {
-						i++
-						cur.WriteRune(r[i])
-						continue
-					}
-					break
-				}
-			}
-		default:
-			in = true
-			cur.WriteRune(c)
-		}
-	}
-	if in {
-		toks = append(toks, cur.String())
-	}
-	return toks
-}
-
-func unwrap(t string) string {
-	if len(t) >= 2 && t[0] == '[' && t[len(t)-1] == ']' {
-		return strings.ReplaceAll(t[1:len(t)-1], "]]", "]")
-	}
-	if len(t) >= 2 && t[0] == '"' && t[len(t)-1] == '"' {
-		return t[1 : len(t)-1]
-	}
-	return t
+	return v, true
 }
 
 func (e *exporter) readLogReaderAgent() error {

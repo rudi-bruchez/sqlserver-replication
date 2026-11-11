@@ -289,38 +289,63 @@ func TestReadLabSnapshotPublication(t *testing.T) {
 
 // The lab has no proxy and no Windows job account: job_login is NULL and no
 // job step has a proxy. The unreadable branch of run_as is covered by TestRunAs.
+// Only the lab's own agents are checked, by name: other sessions' objects in
+// Sales must not fail the test.
 func TestReadLabAgents(t *testing.T) {
 	cfg := labRead(t).Config
 	type named struct {
-		what string
-		a    *model.Agent
+		what     string
+		a        *model.Agent
+		snapshot bool
 	}
-	var all, snapshots, others []named
-	if a := cfg.Publisher.LogReaderAgent; a != nil {
-		all = append(all, named{"log reader", a})
-		others = append(others, named{"log reader", a})
-	}
-	for i := range cfg.Publisher.SharedDistributionAgents {
-		s := &cfg.Publisher.SharedDistributionAgents[i]
-		n := named{"shared " + s.Key(), &s.DistributionAgent.Agent}
-		all, others = append(all, n), append(others, n)
-	}
-	for _, p := range cfg.Publications {
-		if p.SnapshotAgent != nil {
-			n := named{p.Name + " snapshot", p.SnapshotAgent}
-			all, snapshots = append(all, n), append(snapshots, n)
+	var agents []named
+	add := func(what string, a *model.Agent, snapshot bool) {
+		if a == nil {
+			t.Errorf("%s: not exported", what)
+			return
 		}
-		for _, s := range p.Subscriptions {
-			if s.DistributionAgent != nil {
-				n := named{p.Name + " " + s.Key(), &s.DistributionAgent.Agent}
-				all, others = append(all, n), append(others, n)
+		agents = append(agents, named{what, a, snapshot})
+	}
+	add("log reader of Sales", cfg.Publisher.LogReaderAgent, false)
+	for _, name := range []string{"SalesPub", "SalesRef"} {
+		var p *model.Publication
+		for i := range cfg.Publications {
+			if cfg.Publications[i].Name == name {
+				p = &cfg.Publications[i]
 			}
 		}
+		if p == nil {
+			t.Errorf("publication %s missing", name)
+			continue
+		}
+		add(name+" snapshot agent", p.SnapshotAgent, true)
+		if name != "SalesPub" {
+			continue
+		}
+		var d *model.DistributionAgent
+		for _, s := range p.Subscriptions {
+			if strings.EqualFold(s.Database, "SalesSub") {
+				d = s.DistributionAgent
+			}
+		}
+		if d == nil {
+			t.Errorf("SalesPub: no distribution agent for SalesSub")
+		} else {
+			add("SalesPub distribution agent", &d.Agent, false)
+		}
 	}
-	if len(snapshots) < 2 || len(others) < 3 {
-		t.Fatalf("found %d snapshot agents and %d other agents, want at least 2 and 3", len(snapshots), len(others))
+	var shared *model.DistributionAgent
+	for i := range cfg.Publisher.SharedDistributionAgents {
+		if s := &cfg.Publisher.SharedDistributionAgents[i]; strings.EqualFold(s.Database, "SalesSub") {
+			shared = &s.DistributionAgent
+		}
 	}
-	for _, n := range all {
+	if shared == nil {
+		t.Error("no shared distribution agent for SalesSub")
+	} else {
+		add("shared distribution agent", &shared.Agent, false)
+	}
+	for _, n := range agents {
 		a := n.a
 		if a.JobEnabled == nil || !*a.JobEnabled {
 			t.Errorf("%s: job_enabled = %v, want true", n.what, a.JobEnabled)
@@ -334,15 +359,12 @@ func TestReadLabAgents(t *testing.T) {
 		if a.RunAs == nil || *a.RunAs != "" {
 			t.Errorf("%s: run_as = %v, want empty", n.what, a.RunAs)
 		}
-	}
-	for _, n := range snapshots {
-		if c := n.a.DistributorConnection; c == nil || c.Security == nil || *c.Security != "windows" {
+		c := a.DistributorConnection
+		if n.snapshot && (c == nil || c.Security == nil || *c.Security != "windows") {
 			t.Errorf("%s: distributor_connection = %+v, want windows", n.what, c)
 		}
-	}
-	for _, n := range others {
-		if n.a.DistributorConnection != nil {
-			t.Errorf("%s: distributor_connection = %+v, want nil", n.what, n.a.DistributorConnection)
+		if !n.snapshot && c != nil {
+			t.Errorf("%s: distributor_connection = %+v, want nil", n.what, c)
 		}
 	}
 }

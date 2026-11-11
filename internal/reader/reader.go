@@ -416,10 +416,13 @@ func (e *exporter) publicationByName(name string) *model.Publication {
 	return nil
 }
 
-var passwordArg = regexp.MustCompile(`(?i)(-\w*password\s+)("[^"]*"|\S+)`)
+var passwordArg = regexp.MustCompile(`(?is)((?:^|\s)[-/]\w*password\s+).*$`)
 
-// maskPasswords hides the value of any -*Password argument of an agent
-// command line.
+// maskPasswords hides everything from the value of the first -*Password (or
+// /*Password) switch to the end of the line. The server writes the password
+// raw, so its extent is unknown when it holds spaces, quotes or brackets; the
+// command is shown, never compared, so losing what follows is acceptable and
+// leaking is not.
 func maskPasswords(cmd string) string {
 	return passwordArg.ReplaceAllString(cmd, "${1}********")
 }
