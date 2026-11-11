@@ -461,3 +461,26 @@ func TestSubsetAllowed(t *testing.T) {
 		}
 	}
 }
+
+func TestSelectProfiles(t *testing.T) {
+	profiles := map[int]profileRow{
+		1: {name: "Default agent profile", agentType: 3, userDefined: false},
+		2: {name: "unused", agentType: 3, userDefined: true, description: "d"},
+		3: {name: "merge one", agentType: 9, userDefined: true},
+		4: {name: "snap", agentType: 1, userDefined: true, isDefault: true},
+	}
+	params := map[int]map[string]string{2: {"-CommitBatchSize": "200"}}
+	got := selectProfiles(profiles, params)
+	if len(got) != 2 || got[0].Name != "snap" || got[1].Name != "unused" {
+		t.Fatalf("selectProfiles = %+v, want snap then unused", got)
+	}
+	if got[0].AgentType != "snapshot" || got[1].AgentType != "distribution" {
+		t.Errorf("agent types = %q, %q", got[0].AgentType, got[1].AgentType)
+	}
+	if got[1].Parameters["-CommitBatchSize"] != "200" {
+		t.Errorf("parameters = %v", got[1].Parameters)
+	}
+	if got[0].Default == nil || !*got[0].Default {
+		t.Errorf("default flag lost on %+v", got[0])
+	}
+}

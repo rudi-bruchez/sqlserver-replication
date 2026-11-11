@@ -344,9 +344,7 @@ func (e *exporter) profileName(path string, id int) string {
 	return p.name
 }
 
-// collectProfiles exports the user-defined profiles used by an exported agent,
-// and the user-defined profiles marked as default, which apply to agents with
-// no explicit profile.
+// collectProfiles exports every user-defined profile of the distributor.
 func (e *exporter) collectProfiles() error {
 	params := map[int]map[string]string{}
 	rows, err := e.src.Distributor.QueryContext(e.ctx, qAgentParameters)
@@ -369,29 +367,42 @@ func (e *exporter) collectProfiles() error {
 		return err
 	}
 
-	for id, p := range e.profiles {
-		if !p.userDefined || !(e.usedProfiles[id] || p.isDefault) {
+	e.cfg.AgentProfiles = selectProfiles(e.profiles, params)
+	return nil
+}
+
+// selectProfiles returns every user-defined profile of an in-scope agent
+// type, whether or not an agent uses it, sorted by agent type then name.
+func selectProfiles(profiles map[int]profileRow, params map[int]map[string]string) []model.AgentProfile {
+	type entry struct {
+		code int
+		name string
+		prof model.AgentProfile
+	}
+	var es []entry
+	for id, p := range profiles {
+		if !p.userDefined || !inScopeAgentType(p.agentType) {
 			continue
 		}
-		if !inScopeAgentType(p.agentType) {
-			continue
-		}
-		e.cfg.AgentProfiles = append(e.cfg.AgentProfiles, model.AgentProfile{
+		es = append(es, entry{p.agentType, p.name, model.AgentProfile{
 			Name:        p.name,
 			AgentType:   decode.AgentType(p.agentType),
 			Description: model.Ptr(p.description),
 			Default:     model.Ptr(p.isDefault),
 			Parameters:  params[id],
-		})
+		}})
 	}
-	sort.Slice(e.cfg.AgentProfiles, func(i, j int) bool {
-		a, b := e.cfg.AgentProfiles[i], e.cfg.AgentProfiles[j]
-		if a.AgentType != b.AgentType {
-			return a.AgentType < b.AgentType
+	sort.Slice(es, func(i, j int) bool {
+		if es[i].code != es[j].code {
+			return es[i].code < es[j].code
 		}
-		return a.Name < b.Name
+		return es[i].name < es[j].name
 	})
-	return nil
+	var out []model.AgentProfile
+	for _, e := range es {
+		out = append(out, e.prof)
+	}
+	return out
 }
 
 func inScopeAgentType(t int) bool { return t == 1 || t == 2 || t == 3 }

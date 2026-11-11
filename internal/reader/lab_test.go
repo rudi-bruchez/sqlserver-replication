@@ -404,3 +404,26 @@ func TestReadLabArticles(t *testing.T) {
 		t.Errorf("table articles = %d, want at least 3", tables)
 	}
 }
+
+// TestReadLabProfiles checks that a user-defined profile no agent uses is
+// exported (lab/setup.sql creates distribution/lab-distrib; the lab agents
+// are bound to another profile). Profiles other sessions created are ignored.
+func TestReadLabProfiles(t *testing.T) {
+	cfg := labRead(t).Config
+	for _, p := range cfg.AgentProfiles {
+		if p.AgentType != "distribution" || p.Name != "lab-distrib" {
+			continue
+		}
+		if p.Description == nil || *p.Description != "lab profile" {
+			t.Errorf("description = %v, want %q", p.Description, "lab profile")
+		}
+		if p.Default == nil || *p.Default {
+			t.Errorf("default = %v, want false", p.Default)
+		}
+		if p.Parameters["-CommitBatchSize"] != "200" {
+			t.Errorf("-CommitBatchSize = %q, want 200", p.Parameters["-CommitBatchSize"])
+		}
+		return
+	}
+	t.Error("profile distribution/lab-distrib missing from agent_profiles")
+}
