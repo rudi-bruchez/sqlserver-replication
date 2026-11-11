@@ -281,9 +281,29 @@ Added on 2026-11-11 with the spec section "Snapshot runs and their report" and t
 Files:
 - Create: `lab/campaign/15-snapshot-scope.sh`, `lab/campaign/16-snapshot-report-sources.sh`, their results under `lab/results/2022/`
 
-- [ ] Step 1: Write `15-snapshot-scope.sh`. Six publications `m_sc_<imm|non>_<native|conc|dbsnap>` with tables `m_t1`, `m_t2` (enough rows that a copy lasts several seconds), a push subscription each, snapshot delivered. For each: add `m_t3`, extend the subscription by the rules of the spec, start the snapshot, and record which tables got files (snapshot folder of this run) and history lines, the generation time, and, from a writer that updates `m_t1` in a loop during the generation, the longest time one update waited. Then on the `imm` publications the `-defer-full-snapshot` sequence of the spec, step by step: the flags each step needs (read the state before, flag rule of `05-snapshot-flag`), the tables generated, and what a subscription added after `immediate_sync` is restored receives. One row per publication and step.
-- [ ] Step 2: Write `16-snapshot-report-sources.sh`. Under `native`, `concurrent` and `database snapshot`: what `MSsnapshot_history`, `MSdistribution_history` and `sys.dm_os_enumerate_filesystem` on the run's folder return (sizes, counts, times), and whether sampling `sys.dm_os_waiting_tasks` / `sys.dm_exec_requests` every second for sessions blocked by or blocking the snapshot agent's `program_name` sees the waits the timed writer measures. One row per source and `sync_method`.
-- [ ] Step 3: Run both through `campaign.sh 2022`; assert what can be predicted (no file generated for `m_t1`/`m_t2` on the `non` publications; `database snapshot` writer wait under one second) and report any contradiction. Break one assertion per script (the check, not the lab).
+- [ ] Step 1: Write `15-snapshot-scope.sh` (campaign item 12). Every snapshot agent of the script is created with a schedule that never fires (`@frequency_type = 1, @active_start_date = 99991231`, as in the other scripts): with the default schedule, an `immediate_sync` publication generates every article every 5 minutes, which would add generations and locks unrelated to the step being measured. Set up publications `m_sc_<imm|non>_<method>`, one for each `sync_method` among `native`, `character`, `concurrent`, `concurrent_c` and `database snapshot`, with tables `m_t1` (enough rows that a copy lasts several seconds) and `m_t2` (100 rows), a push subscription each, snapshot delivered. For each publication, add `m_t3`, extend the subscription by the rules of the spec, start the snapshot and wait for the run to end. Record:
+  - which tables got files (the run folder) and history lines;
+  - the generation time;
+  - from one timed writer on `m_t1` and one on `m_t2`, the longest time one update waited and when the wait began and ended. Two writers are what tell "every table for the whole generation" from "each table while it is copied".
+
+  Then, on the `imm` publications (the native and concurrent variants, each once with `allow_anonymous` true and once false), run the `-defer-full-snapshot` sequence of the spec step by step. After each step, record the flags it needed (read the state before; flag rule of `05-snapshot-flag`), `immediate_sync_ready`, and every row of `syssubscriptions.status`. Also record the tables generated before the restore, and what a subscription added after the restore receives. Add a case that restores `immediate_sync` right after the agent starts, without waiting.
+
+  Then two more cases. First, after each invalidating operation the spec lists, whether some subscription status awaits a delivery. Second, extending a subscription that a reinit-flagged change has just marked. One row per publication and step.
+- [ ] Step 2: Write `16-snapshot-report-sources.sh` (campaign item 13), under `native`, `concurrent` and `database snapshot`, on snapshot agents that never fire on their own. Record:
+  - what `MSsnapshot_history` and `MSdistribution_history` return (times, counts, the bcp-partition lines), including on a publication with a shared agent;
+  - what `sys.dm_os_enumerate_filesystem` returns on the run's folder, as sa and as a login `m_low` with only `public` and SELECT in `distribution`;
+  - the `program_name` of every session the agent opens, sampled during the run;
+  - whether sampling `sys.dm_exec_requests` (`blocking_session_id`) and `sys.dm_os_waiting_tasks`, at 1 s and at 250 ms, sees the waits a timed writer measures (longest sampled wait against longest measured wait);
+  - the return code, `@@ERROR` and the messages of `sp_startpublication_snapshot` while the job is already running;
+  - the error `m_low` gets on `sys.dm_os_waiting_tasks`.
+
+  One row per source and `sync_method`.
+- [ ] Step 3: Run both through `campaign.sh 2022`. Assert what the spec now states as measured:
+  - under `native`, the writer on `m_t2` waits about as long as the one on `m_t1`;
+  - the `database snapshot` writers wait under one second;
+  - the deferred sequence with the wait leaves every subscription active and generates only `m_t3` before the restore.
+
+  Report any contradiction. Two readers disagreed on whether a `concurrent` generation without `immediate_sync` covers every article: record the result, and assert nothing on it. Break one assertion per script (the check, not the lab).
 - [ ] Step 4: Commit.
 
 ### Task 12: Fold the results into the documentation
