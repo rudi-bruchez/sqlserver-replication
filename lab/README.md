@@ -61,6 +61,7 @@ The plan of the campaign announced a total for some scripts. Where the measured 
 | `09-snapshot-pub` | the count | 110 | a ready `immediate_sync` snapshot publication (`SNAPI`) and a transactional twin for the command rows (`TWIN`) added |
 | `10-init-modes` | 9 | 11 | re-creation from a fresh backup (`gap-fresh`) and from the subscriber's LSN (`gap-resume`) added |
 | `14-filter-view` | 8 | 28 | the cases measured on an unsubscribed (`F*`), an active (`F*s`) and an undelivered (`F*u`) subscription, plus `F2b` and `F6r` |
+| `17-parameters` | 316 | 316 | the parameters counted on 2026-11-11 for the plan; the script lists them |
 
 The others match the plan: `01` 8, `02` 67, `03` 3, `04` 1, `06` 20, `13` 10, and the scripts whose plan said "the count" (`07` 75, `08` 42, `11` 554, `12` 70, `distributor-defaults` 39, `15` 158, `16` 27).
 
@@ -195,6 +196,12 @@ The rows that surprised: the generation, not the delivery, sets status 2 (`E.gen
 - sampling every 250 ms sees the native lock wait (2376 of 2462 ms) where 1 s under-reads it; the 289 ms wait under `database snapshot` is under-read at 250 ms and missed at 1 s; under `concurrent` the writer's longest UPDATE (101 ms) held 24 ms of lock wait, the rest being a log flush (`RS.*.sampling_*`);
 - `sp_startpublication_snapshot` on a running job returns 1 with `@@ERROR` 0 and nothing for `TRY...CATCH`, and prints "HResult 0x5606, Level 16, State 1" with the Agent's refusal, not a `Msg` line (`RS.*.start_running`);
 - a login without `VIEW SERVER PERFORMANCE STATE` gets error 300 on `sys.dm_os_waiting_tasks`, and on `sys.dm_exec_requests` no error but its own session only (`RS.m_low.*`).
+
+## Procedure parameters
+
+`lab/campaign/17-parameters.sql` (results `17-parameters.txt`, rows `R|<procedure>.<parameter>|<type>(<max_length>)|output=<0|1> id=<parameter_id>`) lists the parameters of the 18 procedures that create configuration (the list is in plan 2, "Rulings made in this plan"), read from `sys.all_parameters` for the procedures of the `sys` schema, ordered by procedure then `parameter_id`. It is read-only: it creates nothing and touches no lab object. Plan 2 maps every listed parameter to the YAML model, and `TestParametersCovered` reads this file.
+
+On SQL Server 2022 CU27 it lists 316 parameters: `sp_add_agent_parameter` 3, `sp_add_agent_profile` 6, `sp_addarticle` 32, `sp_adddistpublisher` 11, `sp_adddistributiondb` 17, `sp_adddistributor` 6, `sp_addlogreader_agent` 8, `sp_addpublication` 49, `sp_addpublication_snapshot` 22, `sp_addpullsubscription` 8, `sp_addpullsubscription_agent` 45, `sp_addpushsubscription_agent` 31, `sp_addsubscription` 42, `sp_articlecolumn` 11, `sp_articlefilter` 7, `sp_articleview` 10, `sp_replicationdboption` 5, `sp_update_agent_profile` 3.
 
 ## Observed outside the campaign
 
