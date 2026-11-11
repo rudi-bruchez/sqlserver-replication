@@ -61,6 +61,10 @@ type Publisher struct {
 	// SharedDistributionAgents serve, for one subscriber database, every
 	// publication of the database that has no independent agent.
 	SharedDistributionAgents []SharedDistributionAgent `yaml:"shared_distribution_agents,omitempty"`
+	// SharedPullAgents serve, for one subscriber database, every pull
+	// subscription to a publication of the database that has no independent
+	// agent.
+	SharedPullAgents []SharedPullAgent `yaml:"shared_pull_agents,omitempty"`
 }
 
 // SharedDistributionAgent is a distribution agent recorded with
@@ -69,6 +73,15 @@ type SharedDistributionAgent struct {
 	Subscriber        string            `yaml:"subscriber"`
 	Database          string            `yaml:"database"`
 	DistributionAgent DistributionAgent `yaml:"distribution_agent"`
+}
+
+// SharedPullAgent is a pull agent shared by the subscriptions of one
+// subscriber database: one job at the subscriber, one row with publication =
+// N'ALL' and subscription_type 1 in MSdistribution_agents (measured).
+type SharedPullAgent struct {
+	Subscriber string `yaml:"subscriber"`
+	Database   string `yaml:"database"`
+	PullAgent  `yaml:",inline"`
 }
 
 // Distributor describes the distributor as seen by this publisher.
@@ -296,7 +309,9 @@ type Subscription struct {
 	// subscriber database, listed under publisher.shared_distribution_agents.
 	DistributionAgent *DistributionAgent `yaml:"distribution_agent,omitempty"`
 	// PullAgent is the distribution agent of a pull subscription, read at
-	// the subscriber; set only when type is pull.
+	// the subscriber; set only when type is pull and the publication has an
+	// independent agent. Otherwise the subscription uses the shared pull
+	// agent of its subscriber database, under publisher.shared_pull_agents.
 	PullAgent *PullAgent `yaml:"pull_agent,omitempty"`
 }
 

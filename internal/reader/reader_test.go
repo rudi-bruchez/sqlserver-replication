@@ -3,6 +3,8 @@ package reader
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"regexp"
@@ -11,7 +13,7 @@ import (
 
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
 
-	_ "github.com/microsoft/go-mssqldb"
+	mssql "github.com/microsoft/go-mssqldb"
 	_ "github.com/microsoft/go-mssqldb/namedpipe"
 	_ "github.com/microsoft/go-mssqldb/sharedmemory"
 )
@@ -64,7 +66,7 @@ func TestQueriesParse(t *testing.T) {
 		"qAgentParameters": qAgentParameters,
 		"qSyncWithBackup":  qSyncWithBackup, "qDistributorLink": qDistributorLink,
 		"qDistributionFiles": qDistributionFiles, "qSubscriberType": qSubscriberType,
-		"qTableExists": qTableExists, "qPullSubscription": subscriberQuery("SalesSub"),
+		"qDatabaseExists": qDatabaseExists, "qPullSubscription": subscriberQuery("SalesSub"),
 	}
 	ctx := context.Background()
 	// PARSEONLY only applies to the batches that follow it in the session,
@@ -526,6 +528,25 @@ func TestSubscriberCommandConnection(t *testing.T) {
 		}
 		if len(e.cfg.Findings) != 0 {
 			t.Errorf("%s: findings %+v", c.name, e.cfg.Findings)
+		}
+	}
+}
+
+// Error 208 (invalid object name) of the subscriber query is a missing
+// table; any other error, 229 (permission denied) included, fails the export.
+func TestErrorNumber(t *testing.T) {
+	cases := []struct {
+		err  error
+		want int32
+	}{
+		{mssql.Error{Number: 208}, 208},
+		{fmt.Errorf("subscriber S: %w", mssql.Error{Number: 208}), 208},
+		{mssql.Error{Number: 229}, 229},
+		{errors.New("connection reset"), 0},
+	}
+	for _, c := range cases {
+		if got := errorNumber(c.err); got != c.want {
+			t.Errorf("errorNumber(%v) = %d, want %d", c.err, got, c.want)
 		}
 	}
 }

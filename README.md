@@ -15,7 +15,7 @@ Scope: transactional and snapshot replication, push and pull subscriptions, SQL 
 
 Besides the publications, the file holds the distributor properties (cleanup batch sizes, the folders and names of the distribution database files, the security of the `repl_distributor` link, `multi_subnet_failover`), the publisher's `sync_with_backup`, and per publication the partition switch options, `enabled_for_het_sub`, `snapshot.enabled_for_internet` and the `type` and `subscriber_type` of each subscription. A property the export could not read is left out and has a finding.
 
-A pull subscription's agent runs at the subscriber, which keeps its settings and its job. The export reads it under `pull_agent` when the subscriber is given with `-server NAME=ADDRESS`, `NAME` being the subscriber name as the publisher records it, in any case. Without it, `pull_agent` is left out with an `unreadable` finding that names the flag to pass. The subscriber connection uses the publisher's credentials (`-user`, `-param`).
+A pull subscription's agent runs at the subscriber, which keeps its settings and its job. The export reads it under `pull_agent` when the subscriber is given with `-server NAME=ADDRESS`, `NAME` being the subscriber name as the publisher records it, in any case. Without it, `pull_agent` is left out with an `unreadable` finding that names the flag to pass. The pull subscriptions of one subscriber database to publications without an independent agent share one agent, exported once under `publisher.shared_pull_agents`. The subscriber connection uses the publisher's credentials (`-user`, `-param`).
 
 ```
 go build ./cmd/sqlrepl

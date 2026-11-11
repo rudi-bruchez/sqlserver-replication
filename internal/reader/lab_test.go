@@ -467,23 +467,44 @@ func runScript(ctx context.Context, conn *sql.Conn, name string) error {
 }
 
 // pullSetup creates the pull subscription of testdata/pull-setup.sql: the
-// publication m_pp of Sales, pulled by m_psub of the lab instance itself. The
-// teardown is registered before the setup runs, so a partial setup is
-// removed too. It returns the lab's @@SERVERNAME.
+// publication m_pp of Sales, pulled by m_psub of the lab instance itself. It
+// returns the lab's @@SERVERNAME.
 func pullSetup(t *testing.T) string {
 	t.Helper()
+	return labScripts(t, "pull")
+}
+
+// labScripts runs testdata/<name>-teardown.sql, then <name>-setup.sql, and
+// registers the teardown again in t.Cleanup on a fresh connection: the
+// teardown is idempotent, so a run that an earlier failure left behind is
+// removed first, and a partial setup is removed too. It returns the lab's
+// @@SERVERNAME.
+func labScripts(t *testing.T, name string) string {
+	t.Helper()
 	ctx := context.Background()
-	conn, err := labDB(t, "master").Conn(ctx)
-	if err != nil {
-		t.Fatal(err)
+	master := labDB(t, "master")
+	teardown := func() error {
+		conn, err := master.Conn(ctx)
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+		return runScript(ctx, conn, name+"-teardown.sql")
 	}
-	t.Cleanup(func() { conn.Close() })
+	if err := teardown(); err != nil {
+		t.Fatalf("teardown before the setup: %v", err)
+	}
 	t.Cleanup(func() {
-		if err := runScript(ctx, conn, "pull-teardown.sql"); err != nil {
+		if err := teardown(); err != nil {
 			t.Errorf("teardown: %v", err)
 		}
 	})
-	if err := runScript(ctx, conn, "pull-setup.sql"); err != nil {
+	conn, err := master.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := runScript(ctx, conn, name+"-setup.sql"); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	var server string
@@ -606,5 +627,62 @@ func TestReadLabAnonymousSubscriberRow(t *testing.T) {
 	}
 	if outOfScope != 1 || incomplete != 0 {
 		t.Errorf("out_of_scope %d, incomplete %d; want 1 and 0: %+v", outOfScope, incomplete, cfg.Findings)
+	}
+}
+
+// Two publications without an independent agent pulled into one database
+// share one pull agent: it is exported once, under
+// publisher.shared_pull_agents, and neither subscription has a pull_agent.
+func TestReadLabSharedPullAgent(t *testing.T) {
+	server := labScripts(t, "pull-shared")
+	cfg := labReadWith(t, map[string]*sql.DB{"repllab": labDB(t, "master")}).Config
+	subs := 0
+	for _, p := range cfg.Publications {
+		if p.Name != "m_ps1" && p.Name != "m_ps2" {
+			continue
+		}
+		for _, s := range p.Subscriptions {
+			if !strings.EqualFold(s.Database, "m_pssub") {
+				continue
+			}
+			subs++
+			if s.Type == nil || *s.Type != "pull" {
+				t.Errorf("%s: type = %v, want pull", p.Name, s.Type)
+			}
+			if s.PullAgent != nil || s.DistributionAgent != nil {
+				t.Errorf("%s: pull_agent %+v, distribution_agent %+v; want both nil", p.Name, s.PullAgent, s.DistributionAgent)
+			}
+		}
+		for _, f := range findingsUnder(cfg, publicationPath(p.Name)) {
+			t.Errorf("unexpected finding %s %s: %s", f.Kind, f.Path, f.Message)
+		}
+	}
+	if subs != 2 {
+		t.Errorf("%d subscriptions to m_pssub, want 2", subs)
+	}
+	var shared []model.SharedPullAgent
+	for _, a := range cfg.Publisher.SharedPullAgents {
+		if strings.EqualFold(a.Database, "m_pssub") {
+			shared = append(shared, a)
+		}
+	}
+	if len(shared) != 1 {
+		t.Fatalf("shared_pull_agents for m_pssub = %d, want 1", len(shared))
+	}
+	a := shared[0]
+	for _, f := range findingsUnder(cfg, "publisher.shared_pull_agents") {
+		t.Errorf("unexpected finding %s %s: %s", f.Kind, f.Path, f.Message)
+	}
+	if a.JobEnabled == nil || !*a.JobEnabled {
+		t.Errorf("job_enabled = %v, want true", a.JobEnabled)
+	}
+	if a.Distributor == nil || !strings.EqualFold(*a.Distributor, server) {
+		t.Errorf("distributor = %v, want %s", a.Distributor, server)
+	}
+	if c := a.DistributorConnection; c == nil || c.Security == nil || *c.Security != "windows" {
+		t.Errorf("distributor_connection = %+v, want windows", c)
+	}
+	if a.Profile == nil {
+		t.Error("profile = nil, want the profile of the N'ALL' row")
 	}
 }

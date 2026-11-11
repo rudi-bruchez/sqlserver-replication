@@ -70,6 +70,7 @@ func (f serverFlags) String() string { return "" }
 
 func (f serverFlags) Set(s string) error {
 	name, address, ok := strings.Cut(s, "=")
+	name, address = strings.TrimSpace(name), strings.TrimSpace(address)
 	if !ok || name == "" || address == "" {
 		return fmt.Errorf("expected NAME=ADDRESS, got %q", s)
 	}

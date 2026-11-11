@@ -26,6 +26,9 @@ func (s Subscription) Key() string { return s.Subscriber + "/" + s.Database }
 // Key returns <subscriber>/<database>.
 func (s SharedDistributionAgent) Key() string { return s.Subscriber + "/" + s.Database }
 
+// Key returns <subscriber>/<database>.
+func (s SharedPullAgent) Key() string { return s.Subscriber + "/" + s.Database }
+
 // Key returns <agent_type>/<name>.
 func (p AgentProfile) Key() string { return p.AgentType + "/" + p.Name }
 
@@ -248,11 +251,17 @@ func (c Command) OmittedOK(key string, parents []Step) bool {
 
 // OmittedOK: a push subscription has no pull agent, a pull subscription has
 // no push distribution agent, and a subscription of a publication without an
-// independent agent uses the shared agent of its subscriber database.
+// independent agent uses the shared agent (push or pull) of its subscriber
+// database.
 func (s Subscription) OmittedOK(key string, parents []Step) bool {
 	switch key {
 	case "pull_agent":
-		return s.Type != nil && *s.Type == "push"
+		if s.Type != nil && *s.Type == "push" {
+			return true
+		}
+		if s.Type == nil || *s.Type != "pull" {
+			return false
+		}
 	case "distribution_agent":
 		if s.Type != nil && *s.Type == "pull" {
 			return true
@@ -289,7 +298,7 @@ func (a Agent) OmittedOK(key string, parents []Step) bool {
 			return true
 		}
 		k := parents[len(parents)-1].Key
-		return k != "snapshot_agent" && k != "pull_agent"
+		return k != "snapshot_agent" && k != "pull_agent" && k != "shared_pull_agents"
 	}
 	return false
 }
@@ -303,4 +312,9 @@ func (d DistributionAgent) OmittedOK(key string, parents []Step) bool {
 // Agent: a pull agent has no property of its own that may be omitted.
 func (p PullAgent) OmittedOK(key string, parents []Step) bool {
 	return p.DistributionAgent.OmittedOK(key, parents)
+}
+
+// OmittedOK answers for the fields of the inlined PullAgent.
+func (s SharedPullAgent) OmittedOK(key string, parents []Step) bool {
+	return s.PullAgent.OmittedOK(key, parents)
 }

@@ -243,10 +243,11 @@ ORDER BY profile_id, parameter_name`
 // Queries run on a subscriber, connected to master. {subdb} is replaced by the
 // quoted name of the subscription database (subscriberQuery).
 const (
-	// The tables of a subscription database are created by the first
-	// sp_addpullsubscription; sp_helppullsubscription returns nothing
-	// without them. The table name is passed as a parameter.
-	qTableExists = `SELECT CASE WHEN OBJECT_ID(@p1, N'U') IS NULL THEN 0 ELSE 1 END`
+	// Whether the subscription database exists. Its replication tables are
+	// not probed with OBJECT_ID, which returns NULL for a table that
+	// metadata visibility hides: the subscriber query tells them by its
+	// error 208.
+	qDatabaseExists = `SELECT CASE WHEN DB_ID(@p1) IS NULL THEN 0 ELSE 1 END`
 
 	// The join of sp_helppullsubscription.sql:94-176, for one publication.
 	// Every subscription_type is returned: type 2 (anonymous) is reported,

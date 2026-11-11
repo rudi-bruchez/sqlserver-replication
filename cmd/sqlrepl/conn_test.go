@@ -73,7 +73,14 @@ func TestServerFlags(t *testing.T) {
 	if err := f.Set("A=y"); err == nil {
 		t.Error("a second entry for A was accepted")
 	}
-	for _, s := range []string{"=x", "a="} {
+	f = serverFlags{}
+	if err := f.Set(" repllab = tcp:127.0.0.1,11980 "); err != nil {
+		t.Fatal(err)
+	}
+	if e, ok := f.lookup("REPLLAB"); !ok || e.Name != "repllab" || e.Address != "tcp:127.0.0.1,11980" {
+		t.Errorf("spaces kept: %+v, %v", e, ok)
+	}
+	for _, s := range []string{"=x", "a=", " =x", "a= "} {
 		if err := (serverFlags{}).Set(s); err == nil {
 			t.Errorf("Set(%q) accepted", s)
 		}

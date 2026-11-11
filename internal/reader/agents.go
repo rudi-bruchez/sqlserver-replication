@@ -2,11 +2,14 @@ package reader
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+
+	mssql "github.com/microsoft/go-mssqldb"
 
 	"github.com/rudi-bruchez/sqlserver-replication/internal/decode"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
@@ -448,6 +451,68 @@ func (e *exporter) readDistributionAgents() error {
 		}, err
 	}
 
+	// The distributor keeps a row for a pull agent too, with its profile.
+	// A shared pull agent is recorded with publication = N'ALL' and
+	// subscription_type 1, as a shared push agent is with 0 (measured by two
+	// reviewers on the lab, SQL Server 2022 CU27).
+	distRow := func(publication, subscriber, database string) *pullDistRow {
+		f := find(1, publication, subscriber, database)
+		if f == nil {
+			return nil
+		}
+		return &pullDistRow{profileID: f.row.profileID, streams: f.streams, memoryOptimized: f.memoryOptimized != 0}
+	}
+	type sharedPull struct {
+		subscriber, database, path string
+		built, unreadable          bool
+	}
+	var sharedPulls []*sharedPull
+	sharedPullIndex := map[[2]string]*sharedPull{}
+	pull := func(p *model.Publication, s *model.Subscription, label string) error {
+		subPath := subscriptionPath(p.Name, s.Subscriber, s.Database)
+		if *p.IndependentAgent {
+			path := model.Join(subPath, "pull_agent")
+			r, db, err := e.readPullRow(p, s, label, path, path)
+			if err != nil || r == nil {
+				return err
+			}
+			s.PullAgent, err = e.buildPullAgent(path, "pull agent of "+label, r, distRow(p.Name, s.Subscriber, s.Database), db, s.Subscriber)
+			return err
+		}
+		// One pull agent serves every subscription of the subscriber
+		// database to a publication without an independent agent (one job,
+		// the same agent_id and job_step_uid in every row): each row is
+		// checked, the agent is exported once.
+		key := [2]string{strings.ToUpper(s.Subscriber), strings.ToUpper(s.Database)}
+		sp := sharedPullIndex[key]
+		if sp == nil {
+			sp = &sharedPull{subscriber: s.Subscriber, database: s.Database,
+				path: model.Join("publisher", "shared_pull_agents") +
+					model.Element(model.SharedPullAgent{Subscriber: s.Subscriber, Database: s.Database}.Key())}
+			sharedPullIndex[key] = sp
+			sharedPulls = append(sharedPulls, sp)
+		}
+		r, db, err := e.readPullRow(p, s, label, sp.path, subPath)
+		if err != nil {
+			return err
+		}
+		if db == nil {
+			sp.unreadable = true
+		}
+		if r == nil || sp.built {
+			return nil
+		}
+		a, err := e.buildPullAgent(sp.path, fmt.Sprintf("shared pull agent of %s.%s", sp.subscriber, sp.database), r,
+			distRow("ALL", s.Subscriber, s.Database), db, s.Subscriber)
+		if err != nil {
+			return err
+		}
+		sp.built = true
+		e.cfg.Publisher.SharedPullAgents = append(e.cfg.Publisher.SharedPullAgents,
+			model.SharedPullAgent{Subscriber: sp.subscriber, Database: sp.database, PullAgent: *a})
+		return nil
+	}
+
 	// A shared agent serves every non-independent publication of the
 	// database for one subscriber database: it is exported once.
 	shared := map[[2]string]bool{}
@@ -457,18 +522,7 @@ func (e *exporter) readDistributionAgents() error {
 			s := &p.Subscriptions[j]
 			label := fmt.Sprintf("publication %s, subscription %s.%s", p.Name, s.Subscriber, s.Database)
 			if s.Type != nil && *s.Type == "pull" {
-				// The distributor keeps a row for the pull agent too, with
-				// its profile; a publication without an independent agent
-				// records it as N'ALL', as for push (not measured for pull).
-				name := p.Name
-				if !*p.IndependentAgent {
-					name = "ALL"
-				}
-				var d *pullDistRow
-				if f := find(1, name, s.Subscriber, s.Database); f != nil {
-					d = &pullDistRow{profileID: f.row.profileID, streams: f.streams, memoryOptimized: f.memoryOptimized != 0}
-				}
-				if err := e.readPullAgent(p, s, label, d); err != nil {
+				if err := pull(p, s, label); err != nil {
 					return err
 				}
 				continue
@@ -507,6 +561,18 @@ func (e *exporter) readDistributionAgents() error {
 				model.SharedDistributionAgent{Subscriber: s.Subscriber, Database: s.Database, DistributionAgent: a})
 		}
 	}
+	for _, sp := range sharedPulls {
+		if !sp.built && !sp.unreadable {
+			e.find(model.FindingIncomplete, sp.path, "subscriber %s.%s: no shared pull agent found at the subscriber", sp.subscriber, sp.database)
+		}
+	}
+	sort.Slice(e.cfg.Publisher.SharedPullAgents, func(i, j int) bool {
+		a, b := e.cfg.Publisher.SharedPullAgents[i], e.cfg.Publisher.SharedPullAgents[j]
+		if a.Subscriber != b.Subscriber {
+			return a.Subscriber < b.Subscriber
+		}
+		return a.Database < b.Database
+	})
 	sort.Slice(e.cfg.Publisher.SharedDistributionAgents, func(i, j int) bool {
 		a, b := e.cfg.Publisher.SharedDistributionAgents[i], e.cfg.Publisher.SharedDistributionAgents[j]
 		if a.Subscriber != b.Subscriber {
@@ -539,83 +605,110 @@ type pullRow struct {
 	stepUID, dtsPackage        string
 }
 
-// readPullAgent reads the agent of a pull subscription at its subscriber:
+// readPullRow reads the row of a pull subscription at its subscriber:
 // MSreplication_subscriptions and MSsubscription_properties in the
-// subscription database, the job in the subscriber's msdb. d is the agent's
-// row at the distributor, nil when there is none.
-func (e *exporter) readPullAgent(p *model.Publication, s *model.Subscription, label string, d *pullDistRow) error {
+// subscription database. agentPath is the path of the agent, where a
+// subscriber that cannot be read is reported, and rowPath the path where
+// what is wrong with this subscription's row is reported. It returns the row
+// and the subscriber connection, the row nil when there is none to export,
+// the connection nil when the subscriber or its database cannot be read.
+func (e *exporter) readPullRow(p *model.Publication, s *model.Subscription, label, agentPath, rowPath string) (*pullRow, *sql.DB, error) {
 	subPath := subscriptionPath(p.Name, s.Subscriber, s.Database)
-	path := model.Join(subPath, "pull_agent")
 	db := subscriberConn(e.src.Subscribers, s.Subscriber)
 	if db == nil {
-		e.find(model.FindingUnreadable, path, "subscriber %s is not connected: pass -server %s=ADDRESS", s.Subscriber, s.Subscriber)
-		return nil
+		e.find(model.FindingUnreadable, agentPath, "subscriber %s is not connected: pass -server %s=ADDRESS", s.Subscriber, s.Subscriber)
+		return nil, nil, nil
 	}
-	for _, table := range []string{"MSreplication_subscriptions", "MSsubscription_properties"} {
-		var exists int
-		if err := db.QueryRowContext(e.ctx, qTableExists, quoteName(s.Database)+".dbo."+table).Scan(&exists); err != nil {
-			return fmt.Errorf("subscriber %s: %w", s.Subscriber, err)
-		}
-		if exists == 0 {
-			e.find(model.FindingIncomplete, path, "%s: no table %s in database %s at subscriber %s", label, table, s.Database, s.Subscriber)
-			return nil
-		}
+	var exists int
+	if err := db.QueryRowContext(e.ctx, qDatabaseExists, s.Database).Scan(&exists); err != nil {
+		return nil, nil, fmt.Errorf("subscriber %s: %w", s.Subscriber, err)
+	}
+	if exists == 0 {
+		e.find(model.FindingIncomplete, agentPath, "subscription database %s does not exist at subscriber %s", s.Database, s.Subscriber)
+		return nil, nil, nil
 	}
 
-	rows, err := db.QueryContext(e.ctx, subscriberQuery(s.Database), e.cfg.Publisher.Server, e.src.Database, p.Name)
-	if err != nil {
-		return fmt.Errorf("subscriber %s: %w", s.Subscriber, err)
-	}
 	var pull *pullRow
 	anonymous := false
-	for rows.Next() {
-		var r pullRow
-		if err := rows.Scan(&r.subscriptionType, &r.independent, &r.immediate, &r.description, &r.agentID,
-			&r.hasProperties, &r.distributor, &r.distributorSecurity, &r.distributorLogin,
-			&r.altSnapshotFolder, &r.workDir, &r.useFTP, &r.syncmgr, &r.stepUID, &r.dtsPackage); err != nil {
-			rows.Close()
+	err := func() error {
+		rows, err := db.QueryContext(e.ctx, subscriberQuery(s.Database), e.cfg.Publisher.Server, e.src.Database, p.Name)
+		if err != nil {
 			return err
 		}
-		switch r.subscriptionType {
-		case 1:
-			pull = &r
-		case 2:
-			anonymous = true
+		defer rows.Close()
+		for rows.Next() {
+			var r pullRow
+			if err := rows.Scan(&r.subscriptionType, &r.independent, &r.immediate, &r.description, &r.agentID,
+				&r.hasProperties, &r.distributor, &r.distributorSecurity, &r.distributorLogin,
+				&r.altSnapshotFolder, &r.workDir, &r.useFTP, &r.syncmgr, &r.stepUID, &r.dtsPackage); err != nil {
+				return err
+			}
+			switch r.subscriptionType {
+			case 1:
+				pull = &r
+			case 2:
+				anonymous = true
+			}
 		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
+		return rows.Err()
+	}()
+	if err != nil {
+		// The tables are checked by the query itself: OBJECT_ID says
+		// nothing of a table that metadata visibility hides.
+		if errorNumber(err) == 208 {
+			e.find(model.FindingIncomplete, agentPath, "no table MSreplication_subscriptions or MSsubscription_properties in database %s at subscriber %s", s.Database, s.Subscriber)
+			return nil, nil, nil
+		}
+		return nil, nil, fmt.Errorf("subscriber %s: %w", s.Subscriber, err)
 	}
 	// The job queries reuse the connection pool: the rows are read in full
 	// first.
-	if anonymous {
-		e.find(model.FindingOutOfScope, subPath, "%s: the subscriber holds an anonymous subscription to the publication, out of scope, not exported", label)
+	switch {
+	case anonymous && pull == nil:
+		e.find(model.FindingOutOfScope, subPath, "%s: the subscriber holds the subscription as anonymous (subscription_type 2), out of scope: the subscription is exported, its pull agent is not", label)
+	case anonymous:
+		e.find(model.FindingOutOfScope, subPath, "%s: the subscriber also holds an anonymous row (subscription_type 2) for the publication, out of scope and not exported", label)
 	}
 	if pull == nil {
 		if !anonymous {
-			e.find(model.FindingIncomplete, path, "%s: no pull subscription row in %s.dbo.MSreplication_subscriptions at subscriber %s", label, s.Database, s.Subscriber)
+			e.find(model.FindingIncomplete, rowPath, "%s: no pull subscription row in %s.dbo.MSreplication_subscriptions at subscriber %s", label, s.Database, s.Subscriber)
 		}
-		return nil
+		return nil, db, nil
 	}
 	// independent_agent and immediate_sync are parameters of
 	// sp_addpullsubscription that default to 1, not copies of the
 	// publication's: the model keeps the publication's values.
 	if (pull.independent != 0) != *p.IndependentAgent || (pull.immediate != 0) != *p.ImmediateSync {
-		e.find(model.FindingIncomplete, path, "%s: the subscriber records independent_agent %d and immediate_sync %d, the publication %t and %t",
+		e.find(model.FindingIncomplete, rowPath, "%s: the subscriber records independent_agent %d and immediate_sync %d, the publication %t and %t",
 			label, pull.independent, pull.immediate, *p.IndependentAgent, *p.ImmediateSync)
 	}
 	if pull.dtsPackage != "" {
-		e.find(model.FindingOutOfScope, path, "%s: DTS package %s, out of scope", label, pull.dtsPackage)
+		e.find(model.FindingOutOfScope, rowPath, "%s: DTS package %s, out of scope", label, pull.dtsPackage)
 	}
+	return pull, db, nil
+}
 
-	row := agentRow{jobID: pull.agentID, stepUID: pull.stepUID, jobs: db, pullSubscriber: s.Subscriber}
+// errorNumber returns the SQL Server error number of err, 0 when it is not
+// a server error.
+func errorNumber(err error) int32 {
+	var me mssql.Error
+	if errors.As(err, &me) {
+		return me.Number
+	}
+	return 0
+}
+
+// buildPullAgent builds a pull agent from its row at the subscriber, its job
+// in the subscriber's msdb (db) and its row at the distributor (d, nil when
+// there is none).
+func (e *exporter) buildPullAgent(path, label string, pull *pullRow, d *pullDistRow, db *sql.DB, subscriber string) (*model.PullAgent, error) {
+	row := agentRow{jobID: pull.agentID, stepUID: pull.stepUID, jobs: db, pullSubscriber: subscriber}
 	if d != nil {
 		row.profileID = d.profileID
 	}
-	a, err := e.agent(path, "pull agent of "+label, row)
+	a, err := e.agent(path, label, row)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	pa := &model.PullAgent{
 		DistributionAgent: model.DistributionAgent{Agent: a},
@@ -630,21 +723,20 @@ func (e *exporter) readPullAgent(p *model.Publication, s *model.Subscription, la
 		e.find(model.FindingIncomplete, path, "%s: no pull distribution agent found at the distributor", label)
 	}
 	if pull.hasProperties == 0 {
-		e.find(model.FindingIncomplete, path, "%s: no row in %s.dbo.MSsubscription_properties at subscriber %s", label, s.Database, s.Subscriber)
-	} else {
-		pa.Distributor = model.Ptr(pull.distributor)
-		pa.AltSnapshotFolder = model.Ptr(pull.altSnapshotFolder)
-		pa.WorkingDirectory = model.Ptr(pull.workDir)
-		pa.UseFTP = model.Ptr(pull.useFTP != 0)
-		pa.EnabledForSyncmgr = model.Ptr(pull.syncmgr != 0)
-		c := &model.Connection{Security: model.Ptr(decode.SecurityMode(pull.distributorSecurity))}
-		if pull.distributorSecurity == 0 {
-			c.Login = model.Ptr(pull.distributorLogin)
-			c.PasswordSecret = model.Ptr(e.secret(model.Join(model.Join(path, "distributor_connection"), "password_secret"),
-				"SQL", pull.distributor, pull.distributorLogin))
-		}
-		pa.DistributorConnection = c
+		e.find(model.FindingIncomplete, path, "%s: no row in MSsubscription_properties at subscriber %s", label, subscriber)
+		return pa, nil
 	}
-	s.PullAgent = pa
-	return nil
+	pa.Distributor = model.Ptr(pull.distributor)
+	pa.AltSnapshotFolder = model.Ptr(pull.altSnapshotFolder)
+	pa.WorkingDirectory = model.Ptr(pull.workDir)
+	pa.UseFTP = model.Ptr(pull.useFTP != 0)
+	pa.EnabledForSyncmgr = model.Ptr(pull.syncmgr != 0)
+	c := &model.Connection{Security: model.Ptr(decode.SecurityMode(pull.distributorSecurity))}
+	if pull.distributorSecurity == 0 {
+		c.Login = model.Ptr(pull.distributorLogin)
+		c.PasswordSecret = model.Ptr(e.secret(model.Join(model.Join(path, "distributor_connection"), "password_secret"),
+			"SQL", pull.distributor, pull.distributorLogin))
+	}
+	pa.DistributorConnection = c
+	return pa, nil
 }

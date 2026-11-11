@@ -106,6 +106,18 @@ func fullConfig() *Config {
 				Subscriber: "SUB", Database: "SubDB",
 				DistributionAgent: DistributionAgent{Agent: agent("shared"), SubscriptionStreams: Ptr(0), MemoryOptimized: Ptr(false)},
 			}},
+			SharedPullAgents: []SharedPullAgent{{
+				Subscriber: "SUB2", Database: "PullDB",
+				PullAgent: PullAgent{
+					DistributionAgent: DistributionAgent{Agent: *snapshotAgent(agent("sharedpull")), SubscriptionStreams: Ptr(0), MemoryOptimized: Ptr(false)},
+					Distributor:       Ptr("S"),
+					AltSnapshotFolder: Ptr(""),
+					WorkingDirectory:  Ptr(""),
+					UseFTP:            Ptr(false),
+					EnabledForSyncmgr: Ptr(false),
+					Description:       Ptr(""),
+				},
+			}},
 		},
 		Distributor: &Distributor{
 			Server:                "S",
@@ -288,6 +300,18 @@ func TestNilProperties(t *testing.T) {
 	pull.PullAgent = nil
 	if got, want := NilProperties(c), []string{"publications[P].subscriptions[SUB2/PullDB].pull_agent"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("pull subscription: got %q, want %q", got, want)
+	}
+	// Without an independent agent, the pull subscription uses the shared
+	// pull agent, which needs its distributor connection too.
+	c = fullConfig()
+	c.Publications[0].IndependentAgent = Ptr(false)
+	c.Publications[0].Subscriptions[1].PullAgent = nil
+	if got := NilProperties(c); len(got) != 0 {
+		t.Errorf("shared pull agent: got %q, want none", got)
+	}
+	c.Publisher.SharedPullAgents[0].DistributorConnection = nil
+	if got, want := NilProperties(c), []string{"publisher.shared_pull_agents[SUB2/PullDB].distributor_connection"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("shared pull agent connection: got %q, want %q", got, want)
 	}
 	c = fullConfig()
 	c.Publisher.LogReaderAgent = nil
