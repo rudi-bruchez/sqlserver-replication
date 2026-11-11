@@ -59,6 +59,7 @@
 # COPY_ONLY backups), and msdb keeps no backup or restore history of the run. 11 rows.
 set -euo pipefail
 . "$(dirname "$0")/../lib.sh"
+mark=$(sql_value "SELECT CONVERT(nvarchar(30), SYSDATETIME(), 121)")
 
 pub=m_ip
 bak=/var/opt/mssql/data/m_bak.bak
@@ -92,6 +93,7 @@ cleanup() {
     [ "$cleaned" = 1 ] && return
     cleaned=1
     stop_m_agents
+    purge_stopped_orphans "$mark"
     local d
     sql -Q "SET NOCOUNT ON; USE Sales;
 BEGIN TRY IF EXISTS (SELECT 1 FROM dbo.syspublications WHERE name = N'$pub')

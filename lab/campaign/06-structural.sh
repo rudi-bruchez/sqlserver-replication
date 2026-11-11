@@ -35,6 +35,7 @@
 set -euo pipefail
 shopt -s extglob
 . "$(dirname "$0")/../lib.sh"
+mark=$(sql_value "SELECT CONVERT(nvarchar(30), SYSDATETIME(), 121)")
 
 kinds="imm-conc imm-native nonimm-conc nonimm-native"
 cases="C1 C2 C3 C4 C5"
@@ -64,6 +65,7 @@ SELECT @e"
 
 teardown() { # PUB : everything of one publication, and the subscriber database
     stop_m_agents
+    purge_stopped_orphans "$mark"
     sql -Q "SET NOCOUNT ON; USE Sales;
 BEGIN TRY IF EXISTS (SELECT 1 FROM dbo.syspublications WHERE name = N'$1')
     EXEC sp_dropsubscription @publication = N'$1', @article = N'all', @subscriber = N'all'; END TRY BEGIN CATCH END CATCH;

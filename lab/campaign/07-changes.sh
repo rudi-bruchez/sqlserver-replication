@@ -41,6 +41,7 @@
 # runs those rows alone (the whole setup still runs, no assertions, the run exits 1).
 set -euo pipefail
 . "$(dirname "$0")/../lib.sh"
+mark=$(sql_value "SELECT CONVERT(nvarchar(30), SYSDATETIME(), 121)")
 
 EXPECTED_ROWS=75
 pubs="m_p m_sh1 m_sh2"
@@ -50,6 +51,7 @@ want() { [ -z "${M_ONLY:-}" ] || [[ " $M_ONLY " == *" $1 "* ]]; }
 
 teardown() {
     stop_m_agents
+    purge_stopped_orphans "$mark"
     sql -Q "SET NOCOUNT ON; USE Sales;
 DECLARE @p sysname;
 DECLARE c CURSOR LOCAL FOR SELECT name FROM dbo.syspublications WHERE name LIKE N'm\_%' ESCAPE N'\';

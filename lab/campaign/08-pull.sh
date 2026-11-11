@@ -52,6 +52,7 @@
 # no assertions then, and the run exits 1 so that it is never accepted.
 set -euo pipefail
 . "$(dirname "$0")/../lib.sh"
+mark=$(sql_value "SELECT CONVERT(nvarchar(30), SYSDATETIME(), 121)")
 
 EXPECTED_ROWS=42
 rows=()
@@ -68,6 +69,7 @@ now() { sql_value "SELECT CONVERT(varchar(23), SYSDATETIME(), 121)"; }
 
 teardown() {
     stop_m_agents
+    purge_stopped_orphans "$mark"
     sql -Q "SET NOCOUNT ON;
 DECLARE @d sysname, @s nvarchar(400);
 DECLARE c CURSOR LOCAL FOR SELECT name FROM sys.databases WHERE name IN (N'm_psub1', N'm_psub2');

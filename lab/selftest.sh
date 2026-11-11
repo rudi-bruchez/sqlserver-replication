@@ -28,6 +28,7 @@ fixtures=(
     "truncated-columns.sql truncated"
     "duplicate-ids.sql total"
     "orphan-history.sh residue"
+    "orphan-other.sh residue"
     "dead-lab.sh alive"
     "restart.sh restart"
 )
@@ -61,7 +62,7 @@ cleanup() {
         orphan-job.sh) query="IF EXISTS (SELECT * FROM msdb.dbo.sysjobs WHERE name = N'REPLLAB-Sales-ghostsub-99')
                 EXEC msdb.dbo.sp_delete_job @job_name = N'REPLLAB-Sales-ghostsub-99';
             SELECT COUNT(*) FROM msdb.dbo.sysjobs WHERE name = N'REPLLAB-Sales-ghostsub-99';" ;;
-        orphan-history.sh) query="DELETE distribution.dbo.MSdistribution_history WHERE agent_id NOT IN (SELECT id FROM distribution.dbo.MSdistribution_agents);
+        orphan-history.sh|orphan-other.sh) query="DELETE distribution.dbo.MSdistribution_history WHERE agent_id NOT IN (SELECT id FROM distribution.dbo.MSdistribution_agents);
             DELETE distribution.dbo.MSsnapshot_history WHERE agent_id NOT IN (SELECT id FROM distribution.dbo.MSsnapshot_agents);
             DELETE distribution.dbo.MSlogreader_history WHERE agent_id NOT IN (SELECT id FROM distribution.dbo.MSlogreader_agents);
             SELECT (SELECT COUNT(*) FROM distribution.dbo.MSdistribution_history WHERE agent_id NOT IN (SELECT id FROM distribution.dbo.MSdistribution_agents))

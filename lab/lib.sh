@@ -85,3 +85,24 @@ SELECT @n;" </dev/null 2>&1) || { echo "${0##*/}: stop_m_agents: cannot stop the
     done
     { echo "${0##*/}: stop_m_agents: m_ agent jobs still running after 90 s: $(sql_value "SELECT ISNULL(STRING_AGG(CONVERT(nvarchar(4000), j.name), N', '), N'none') FROM msdb.dbo.sysjobs j WHERE j.job_id IN ($running)" 2>&1)" >&2; exit 1; }
 }
+
+# purge_stopped_orphans MARK: deletes the history rows that an agent wrote after its own
+# agent row was gone because a measured case dropped a subscription or publication while
+# the agent ran (comment 'The process was successfully stopped...'), written at or after
+# MARK (a SYSDATETIME() style 121 value taken at the start of the script). It exists for
+# the scripts whose measured drops hit a running agent on purpose: the stop has to stay
+# in the measurement, so the expected orphan row is removed afterwards. It deletes only
+# that row (all three conditions: time, no agent row, comment), so any other orphan still
+# trips the residue guard. Prints the number of deleted rows on stderr.
+purge_stopped_orphans() {
+    local mark=$1 out n
+    out=$(sql -b -h -1 -Q "SET NOCOUNT ON; DECLARE @m datetime2 = '$mark', @n int = 0;
+DELETE distribution.dbo.MSdistribution_history WHERE [time] >= @m AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSdistribution_agents) AND comments LIKE N'The process was successfully stopped%'; SET @n += @@ROWCOUNT;
+DELETE distribution.dbo.MSlogreader_history WHERE [time] >= @m AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSlogreader_agents) AND comments LIKE N'The process was successfully stopped%'; SET @n += @@ROWCOUNT;
+DELETE distribution.dbo.MSsnapshot_history WHERE [time] >= @m AND agent_id NOT IN (SELECT id FROM distribution.dbo.MSsnapshot_agents) AND comments LIKE N'The process was successfully stopped%'; SET @n += @@ROWCOUNT;
+SELECT @n;" </dev/null 2>&1) || { echo "${0##*/}: purge_stopped_orphans: $out" >&2; exit 1; }
+    n=$(printf '%s\n' "$out" | sed 's/[[:space:]]//g' | grep -v '^$' | tail -n 1)
+    [[ $n =~ ^[0-9]+$ ]] || { echo "${0##*/}: purge_stopped_orphans: unexpected output: $out" >&2; exit 1; }
+    # PURGE_LOG, when set, receives the same note (campaign.sh deletes its own logs).
+    echo "${0##*/}: purge_stopped_orphans: deleted $n orphan history row(s) (stop message of a dropped running agent)" | tee -a "${PURGE_LOG:-/dev/null}" >&2
+}
