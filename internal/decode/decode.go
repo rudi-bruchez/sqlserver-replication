@@ -186,7 +186,13 @@ func PreCreationCmd(code int) string { return preCreationCmds.name(code) }
 func PreCreationCmdCode(name string) (int, error) { return preCreationCmds.code(name) }
 
 // syncMethods maps syspublications.sync_method. Code 2 is not documented.
-var syncMethods = codeTable{0: "native", 1: "character", 3: "concurrent", 4: "concurrent_c"}
+// Codes 5 and 6 are not on Learn: measured on the lab on 2026-11-11 with a
+// rolled-back sp_addpublication (database snapshot, and database snapshot
+// character).
+var syncMethods = codeTable{
+	0: "native", 1: "character", 3: "concurrent", 4: "concurrent_c",
+	5: "database_snapshot", 6: "database_snapshot_character",
+}
 
 // SyncMethod returns the name of a sync_method code.
 func SyncMethod(code int) string { return syncMethods.name(code) }
@@ -199,6 +205,9 @@ var replFreqs = codeTable{0: "transactional", 1: "snapshot"}
 
 // PublicationType returns the name of a repl_freq code.
 func PublicationType(code int) string { return replFreqs.name(code) }
+
+// PublicationTypeCode is the inverse of PublicationType.
+func PublicationTypeCode(name string) (int, error) { return replFreqs.code(name) }
 
 // publicationStatuses maps syspublications.status.
 var publicationStatuses = codeTable{0: "inactive", 1: "active"}
@@ -235,9 +244,14 @@ const (
 	PubOptionP2PConflictDetection = 0x8
 	// PubOptionAllowDrop is not on Learn; it is @OPT_ALLOW_DROP in
 	// stored-procedures/sp_MScheck_dropobject.sql:25-29.
-	PubOptionAllowDrop      = 0x80
-	PubOptionLastWriterWins = 0x100
-	pubOptionKnown          = PubOptionP2P | PubOptionP2PLocalChangesOnly | PubOptionNonSQLSubscribers | PubOptionP2PConflictDetection | PubOptionAllowDrop | PubOptionLastWriterWins
+	PubOptionAllowDrop = 0x80
+	// PubOptionAllowPartitionSwitch and PubOptionReplicatePartitionSwitch are
+	// not on Learn: measured on the lab on 2026-11-11 with a rolled-back
+	// sp_addpublication (@allow_partition_switch, @replicate_partition_switch).
+	PubOptionAllowPartitionSwitch     = 0x20
+	PubOptionReplicatePartitionSwitch = 0x40
+	PubOptionLastWriterWins           = 0x100
+	pubOptionKnown                    = PubOptionP2P | PubOptionP2PLocalChangesOnly | PubOptionNonSQLSubscribers | PubOptionP2PConflictDetection | PubOptionAllowPartitionSwitch | PubOptionReplicatePartitionSwitch | PubOptionAllowDrop | PubOptionLastWriterWins
 )
 
 // PublicationOptionUnknownBits returns the bits of syspublications.options
@@ -366,17 +380,57 @@ func Initialization(syncType, nosyncType int) string {
 	return fmt.Sprintf("unknown(sync_type=%d,nosync_type=%d)", syncType, nosyncType)
 }
 
-// SecurityMode decodes the *_security_mode columns: 0 = SQL Server
-// authentication, 1 = Windows authentication.
-func SecurityMode(code int) string {
-	switch code {
-	case 0:
-		return "sql"
-	case 1:
-		return "windows"
+// InitializationCode is the inverse of Initialization. It also accepts the
+// unknown(sync_type=n,nosync_type=m) form.
+func InitializationCode(name string) (syncType, nosyncType int, err error) {
+	switch name {
+	case "snapshot":
+		return 1, 0, nil
+	case "none":
+		return 2, 0, nil
+	case "replication_support_only":
+		return 2, 1, nil
+	case "backup":
+		return 2, 2, nil
+	case "lsn":
+		return 2, 3, nil
 	}
-	return fmt.Sprintf("unknown(%d)", code)
+	if _, err := fmt.Sscanf(name, "unknown(sync_type=%d,nosync_type=%d)", &syncType, &nosyncType); err == nil {
+		return syncType, nosyncType, nil
+	}
+	return 0, 0, fmt.Errorf("unknown initialization %q", name)
 }
+
+// securityModes maps the *_security_mode columns: 0 = SQL Server
+// authentication, 1 = Windows authentication.
+var securityModes = codeTable{0: "sql", 1: "windows"}
+
+// SecurityMode decodes the *_security_mode columns.
+func SecurityMode(code int) string { return securityModes.name(code) }
+
+// SecurityModeCode is the inverse of SecurityMode.
+func SecurityModeCode(name string) (int, error) { return securityModes.code(name) }
+
+// subscriptionTypes maps syssubscriptions.subscription_type and
+// MSreplication_subscriptions.subscription_type. Measured on the lab
+// (11-defaults, D.sp_addpullsubscription.pull.@subscription_type).
+var subscriptionTypes = codeTable{0: "push", 1: "pull", 2: "anonymous"}
+
+// SubscriptionType decodes subscription_type.
+func SubscriptionType(code int) string { return subscriptionTypes.name(code) }
+
+// SubscriptionTypeCode is the inverse of SubscriptionType.
+func SubscriptionTypeCode(name string) (int, error) { return subscriptionTypes.code(name) }
+
+// subscriberTypes maps MSsubscriber_info.type (Learn, sp_addsubscription
+// @subscriber_type).
+var subscriberTypes = codeTable{0: "sql_server", 1: "odbc", 3: "oledb"}
+
+// SubscriberType decodes MSsubscriber_info.type.
+func SubscriberType(code int) string { return subscriberTypes.name(code) }
+
+// SubscriberTypeCode is the inverse of SubscriberType.
+func SubscriberTypeCode(name string) (int, error) { return subscriberTypes.code(name) }
 
 // msdb.dbo.sysschedules codes.
 var freqTypes = codeTable{
@@ -388,11 +442,20 @@ var freqSubdayTypes = codeTable{1: "at_time", 2: "seconds", 4: "minutes", 8: "ho
 // FreqType decodes sysschedules.freq_type.
 func FreqType(code int) string { return freqTypes.name(code) }
 
+// FreqTypeCode is the inverse of FreqType.
+func FreqTypeCode(name string) (int, error) { return freqTypes.code(name) }
+
 // FreqSubdayType decodes sysschedules.freq_subday_type.
 func FreqSubdayType(code int) string { return freqSubdayTypes.name(code) }
+
+// FreqSubdayTypeCode is the inverse of FreqSubdayType.
+func FreqSubdayTypeCode(name string) (int, error) { return freqSubdayTypes.code(name) }
 
 // agentTypes maps msdb.dbo.MSagent_profiles.agent_type.
 var agentTypes = codeTable{1: "snapshot", 2: "logreader", 3: "distribution", 4: "merge", 9: "queuereader"}
 
 // AgentType decodes MSagent_profiles.agent_type.
 func AgentType(code int) string { return agentTypes.name(code) }
+
+// AgentTypeCode is the inverse of AgentType.
+func AgentTypeCode(name string) (int, error) { return agentTypes.code(name) }

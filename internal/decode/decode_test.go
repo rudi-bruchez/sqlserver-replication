@@ -105,20 +105,83 @@ func TestParseCommand(t *testing.T) {
 }
 
 func TestCodeTablesRoundTrip(t *testing.T) {
-	for code := range articleTypes {
-		back, err := ArticleTypeCode(ArticleType(code))
-		if err != nil || back != code {
-			t.Fatalf("article type %d: got %d, %v", code, back, err)
+	tables := []struct {
+		name   string
+		table  codeTable
+		decode func(int) string
+		encode func(string) (int, error)
+	}{
+		{"articleTypes", articleTypes, ArticleType, ArticleTypeCode},
+		{"preCreationCmds", preCreationCmds, PreCreationCmd, PreCreationCmdCode},
+		{"syncMethods", syncMethods, SyncMethod, SyncMethodCode},
+		{"replFreqs", replFreqs, PublicationType, PublicationTypeCode},
+		{"publicationStatuses", publicationStatuses, PublicationStatus, PublicationStatusCode},
+		{"freqTypes", freqTypes, FreqType, FreqTypeCode},
+		{"freqSubdayTypes", freqSubdayTypes, FreqSubdayType, FreqSubdayTypeCode},
+		{"agentTypes", agentTypes, AgentType, AgentTypeCode},
+		{"securityModes", securityModes, SecurityMode, SecurityModeCode},
+		{"subscriptionTypes", subscriptionTypes, SubscriptionType, SubscriptionTypeCode},
+		{"subscriberTypes", subscriberTypes, SubscriberType, SubscriberTypeCode},
+	}
+	for _, tb := range tables {
+		// Distinct names: a duplicate would make the inverse depend on map
+		// order, so the check ranges over the table, not over the inverse.
+		seen := map[string]int{}
+		for code, name := range tb.table {
+			if other, dup := seen[name]; dup {
+				t.Errorf("%s: name %q used by codes %d and %d", tb.name, name, other, code)
+			}
+			seen[name] = code
+			back, err := tb.encode(tb.decode(code))
+			if err != nil || back != code {
+				t.Errorf("%s: code %d: got %d, %v", tb.name, code, back, err)
+			}
+		}
+		if got := tb.decode(97); got != "unknown(97)" {
+			t.Errorf("%s: decode(97) = %q", tb.name, got)
+		}
+		if back, err := tb.encode("unknown(97)"); err != nil || back != 97 {
+			t.Errorf("%s: unknown(97): got %d, %v", tb.name, back, err)
 		}
 	}
 	if ArticleType(2) != "unknown(2)" {
 		t.Fatalf("got %q", ArticleType(2))
 	}
-	if back, err := ArticleTypeCode("unknown(2)"); err != nil || back != 2 {
-		t.Fatalf("unknown(2): got %d, %v", back, err)
+}
+
+func TestSyncMethodCodes(t *testing.T) {
+	if SyncMethod(5) != "database_snapshot" || SyncMethod(6) != "database_snapshot_character" {
+		t.Fatalf("got %q, %q", SyncMethod(5), SyncMethod(6))
+	}
+	for name, want := range map[string]int{"database_snapshot": 5, "database_snapshot_character": 6} {
+		if got, err := SyncMethodCode(name); err != nil || got != want {
+			t.Fatalf("%s: got %d, %v", name, got, err)
+		}
 	}
 	if SyncMethod(2) != "unknown(2)" {
 		t.Fatalf("sync_method 2 is undocumented, got %q", SyncMethod(2))
+	}
+}
+
+func TestInitializationCode(t *testing.T) {
+	for _, in := range [][2]int{{1, 0}, {2, 0}, {2, 1}, {2, 2}, {2, 3}, {9, 9}} {
+		name := Initialization(in[0], in[1])
+		s, n, err := InitializationCode(name)
+		if err != nil || s != in[0] || n != in[1] {
+			t.Errorf("%s: got %d, %d, %v, want %v", name, s, n, err, in)
+		}
+	}
+	if _, _, err := InitializationCode("nonsense"); err == nil {
+		t.Error("nonsense must be rejected")
+	}
+}
+
+func TestPublicationOptionBits(t *testing.T) {
+	if got := PublicationOptionUnknownBits(0x20 | 0x40); got != 0 {
+		t.Fatalf("got 0x%X", got)
+	}
+	if got := PublicationOptionUnknownBits(0x200); got != 0x200 {
+		t.Fatalf("got 0x%X", got)
 	}
 }
 
