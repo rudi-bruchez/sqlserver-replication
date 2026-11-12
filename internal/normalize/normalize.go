@@ -941,6 +941,9 @@ func (n *normalizer) keepArticleValue(fv reflect.Value, f frame, pattern string)
 	if cv.Kind() != reflect.Pointer || cv.IsNil() {
 		return true
 	}
+	if !n.someMethodDefault(rel, f, ca, cv) {
+		return false
+	}
 	if c, ok := cv.Interface().(*model.Command); ok {
 		fv.Set(reflect.ValueOf(&model.Command{Mode: c.Mode}))
 		return true
@@ -949,6 +952,44 @@ func (n *normalizer) keepArticleValue(fv reflect.Value, f frame, pattern string)
 	nv.Elem().Set(cv.Elem())
 	fv.Set(nv)
 	return true
+}
+
+// someMethodDefault tells whether the current value cv of the property rel
+// of the existing article ca equals its creation default under some sync
+// method of the article's group: the same publication type and article
+// kind, the template filled with the article's source, a command compared
+// by its mode only (controller's ruling, Task 20 fix round 3). Only such a
+// value is kept: any other is drift, and takes the desired default, so that
+// the plan changes it back (spec "Omitted properties"; measured by the
+// round 2 re-review: destination_owner archive, ins_cmd SQL and an XCALL
+// to a user procedure set by hand were no longer corrected). Known
+// ambiguity, accepted by the controller: SQL stored on a native article is
+// character's default, so it is kept and not corrected; a hand change to
+// another sync method's default is never corrected.
+func (n *normalizer) someMethodDefault(rel string, f frame, ca *model.Article, cv reflect.Value) bool {
+	pubType, kind := deref(f.pub.Type), articleKind(ca.Type)
+	if pubType == "" {
+		pubType = "transactional"
+	}
+	for _, d := range n.table {
+		if d.Context.Object != "article" || d.Path != rel || d.Context.SyncMethod == "" ||
+			d.Context.PubType != "" && d.Context.PubType != pubType ||
+			d.Context.ArticleKind != "" && d.Context.ArticleKind != kind {
+			continue
+		}
+		v := Fill(d.Value, ca.Source.Schema, ca.Source.Name)
+		switch c := cv.Interface().(type) {
+		case *model.Command:
+			if strings.EqualFold(decode.ParseCommand(v).Mode, c.Mode) {
+				return true
+			}
+		case *string:
+			if *c == v {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // replacedArticle is the planner's R20 rule (internal/plan replaced): the
