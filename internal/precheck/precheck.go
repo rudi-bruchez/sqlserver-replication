@@ -368,13 +368,26 @@ func readAgent(ctx context.Context, db *sql.DB, ag *state.AgentServiceCheck) err
 	case errors.Is(err, sql.ErrNoRows):
 		ag.Checked, ag.Detail = true, "sys.dm_server_services has no SQL Server Agent row"
 	case err != nil && refused(err):
-		ag.Detail = "sys.dm_server_services could not be read: " + err.Error()
+		ag.Detail = "sys.dm_server_services could not be read: " + oneLine(err.Error())
 	case err != nil:
 		return err
 	default:
 		ag.Checked, ag.Running, ag.Detail = true, status == "Running", name+": "+status
 	}
 	return nil
+}
+
+// oneLine joins the lines of a message with "; ": go-mssqldb joins the
+// messages of one error with newlines (three for a read refused for want of
+// VIEW SERVER STATE), and a precondition's detail is one line of the plan.
+func oneLine(s string) string {
+	var parts []string
+	for _, l := range strings.Split(s, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			parts = append(parts, l)
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 // readLSNs checks the LSN of each subscription of the file initialized from
@@ -435,6 +448,13 @@ func readLSNs(ctx context.Context, c Conns, reached map[string]*sql.DB, desired 
 	return nil
 }
 
+// The reasons of a restore whose backup's last_lsn is not where the
+// subscriber database stands (Task 5 review, TestLabRestoreHistoryLSN).
+const (
+	r57PointInTime  = "the subscriber database was restored to a point in time (stop_at, stop_at_mark_name or stop_before): its LSN cannot be checked"
+	r57CreatedAfter = "the subscriber database was created after its last restore (its family_guid is not the backup's)"
+)
+
 func checkSubscriptionLSN(ctx context.Context, c Conns, reached map[string]*sql.DB, desired *model.Config, lc *state.LSNCheck,
 	readLogEnd func() error, logEnd *[10]byte, logEndErr *string) error {
 	if lc.LSN == "" {
@@ -459,7 +479,8 @@ func checkSubscriptionLSN(ctx context.Context, c Conns, reached map[string]*sql.
 		return nil
 	}
 	var last, dbName, server sql.NullString
-	err = db.QueryRowContext(ctx, qRestored, lc.Database).Scan(&last, &dbName, &server)
+	var pointInTime, family, exists int
+	err = db.QueryRowContext(ctx, qRestored, lc.Database).Scan(&last, &dbName, &server, &pointInTime, &family, &exists)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		lc.Reason = fmt.Sprintf("%s/%s has no restore history", lc.Subscriber, lc.Database)
@@ -469,6 +490,20 @@ func checkSubscriptionLSN(ctx context.Context, c Conns, reached map[string]*sql.
 		return nil
 	case err != nil:
 		return fmt.Errorf("%s: restore history of %s: %w", lc.Subscriber, lc.Database, err)
+	}
+	switch {
+	case exists == 0:
+		lc.Reason = fmt.Sprintf("%s/%s does not exist", lc.Subscriber, lc.Database)
+		return nil
+	case family == 2:
+		lc.Reason = fmt.Sprintf("the family_guid of %s/%s was not read", lc.Subscriber, lc.Database)
+		return nil
+	case family == 1:
+		lc.Checked, lc.Reason = true, r57CreatedAfter
+		return nil
+	case pointInTime == 1:
+		lc.Checked, lc.Reason = true, r57PointInTime
+		return nil
 	}
 	if !strings.EqualFold(dbName.String, desired.Publisher.Database) || !strings.EqualFold(server.String, desired.Publisher.Server) {
 		lc.Checked, lc.Reason = true, fmt.Sprintf("%s/%s was last restored from a backup of %s/%s, not of the publication database %s/%s",

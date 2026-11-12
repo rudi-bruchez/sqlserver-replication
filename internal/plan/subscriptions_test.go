@@ -384,6 +384,13 @@ func TestBuildLSNSubscription(t *testing.T) {
 		subOf(t, des, "SalesRef", "m_sdb_lsn").Type = str("pull")
 	})
 	wantRefusal(t, p, path+".type", "a pull subscription initialized from an LSN is not measured (10-init-modes I3 creates push subscriptions)")
+
+	// A subset is refused as a creation, not as an extension (review minor 4).
+	p = buildLab(t, checks(valid), func(des, cur *model.Config) {
+		edit(des, cur)
+		subOf(t, des, "SalesRef", "m_sdb_lsn").Articles = []string{"Product"}
+	})
+	wantRefusal(t, p, path+".articles", "a subscription initialized from an LSN to a subset of the articles is not measured (10-init-modes I3 creates it with @article = all)")
 }
 
 func TestTypeChangeRefused(t *testing.T) {

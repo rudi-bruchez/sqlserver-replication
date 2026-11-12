@@ -3,11 +3,13 @@ package precheck
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/url"
 	"os"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/microsoft/go-mssqldb"
 
@@ -291,5 +293,119 @@ func TestLabPrecheckApply(t *testing.T) {
 	// A missing database reads no row, not the current database's log.
 	if err := master.QueryRowContext(ctx, qLogEnd, "m_nodb").Scan(&e); err != sql.ErrNoRows {
 		t.Errorf("log end of m_nodb: %q %v, want no row", e, err)
+	}
+}
+
+// TestLabRestoreHistoryLSN checks R57 against real restores on the lab, on
+// m_lsn_ databases it creates and drops, reading only: no LSN is passed to
+// any procedure and no subscription is created. A COPY_ONLY backup
+// restored with its last_lsn is valid; a full backup and a log backup
+// restored WITH STOPAT is not (the log backup's last_lsn is past the point
+// the database was recovered to); a database dropped and created again
+// after its restore is not (restorehistory keeps its rows). Task 5 review,
+// Important 1 and 2.
+func TestLabRestoreHistoryLSN(t *testing.T) {
+	master := labDB(t, "master")
+	ctx := context.Background()
+	const dir = "/var/opt/mssql/data/"
+	dbs := []string{"m_lsn_pub", "m_lsn_pit", "m_lsn_cp"}
+	files := []string{"m_lsn_b1.bak", "m_lsn_l1.trn", "m_lsn_b2.bak"}
+	exec := func(q string) {
+		t.Helper()
+		if _, err := master.ExecContext(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	cleanup := func() error {
+		for _, d := range dbs {
+			q := "IF DB_ID(N'" + d + "') IS NOT NULL BEGIN ALTER DATABASE " + d + " SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE " + d + "; END;" +
+				" EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = N'" + d + "';"
+			if _, err := master.ExecContext(ctx, q); err != nil {
+				return err
+			}
+		}
+		for _, f := range files {
+			if _, err := master.ExecContext(ctx, "IF EXISTS (SELECT 1 FROM sys.dm_os_file_exists(N'"+dir+f+"') WHERE file_exists = 1) EXEC master.sys.xp_delete_files N'"+dir+f+"';"); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := cleanup(); err != nil {
+		t.Fatalf("cleanup before the test: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cleanup(); err != nil {
+			t.Errorf("cleanup: %v", err)
+		}
+	})
+	move := func(to string) string {
+		return "MOVE N'm_lsn_pub' TO N'" + dir + to + ".mdf', MOVE N'm_lsn_pub_log' TO N'" + dir + to + "_log.ldf'"
+	}
+	lastLSN := func(file string) string {
+		t.Helper()
+		var n string
+		if err := master.QueryRowContext(ctx, `SELECT TOP (1) CONVERT(varchar(30), b.last_lsn) FROM msdb.dbo.backupset AS b
+JOIN msdb.dbo.backupmediafamily AS f ON f.media_set_id = b.media_set_id
+WHERE f.physical_device_name = @p1 ORDER BY b.backup_set_id DESC`, dir+file).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		b, err := lsnFromNumeric(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fmt.Sprintf("0x%X", b)
+	}
+
+	exec("CREATE DATABASE m_lsn_pub; ALTER DATABASE m_lsn_pub SET RECOVERY FULL;")
+	exec("EXEC m_lsn_pub.sys.sp_executesql N'CREATE TABLE dbo.m_t (id int PRIMARY KEY); INSERT dbo.m_t VALUES (1), (2);'")
+	exec("BACKUP DATABASE m_lsn_pub TO DISK = N'" + dir + "m_lsn_b1.bak' WITH INIT")
+	exec("INSERT m_lsn_pub.dbo.m_t VALUES (3); WAITFOR DELAY '00:00:01';")
+	var stop string
+	if err := master.QueryRowContext(ctx, "SELECT CONVERT(varchar(23), GETDATE(), 121)").Scan(&stop); err != nil {
+		t.Fatal(err)
+	}
+	exec("WAITFOR DELAY '00:00:01'; INSERT m_lsn_pub.dbo.m_t VALUES (4);")
+	exec("BACKUP LOG m_lsn_pub TO DISK = N'" + dir + "m_lsn_l1.trn' WITH INIT")
+	exec("RESTORE DATABASE m_lsn_pit FROM DISK = N'" + dir + "m_lsn_b1.bak' WITH " + move("m_lsn_pit") + ", NORECOVERY")
+	exec("RESTORE LOG m_lsn_pit FROM DISK = N'" + dir + "m_lsn_l1.trn' WITH STOPAT = N'" + stop + "', RECOVERY")
+	var rows int
+	if err := master.QueryRowContext(ctx, "SELECT COUNT(*) FROM m_lsn_pit.dbo.m_t").Scan(&rows); err != nil || rows != 3 {
+		t.Fatalf("m_lsn_pit holds %d rows (%v), want 3: the STOPAT restore is not what the test needs", rows, err)
+	}
+	exec("BACKUP DATABASE m_lsn_pub TO DISK = N'" + dir + "m_lsn_b2.bak' WITH COPY_ONLY, INIT")
+	exec("RESTORE DATABASE m_lsn_cp FROM DISK = N'" + dir + "m_lsn_b2.bak' WITH " + move("m_lsn_cp") + ", RECOVERY")
+	pit, cp := lastLSN("m_lsn_l1.trn"), lastLSN("m_lsn_b2.bak")
+
+	check := func() map[string]state.LSNCheck {
+		t.Helper()
+		desired := &model.Config{Version: model.FormatVersion, Publisher: model.Publisher{Server: "REPLLAB", Database: "m_lsn_pub"},
+			Publications: []model.Publication{{Name: "m_p", Subscriptions: []model.Subscription{
+				{Subscriber: "REPLLAB", Database: "m_lsn_pit", Initialization: model.Ptr("lsn"), LSN: model.Ptr(pit)},
+				{Subscriber: "REPLLAB", Database: "m_lsn_cp", Initialization: model.Ptr("lsn"), LSN: model.Ptr(cp)},
+			}}}}
+		out := &state.Checks{}
+		if err := readLSNs(ctx, Conns{Subscribers: map[string]*sql.DB{"repllab": master}}, map[string]*sql.DB{"repllab": master}, desired, out); err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]state.LSNCheck{}
+		for _, lc := range out.LSNs {
+			got[lc.Database] = lc
+		}
+		return got
+	}
+	got := check()
+	if lc := got["m_lsn_cp"]; !lc.Checked || !lc.Valid {
+		t.Errorf("COPY_ONLY restore with its last_lsn %s: %+v, want valid", cp, lc)
+	}
+	if lc := got["m_lsn_pit"]; !lc.Checked || lc.Valid || lc.Reason != r57PointInTime {
+		t.Errorf("STOPAT restore with the log backup's last_lsn %s: %+v, want invalid: %s", pit, lc, r57PointInTime)
+	}
+
+	// Dropped and created again after its restore: the history stays.
+	time.Sleep(1100 * time.Millisecond)
+	exec("DROP DATABASE m_lsn_cp; CREATE DATABASE m_lsn_cp;")
+	if lc := check()["m_lsn_cp"]; !lc.Checked || lc.Valid || lc.Reason != r57CreatedAfter {
+		t.Errorf("m_lsn_cp created again: %+v, want invalid: %s", lc, r57CreatedAfter)
 	}
 }

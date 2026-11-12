@@ -725,7 +725,7 @@ func TestBuildJobPreconditions(t *testing.T) {
 		{"operator without ReadsJobs", &state.JobPermissionCheck{Checked: true, Operator: true}, nil,
 			"failed", operatorDetail, "unchecked"},
 		{"operator with ReadsJobs", &state.JobPermissionCheck{Checked: true, Operator: true, ReadsJobs: true}, nil,
-			"ok", "SQLAgentOperatorRole with SELECT on msdb.dbo.sysjobs, sysjobactivity and syssessions (that grant is not measured)", "unchecked"},
+			"ok", "SQLAgentOperatorRole with SELECT on msdb.dbo.sysjobs, sysjobactivity and syssessions", "unchecked"},
 		{"not read", &state.JobPermissionCheck{}, &state.AgentServiceCheck{Detail: "sys.dm_server_services could not be read: x"},
 			"unchecked", "not read", "unchecked"},
 		{"no check", nil, &state.AgentServiceCheck{Checked: true, Detail: "SQL Server Agent (MSSQLSERVER): Stopped"},

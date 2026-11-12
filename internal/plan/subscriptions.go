@@ -46,6 +46,7 @@ const (
 	r57Invalid   = "the LSN %s of %s is refused: %s (R57)"
 	r57NoCheck   = "no check of it was read"
 	r57Pull      = "a pull subscription initialized from an LSN is not measured (10-init-modes I3 creates push subscriptions)"
+	r57Subset    = "a subscription initialized from an LSN to a subset of the articles is not measured (10-init-modes I3 creates it with @article = all)"
 )
 
 const subPrefix = "publications[*].subscriptions[*]."
@@ -171,6 +172,10 @@ func (b *builder) addSubscription(pd *model.Publication, s *model.Subscription) 
 	if stringOr(s.Initialization, initSnapshot) == "lsn" {
 		if typ == "pull" {
 			b.refuse(path+".type", "%s", r57Pull)
+			return
+		}
+		if len(s.Articles) > 0 {
+			b.refuse(path+".articles", "%s", r57Subset)
 			return
 		}
 		if !b.lsnChecked(pd, s, path) {

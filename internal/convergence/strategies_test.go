@@ -437,7 +437,15 @@ func TestLabPropertiesAndSchedule(t *testing.T) {
 			t.Errorf("%d %s %s %s: no profile operation and no unpublishing (R27) expected", op.Seq, op.Kind, op.Path, procedure(op))
 		}
 	}
-	jobsAroundAll(t, p, false)
+	// R61: the snapshot job of the dropped publication is restored on a way
+	// out of apply before the drop, by a batch guarded on the job existing,
+	// which does nothing once the drop has run (Task 4).
+	jobsAroundAll(t, p, true)
+	for _, op := range p.Operations {
+		if op.Kind == "job_restore" && op.Call.Guard != "@job_id IS NOT NULL" {
+			t.Errorf("%d job_restore %s: guard %q, want @job_id IS NOT NULL (R61)", op.Seq, op.Path, op.Call.Guard)
+		}
+	}
 	wantAgents(t, p, nil)
 	e.run(t, p)
 	e.converged(t, des)

@@ -702,7 +702,7 @@ const (
 	agentObject         = "SQL Server Agent service"
 	notRead             = "not read"
 	jobSysadmin         = "sysadmin"
-	jobOperatorReads    = "SQLAgentOperatorRole with SELECT on msdb.dbo.sysjobs, sysjobactivity and syssessions (that grant is not measured)"
+	jobOperatorReads    = "SQLAgentOperatorRole with SELECT on msdb.dbo.sysjobs, sysjobactivity and syssessions"
 	jobOperatorRefused  = "SQLAgentOperatorRole without SELECT on msdb.dbo.sysjobs, sysjobactivity and syssessions: the job prologue and JobIdle fail with 229 (20-apply AP.perm.m_ap_oper.prologue, .activity)"
 	jobNoRole           = "neither sysadmin nor a member of SQLAgentOperatorRole in msdb: the job operations fail with 229 or 14262 (20-apply AP.perm.m_ap_user, m_ap_none)"
 	agentStoppedDetail  = "SQL Server Agent is not running: the jobs apply starts would not run"
@@ -714,7 +714,9 @@ const (
 // syssessions: SQLAgentOperatorRole alone runs sp_update_job and
 // sp_start_job but fails with 229 on both reads (20-apply
 // AP.perm.m_ap_oper.*). So it is ok for a sysadmin, or for an operator
-// granted SELECT on the three tables, a case no row measured; failed
+// granted SELECT on the three tables (the Task 5 review measured such a
+// login: the prologue's read of sysjobs and the JobIdle predicate ran, and
+// Task 1 measured sp_update_job and sp_start_job for the role); failed
 // otherwise; unchecked when it was not read.
 func jobPermission(c *state.Checks, server string) Precondition {
 	pc := Precondition{Name: "msdb job permission", Server: server, Object: jobPermissionObject, Status: precondUnchecked, Detail: notRead}

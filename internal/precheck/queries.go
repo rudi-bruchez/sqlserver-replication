@@ -95,11 +95,25 @@ WHERE d.id IS NOT NULL`
 	// qRestored runs at a subscriber (R57): the backup the database @p1 was
 	// last restored from, its last_lsn as text, its database and server
 	// (20-apply AP.lsn.restorehistory equal, AP.lsn.backupset_database
-	// db=yes server=yes).
+	// db=yes server=yes); whether that restore stopped at a point in time
+	// (stop_at, stop_at_mark_name, stop_before: the database is then not at
+	// the backup's last_lsn); and whether the database is still the one
+	// restored, which restorehistory cannot say since it keeps its rows after
+	// a DROP DATABASE: its family_guid equals the backup's (0), differs (1,
+	// a database created after the restore), or is not read (2). The
+	// create_date of a restored database is a few milliseconds after the
+	// restore_date of its row (7 and 10 ms on the lab), so the dates cannot
+	// tell a database created after the restore (TestLabRestoreHistoryLSN).
+	// The last column is 0 when the database does not exist.
 	qRestored = `
-SELECT TOP (1) CONVERT(varchar(30), b.last_lsn), b.database_name, b.server_name
+SELECT TOP (1) CONVERT(varchar(30), b.last_lsn), b.database_name, b.server_name,
+       CAST(CASE WHEN h.stop_at IS NOT NULL OR h.stop_at_mark_name IS NOT NULL OR h.stop_before = 1 THEN 1 ELSE 0 END AS int),
+       CAST(CASE WHEN r.family_guid IS NULL THEN 2 WHEN r.family_guid = b.family_guid THEN 0 ELSE 1 END AS int),
+       CAST(CASE WHEN d.database_id IS NULL THEN 0 ELSE 1 END AS int)
 FROM msdb.dbo.restorehistory AS h
 JOIN msdb.dbo.backupset AS b ON b.backup_set_id = h.backup_set_id
+LEFT JOIN sys.databases AS d ON d.name = @p1
+LEFT JOIN sys.database_recovery_status AS r ON r.database_id = d.database_id
 WHERE h.destination_database_name = @p1
 ORDER BY h.restore_history_id DESC`
 
