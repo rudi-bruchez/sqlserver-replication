@@ -639,8 +639,14 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 ### Restore history after a DROP DATABASE
 
 - Expected: the restore history of a database goes with it.
-- Observed: `msdb.dbo.restorehistory` keeps its rows after `DROP DATABASE`; a database created again under the same name still reads the old restore as its last one. `create_date` cannot tell them apart: a freshly restored database has a `create_date` a few milliseconds after its `restore_date` (7 and 10 ms on the lab), so "created after the restore" is true of a valid restore too. `sys.database_recovery_status.family_guid` equals the restored backup's `backupset.family_guid` and differs for a database created by `CREATE DATABASE`; the precheck compares those.
+- Observed: `msdb.dbo.restorehistory` keeps its rows after `DROP DATABASE`; a database created again under the same name still reads the old restore as its last one. `create_date` cannot tell them apart: on a plain restore, `create_date` is about 10 ms after `restore_date` (7 and 10 ms on the lab), so "created after the restore" is true of a valid restore too; after NORECOVERY then RECOVERY, `create_date` keeps the NORECOVERY start and is earlier than the RECOVERY row's `restore_date` (the 0.5 s "before" first reported by the review came from that sequence). `sys.database_recovery_status.family_guid` equals the restored backup's `backupset.family_guid` and differs for a database created by `CREATE DATABASE`; the precheck compares those.
 - Source: measured, plan 4 Task 5 review (Important 2), Task 5 fix round 1 probe and `TestLabRestoreHistoryLSN`, 2022 CU27 (2026-11-13).
+
+### A database restored under a temporary name and renamed
+
+- Expected: the last `restorehistory` row of a database is its last restore.
+- Observed: `restorehistory` keys on the destination name. A backup restored as a temporary database, the target dropped, and the temporary database renamed into place by `ALTER DATABASE ... MODIFY NAME`: the row of that restore stays under the temporary name, and the target name reads an older restore of the same family. The R57 check accepts that older backup's LSN, which would skip the changes between the two backups. Recorded as a known limit of R57, not fixed: no measured tolerance on `create_date` separates it, and the rename is a deliberate act of the operator.
+- Source: measured, plan 4 Task 5 re-review, 2022 CU27 (2026-11-13).
 
 ### Converting an LSN
 

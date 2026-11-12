@@ -104,7 +104,19 @@ WHERE d.id IS NOT NULL`
 	// create_date of a restored database is a few milliseconds after the
 	// restore_date of its row (7 and 10 ms on the lab), so the dates cannot
 	// tell a database created after the restore (TestLabRestoreHistoryLSN).
-	// The last column is 0 when the database does not exist.
+	// The last column is 0 when the database does not exist. Those dates
+	// are those of a plain restore; after NORECOVERY then RECOVERY,
+	// create_date keeps the NORECOVERY start, earlier than the RECOVERY
+	// row's restore_date (Task 5 re-review).
+	//
+	// Known limit of R57, not fixed: restorehistory keys on the destination
+	// name. A database restored under a temporary name and renamed into
+	// place (ALTER DATABASE ... MODIFY NAME) has its row under the temporary
+	// name, so this reads an older restore of the target name, of the same
+	// family, and its LSN passes: the changes between the two backups would
+	// be skipped (measured by the Task 5 re-review). No measured tolerance
+	// on create_date tells it apart, and the rename is a deliberate act of
+	// the operator, who must give the LSN of the backup actually restored.
 	qRestored = `
 SELECT TOP (1) CONVERT(varchar(30), b.last_lsn), b.database_name, b.server_name,
        CAST(CASE WHEN h.stop_at IS NOT NULL OR h.stop_at_mark_name IS NOT NULL OR h.stop_before = 1 THEN 1 ELSE 0 END AS int),
