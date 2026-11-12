@@ -193,12 +193,17 @@ func (e *env) teardown(t *testing.T) error {
 // residueQuery lists what a test leaves: its two databases, a publication
 // of its database at the distributor, a job named with either database, a
 // profile named m_prof_<name>. The names are matched exactly, never by a
-// wildcard on m_ (carried decision 9: M_FRESHSUB is not ours).
+// wildcard on m_ (carried decision 9: M_FRESHSUB is not ours). A job name
+// holds the database as a token between hyphens, as replication names its
+// jobs (REPLLAB-m_pdb_create-49, REPLLAB-m_pdb_create-m_p-2356,
+// repllab-m_pdb_create-m_p-repllab-2321, read on the lab), so the match
+// is on "-<db>-": a bare substring would also take the jobs of a test whose
+// name extends this one's (create and createx).
 const residueQuery = `
 SELECT N'database ' + name FROM sys.databases WHERE name IN (@db, @sub)
 UNION ALL SELECT N'publication ' + publication FROM distribution.dbo.MSpublications WHERE publisher_db = @db
 UNION ALL SELECT N'subscription to ' + subscriber_db FROM distribution.dbo.MSsubscriptions WHERE subscriber_db = @sub OR publisher_db = @db
-UNION ALL SELECT N'job ' + name FROM msdb.dbo.sysjobs WHERE CHARINDEX(@db, name) > 0 OR CHARINDEX(@sub, name) > 0
+UNION ALL SELECT N'job ' + name FROM msdb.dbo.sysjobs WHERE CHARINDEX(N'-' + @db + N'-', name) > 0 OR CHARINDEX(N'-' + @sub + N'-', name) > 0
 UNION ALL SELECT N'profile ' + profile_name FROM msdb.dbo.MSagent_profiles WHERE profile_name = @prof`
 
 func (e *env) residue() ([]string, error) {
@@ -353,14 +358,20 @@ func (e *env) run(t *testing.T, p *plan.Plan) {
 		}
 		if _, err := conn.ExecContext(ctx, st.Text, args...); err != nil {
 			var tc int
+			trancount := ""
 			terr := conn.QueryRowContext(ctx, "SELECT @@TRANCOUNT").Scan(&tc)
+			if terr != nil {
+				trancount = fmt.Sprintf("@@TRANCOUNT not read: %v", terr)
+			} else {
+				trancount = fmt.Sprintf("@@TRANCOUNT %d", tc)
+			}
 			if terr == nil && tc > 0 {
 				if _, rerr := conn.ExecContext(ctx, "IF @@TRANCOUNT > 0 ROLLBACK"); rerr != nil {
 					t.Logf("rollback: %v", rerr)
 				}
 			}
-			t.Fatalf("operation %d %s %s %s at %s (@@TRANCOUNT %d): %v\n%s", op.Seq, op.Action, op.Kind, op.Path,
-				st.Server, tc, err, st.Text)
+			t.Fatalf("operation %d %s %s %s at %s (%s): %v\n%s", op.Seq, op.Action, op.Kind, op.Path,
+				st.Server, trancount, err, st.Text)
 		}
 		if op.Kind == "generate_and_wait" {
 			e.waitAll(t)
@@ -368,14 +379,17 @@ func (e *env) run(t *testing.T, p *plan.Plan) {
 	}
 }
 
-// startAndWait starts the snapshot agent of each publication of
+// startAndWait starts the snapshot agent of each snapshot ref of
 // AgentsToStart (sp_startpublication_snapshot, never sp_start_job: carried
-// decision 6), then waits for the deliveries the test expects.
+// decision 6), then waits for the deliveries the test expects. The
+// distribution refs are not started: the push agent runs on its own; the
+// tests assert AgentsToStart exactly (wantAgents), so a plan that forgets
+// the snapshot agent leaves the delivery undone.
 func (e *env) startAndWait(t *testing.T, p *plan.Plan) {
 	t.Helper()
 	started := map[string]bool{}
 	for _, a := range p.AgentsToStart {
-		if started[a.Publication] || a.Publication == "ALL" {
+		if a.Kind != "snapshot" || started[a.Publication] {
 			continue
 		}
 		started[a.Publication] = true
@@ -521,14 +535,4 @@ func matches(op plan.Operation, want map[string]string) bool {
 		}
 	}
 	return true
-}
-
-// hasCost tells whether an operation is listed with a cost.
-func hasCost(op plan.Operation, c plan.Cost) bool {
-	for _, x := range op.Costs {
-		if x == c {
-			return true
-		}
-	}
-	return false
 }

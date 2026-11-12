@@ -58,6 +58,66 @@ func inOrder(t *testing.T, p *plan.Plan, steps []step) {
 	}
 }
 
+// wantAgents checks AgentsToStart exactly, by kind, publication,
+// subscriber and database (the names without regard to case, R7).
+func wantAgents(t *testing.T, p *plan.Plan, want []plan.AgentRef) {
+	t.Helper()
+	ok := len(p.AgentsToStart) == len(want)
+	for i := 0; ok && i < len(want); i++ {
+		g, w := p.AgentsToStart[i], want[i]
+		ok = g.Kind == w.Kind && g.Publication == w.Publication &&
+			strings.EqualFold(g.Subscriber, w.Subscriber) && strings.EqualFold(g.Database, w.Database)
+	}
+	if !ok {
+		t.Fatalf("AgentsToStart %+v, want %+v\n%s", p.AgentsToStart, want, p.Summary())
+	}
+}
+
+// snapshotAndPush is the AgentsToStart of a plan that owes m_p's
+// subscription a generation: the snapshot agent, then the push agent.
+func (e *env) snapshotAndPush() []plan.AgentRef {
+	return []plan.AgentRef{
+		{Kind: "snapshot", Publication: "m_p"},
+		{Kind: "distribution", Publication: "m_p", Subscriber: e.server, Database: e.sub},
+	}
+}
+
+// jobsAround checks R24's job operations around the plan's article and
+// subscription operations: a job_disable before the first, a job_restore
+// after the last.
+func jobsAround(t *testing.T, p *plan.Plan) {
+	t.Helper()
+	first, last := -1, -1
+	for i, op := range p.Operations {
+		if strings.HasPrefix(op.Kind, "article") || strings.HasPrefix(op.Kind, "subscription") {
+			if first < 0 {
+				first = i
+			}
+			last = i
+		}
+	}
+	if first < 0 {
+		t.Fatalf("no article or subscription operation\n%s", p.Summary())
+	}
+	disable, restore := false, false
+	for i, op := range p.Operations {
+		disable = disable || op.Kind == "job_disable" && i < first
+		restore = restore || op.Kind == "job_restore" && i > last
+	}
+	if !disable || !restore {
+		t.Fatalf("job_disable before the first article or subscription operation: %v, job_restore after the last: %v\n%s",
+			disable, restore, p.Summary())
+	}
+}
+
+// wantCosts checks an operation's cost list exactly.
+func wantCosts(t *testing.T, op plan.Operation, want ...plan.Cost) {
+	t.Helper()
+	if !reflect.DeepEqual(op.Costs, want) {
+		t.Errorf("%d %s %s costs %v, want %v", op.Seq, op.Kind, op.Path, op.Costs, want)
+	}
+}
+
 // createAndDeliver plans create.yaml, runs it, starts the snapshot and
 // waits until the subscriber holds m_t1's 10 rows and m_t2's 20.
 func createAndDeliver(t *testing.T, e *env) *plan.Plan {
@@ -66,6 +126,7 @@ func createAndDeliver(t *testing.T, e *env) *plan.Plan {
 	if len(p.Refusals) > 0 {
 		t.Fatalf("create.yaml refused:\n%s", p.Summary())
 	}
+	wantAgents(t, p, e.snapshotAndPush())
 	e.run(t, p)
 	e.deliveries = []delivery{{"m_t1", 10}, {"m_t2", 20}}
 	e.startAndWait(t, p)
@@ -94,17 +155,8 @@ func TestLabCreatePublication(t *testing.T) {
 		{"sp_addsubscription", nil},
 		{"sp_addpushsubscription_agent", nil},
 	})
-	// The R24 job operations around them: the snapshot job disabled after
-	// its creation, restored at the end.
-	var kinds []string
-	for _, op := range p.Operations {
-		if strings.HasPrefix(op.Kind, "job_") {
-			kinds = append(kinds, op.Kind)
-		}
-	}
-	if len(kinds) == 0 || kinds[0] != "job_disable" || !strings.Contains(strings.Join(kinds, " "), "job_restore") {
-		t.Errorf("job operations %v, want a job_disable then a job_restore\n%s", kinds, p.Summary())
-	}
+	jobsAround(t, p)
+	wantAgents(t, p, e.snapshotAndPush())
 
 	e.run(t, p)
 	e.deliveries = []delivery{{"m_t1", 10}, {"m_t2", 20}}
@@ -158,9 +210,7 @@ func TestLabAddArticle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, p.Summary())
 	}
-	if !reflect.DeepEqual(add.Costs, []plan.Cost{plan.CostOnline}) {
-		t.Errorf("sp_addarticle m_t3 costs %v, want online", add.Costs)
-	}
+	wantCosts(t, add, plan.CostOnline)
 	var exts []plan.Operation
 	for _, op := range p.Operations {
 		if procedure(op) == "sp_addsubscription" {
@@ -171,9 +221,9 @@ func TestLabAddArticle(t *testing.T) {
 		"@subscription_type": "N'push'", "@sync_type": "N'automatic'"}) {
 		t.Fatalf("want one sp_addsubscription @article = N'm_t3', push, automatic\n%s%s", p.Summary(), p.SQL())
 	}
-	if !reflect.DeepEqual(exts[0].Costs, []plan.Cost{plan.CostNewSnapshot}) {
-		t.Errorf("sp_addsubscription m_t3 costs %v, want new_snapshot", exts[0].Costs)
-	}
+	wantCosts(t, exts[0], plan.CostNewSnapshot)
+	jobsAround(t, p)
+	wantAgents(t, p, e.snapshotAndPush())
 
 	e.run(t, p)
 	e.deliveries = []delivery{{"m_t3", 20}}
@@ -195,9 +245,11 @@ func TestLabFilterChange(t *testing.T) {
 		{"sp_articleview", map[string]string{"@article": "N'm_t1'", "@filter_clause": "N'a > 5'"}},
 	})
 	flt, _ := find(p, "sp_articlefilter", nil)
-	if !hasCost(flt, plan.CostReinitialization) {
-		t.Errorf("sp_articlefilter costs %v, want reinitialization", flt.Costs)
-	}
+	wantCosts(t, flt, plan.CostReinitialization, plan.CostNewSnapshot, plan.CostSubscriberDataReplaced)
+	view, _ := find(p, "sp_articleview", nil)
+	wantCosts(t, view, plan.CostOnline)
+	jobsAround(t, p)
+	wantAgents(t, p, e.snapshotAndPush())
 
 	e.run(t, p)
 	e.deliveries = []delivery{{"m_t1", 5}}
@@ -222,13 +274,12 @@ func TestLabDropArticle(t *testing.T) {
 		{"sp_droparticle", map[string]string{"@article": "N'm_t2'",
 			"@force_invalidate_snapshot": "", "@force_reinit_subscription": ""}},
 	})
-	left := false
-	for _, op := range p.Operations {
-		left = left || hasCost(op, plan.CostSubscriberObjectLeft)
-	}
-	if !left {
-		t.Errorf("no operation costs subscriber_object_left\n%s", p.Summary())
-	}
+	dropSub, _ := find(p, "sp_dropsubscription", nil)
+	wantCosts(t, dropSub, plan.CostOnline, plan.CostSubscriberObjectLeft)
+	dropArt, _ := find(p, "sp_droparticle", nil)
+	wantCosts(t, dropArt, plan.CostOnline, plan.CostSubscriberObjectLeft)
+	jobsAround(t, p)
+	wantAgents(t, p, nil)
 
 	e.run(t, p)
 	e.deliveries = nil
