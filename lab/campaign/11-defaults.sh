@@ -52,7 +52,11 @@
 #                           push.fresh-subscriber.@subscriber_type: a push subscription of m_ps
 #                           to m_freshsub (database m_dsub5), a subscriber name registered
 #                           nowhere before the call; the result is MSsubscriber_info.type, or
-#                           the error number when the call is refused. push.rso.@status,
+#                           the error number when the call is refused.
+#                           pull.fresh-subscriber.@subscriber_type: the same with
+#                           @subscription_type = pull, to m_freshpull (database m_dpull5),
+#                           another name registered nowhere (nor in MSreplservers) before
+#                           the call. push.rso.@status,
 #                           extend.pull.@status, .@subscription_type, .agents and
 #                           extend.rso.@status: on m_pa_ext (native, independent agent,
 #                           allow_pull, status active, article m_x1 on dbo.m_tx1), a push
@@ -76,7 +80,9 @@
 # @schema_option 0x0000000000030071, table.non-dbo-schema @destination_owner m_s and
 # @ins_cmd CALL [dbo].[m_ins]; the agent contexts found their job (no no-job in the
 # schedule rows of the push, pull, snapshot agents and in the log reader's job name);
-# after the cleanup, distribution keeps no MSpublisher_databases row for an m_ database.
+# after the cleanup, distribution keeps no MSpublisher_databases row for an m_ database, and
+# m_freshpull is left nowhere (sys.servers, MSsubscriber_info, MSsubscriber_schedule,
+# MSreplservers).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 . "$here/../lib.sh"
@@ -467,13 +473,38 @@ BEGIN
 END;
 CLOSE c; DEALLOCATE c;
 GO
--- m_freshsub: sp_addsubscription registered it (or left it registered after a refusal);
--- sp_dropsubscriber leaves its sys.servers row, so both drops run, each in its own TRY.
+-- m_freshsub, m_freshpull: sp_addsubscription registered them (or left them registered
+-- after a refusal); sp_dropsubscriber leaves the sys.servers row, so both drops run, each
+-- in its own TRY.
 USE master;
 BEGIN TRY EXEC sp_dropsubscriber @subscriber = N'm_freshsub'; END TRY BEGIN CATCH END CATCH;
 WHILE @@TRANCOUNT > 0 ROLLBACK;
 BEGIN TRY EXEC sp_dropserver @server = N'm_freshsub'; END TRY BEGIN CATCH END CATCH;
 WHILE @@TRANCOUNT > 0 ROLLBACK;
+BEGIN TRY EXEC sp_dropsubscriber @subscriber = N'm_freshpull'; END TRY BEGIN CATCH END CATCH;
+WHILE @@TRANCOUNT > 0 ROLLBACK;
+BEGIN TRY EXEC sp_dropserver @server = N'm_freshpull'; END TRY BEGIN CATCH END CATCH;
+WHILE @@TRANCOUNT > 0 ROLLBACK;
+GO
+-- The distribution database names m_freshpull in MSreplservers too, and no procedure
+-- deletes that row. It is deleted only when nothing still refers to it: no int or
+-- smallint server id column of a distribution table (publisher_id, subscriber_id, srvid
+-- and the like) holds its id, and no subscriber row or linked server has its name. The
+-- M_FRESHSUB row an earlier run of this script left is not touched.
+USE distribution;
+DECLARE @id int = (SELECT srvid FROM dbo.MSreplservers WHERE UPPER(srvname) = N'M_FRESHPULL');
+IF @id IS NOT NULL
+BEGIN
+    DECLARE @q nvarchar(max) = N'SELECT @n = 0', @n int;
+    SELECT @q += N' + (SELECT COUNT(*) FROM ' + QUOTENAME(SCHEMA_NAME(t.schema_id)) + N'.' + QUOTENAME(t.name) + N' WHERE ' + QUOTENAME(c.name) + N' = @id)'
+    FROM sys.tables t JOIN sys.columns c ON c.object_id = t.object_id
+    WHERE t.name <> N'MSreplservers' AND TYPE_NAME(c.system_type_id) IN (N'int', N'smallint')
+      AND (c.name LIKE N'%publisher[_]id' OR c.name LIKE N'%subscriber[_]id' OR c.name LIKE N'%srvid' OR c.name LIKE N'%server[_]id');
+    SET @q += N' + (SELECT COUNT(*) FROM dbo.MSsubscriber_info WHERE UPPER(subscriber) = N''M_FRESHPULL'') + (SELECT COUNT(*) FROM dbo.MSsubscriber_schedule WHERE UPPER(subscriber) = N''M_FRESHPULL'') + (SELECT COUNT(*) FROM sys.servers WHERE UPPER(name) = N''M_FRESHPULL'')';
+    EXEC sp_executesql @q, N'@id int, @n int OUTPUT', @id, @n OUTPUT;
+    IF @n = 0 DELETE FROM dbo.MSreplservers WHERE srvid = @id;
+    ELSE PRINT CONCAT(N'm_freshpull: MSreplservers row ', @id, N' kept, ', @n, N' references');
+END;
 GO
 USE Sales;
 DROP TABLE IF EXISTS dbo.m_t, dbo.m_tf, dbo.m_tv, dbo.m_tc, dbo.m_tx1, dbo.m_tx2;
@@ -680,6 +711,16 @@ fresh_type=$(sql_value "SELECT ISNULL((SELECT TOP (1) CONVERT(nvarchar(10), type
 [ "$fresh_call" = ok ] || fresh_type=$fresh_call
 single D.sp_addsubscription.push.fresh-subscriber.@subscriber_type "$fresh_type" \
     "column=distribution.dbo.MSsubscriber_info.type of (publisher, m_freshsub) (0 SQL Server), m_freshsub registered nowhere before the call; after the call: $fresh declared=$decl_subtype call=$fresh_call${fresh_msg:+ ($fresh_msg)}"
+# The same on a pull subscription, to another fresh name; m_ps allows pull.
+pre=$(sql_value "SELECT CONCAT((SELECT COUNT(*) FROM sys.servers WHERE UPPER(name) = N'M_FRESHPULL'), N'/', (SELECT COUNT(*) FROM distribution.dbo.MSsubscriber_info WHERE UPPER(subscriber) = N'M_FRESHPULL'), N'/', (SELECT COUNT(*) FROM distribution.dbo.MSreplservers WHERE UPPER(srvname) = N'M_FRESHPULL'))")
+[ "$pre" = 0/0/0 ] || def_fail "m_freshpull is registered before the call (sys.servers/MSsubscriber_info/MSreplservers: $pre)"
+try_in Sales "EXEC @rc = sp_addsubscription @publication = N'm_ps', @subscriber = N'm_freshpull', @destination_db = N'm_dpull5', @subscription_type = N'pull';"
+fpull_call=$TRY_RESULT; fpull_msg=$TRY_MSG
+fpull=$(sql_value "SELECT CONCAT(N'servers=', (SELECT COUNT(*) FROM sys.servers WHERE UPPER(name) = N'M_FRESHPULL'), N' subscriber_info=', ISNULL((SELECT TOP (1) CONVERT(nvarchar(10), type) FROM distribution.dbo.MSsubscriber_info WHERE UPPER(subscriber) = N'M_FRESHPULL'), N'no-row'), N' subscriber_schedule_rows=', (SELECT COUNT(*) FROM distribution.dbo.MSsubscriber_schedule WHERE UPPER(subscriber) = N'M_FRESHPULL'), N' replservers=', (SELECT COUNT(*) FROM distribution.dbo.MSreplservers WHERE UPPER(srvname) = N'M_FRESHPULL'), N' subscription_rows=', (SELECT COUNT(*) FROM Sales.dbo.syssubscriptions s JOIN sys.servers v ON v.server_id = s.srvid WHERE UPPER(v.name) = N'M_FRESHPULL' AND s.srvid >= 0), N' subscription_type=', ISNULL((SELECT STRING_AGG(CONVERT(nvarchar(10), s.subscription_type), N'/') FROM Sales.dbo.syssubscriptions s JOIN sys.servers v ON v.server_id = s.srvid WHERE UPPER(v.name) = N'M_FRESHPULL' AND s.srvid >= 0), N'none'))")
+fpull_type=$(sql_value "SELECT ISNULL((SELECT TOP (1) CONVERT(nvarchar(10), type) FROM distribution.dbo.MSsubscriber_info WHERE UPPER(subscriber) = N'M_FRESHPULL'), N'no-row')")
+[ "$fpull_call" = ok ] || fpull_type=$fpull_call
+single D.sp_addsubscription.pull.fresh-subscriber.@subscriber_type "$fpull_type" \
+    "column=distribution.dbo.MSsubscriber_info.type of (publisher, m_freshpull) (0 SQL Server), m_freshpull registered nowhere (sys.servers, MSsubscriber_info, MSreplservers) before the pull call; after the call: $fpull declared=$decl_subtype call=$fpull_call${fpull_msg:+ ($fpull_msg)}"
 
 # The statuses of R10 and R36 on m_pa_ext.
 sql -b <<'SQL' >&2
@@ -756,6 +797,8 @@ done
 cleanup
 pubdbs=$(sql_value "SELECT COUNT(*) FROM distribution.dbo.MSpublisher_databases WHERE publisher_db LIKE N'm\_%' ESCAPE N'\'")
 [ "$pubdbs" = 0 ] || control "distribution keeps $pubdbs MSpublisher_databases rows for m_ databases after the cleanup"
+fpull_left=$(sql_value "SELECT CONCAT((SELECT COUNT(*) FROM sys.servers WHERE UPPER(name) = N'M_FRESHPULL'), N'/', (SELECT COUNT(*) FROM distribution.dbo.MSsubscriber_info WHERE UPPER(subscriber) = N'M_FRESHPULL'), N'/', (SELECT COUNT(*) FROM distribution.dbo.MSsubscriber_schedule WHERE UPPER(subscriber) = N'M_FRESHPULL'), N'/', (SELECT COUNT(*) FROM distribution.dbo.MSreplservers WHERE UPPER(srvname) = N'M_FRESHPULL'))")
+[ "$fpull_left" = 0/0/0/0 ] || control "m_freshpull is left after the cleanup (sys.servers/MSsubscriber_info/MSsubscriber_schedule/MSreplservers: $fpull_left)"
 for c in "${COUNTS[@]}"; do echo "count $c"; done
 echo "count sum: $COUNT_SUM, single rows: $EXTRA_ROWS"
 if [ "$bad" != 0 ]; then

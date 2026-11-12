@@ -1,7 +1,5 @@
 # The publication m_pp of {db}: m_t1, pulled by {sub}. The pull agent
-# job has no schedule: the tests start it. subscriber_type is written:
-# its default for a pull subscription is not measured (11-defaults has
-# only the push fresh-subscriber row).
+# job has no schedule: the tests start it.
 # The snapshot agent's schedule never fires: the tests start it. The
 # distributor is the lab's, not compared (R4).
 version: 2
@@ -29,5 +27,4 @@ publications:
       - subscriber: {server}
         database: {sub}
         type: pull
-        subscriber_type: sql_server
         initialization: snapshot

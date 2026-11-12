@@ -167,8 +167,9 @@ func concat(groups ...[]Default) []Default {
 // two paths (sp_addarticle @status) gives two entries. A row that cannot be
 // expressed is in notDefaults with its reason.
 //
-// sp_addsubscription @subscriber_type comes from the fresh-subscriber row:
-// the push and pull rows read a subscriber registered beforehand.
+// sp_addsubscription @subscriber_type comes from the fresh-subscriber rows,
+// one per subscription type (push and pull): the push and pull rows read a
+// subscriber registered beforehand.
 //
 // The contexts of a subscription and its agents were measured on a
 // transactional publication only, so they carry that PubType: a
@@ -832,6 +833,9 @@ var Defaults = concat(
 		e("@subscriber_login", "distribution_agent.connection.login", "", "''"),
 	),
 	measured("11-defaults D.sp_addsubscription.push.fresh-subscriber", Context{"push_subscription", "transactional", "", ""},
+		e("@subscriber_type", "subscriber_type", "sql_server", "0"),
+	),
+	measured("11-defaults D.sp_addsubscription.pull.fresh-subscriber", Context{"pull_subscription", "transactional", "", ""},
 		e("@subscriber_type", "subscriber_type", "sql_server", "0"),
 	),
 	measured("11-defaults D.sp_addsubscription.pull", Context{"pull_subscription", "transactional", "", ""},

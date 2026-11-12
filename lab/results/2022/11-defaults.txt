@@ -1761,6 +1761,7 @@ R|D.sp_addpullsubscription_agent.pull.@job_login|null|column=<subscription db>.d
 R|D.sp_addpullsubscription_agent.pull.@job_password|null|column=<subscription db>.dbo.MSsubscription_properties.job_password (secret) declared=NULL call=ok
 R|D.sp_addpullsubscription_agent.pull.@job_security_mode|no-column|column=no-column: Managed Instance only (refused with 41989 elsewhere, 07-changes) declared=NULL call=ok
 R|D.sp_addsubscription.push.fresh-subscriber.@subscriber_type|0|column=distribution.dbo.MSsubscriber_info.type of (publisher, m_freshsub) (0 SQL Server), m_freshsub registered nowhere before the call; after the call: servers=1 subscriber_info=0 subscription_rows=1 declared=0 call=ok
+R|D.sp_addsubscription.pull.fresh-subscriber.@subscriber_type|0|column=distribution.dbo.MSsubscriber_info.type of (publisher, m_freshpull) (0 SQL Server), m_freshpull registered nowhere (sys.servers, MSsubscriber_info, MSreplservers) before the pull call; after the call: servers=1 subscriber_info=0 subscriber_schedule_rows=2 replservers=1 subscription_rows=1 subscription_type=1 declared=0 call=ok
 R|D.sp_addsubscription.push.rso.@status|2|column=syssubscriptions.status (0 inactive, 1 subscribed, 2 active) of a push subscription created with @sync_type = replication support only (sync_type=2), m_pa_ext m_x1 to m_dsub3 call=ok
 R|D.sp_addsubscription.extend.pull.@status|1|column=syssubscriptions.status (0 inactive, 1 subscribed, 2 active) of the m_x2 row of the pull subscription of m_pa_ext to m_dsub4 (m_x1 row: 1), extended by sp_addsubscription @article = m_x2, @subscription_type = pull, @sync_type = automatic call=ok
 R|D.sp_addsubscription.extend.pull.@subscription_type|1|column=syssubscriptions.subscription_type (0 push, 1 pull) of the m_x2 row of the same extension (m_x1 row: 1) call=ok
@@ -1780,4 +1781,4 @@ R|D.sp_add_agent_profile.agent-type-3.@profile_id|assigned|column=msdb.dbo.MSage
 R|D.sp_add_agent_profile.agent-type-3.@profile_type|1|column=MSagent_profiles.type (0 system, 1 custom) declared=1 call=ok
 R|D.sp_add_agent_profile.agent-type-3.@description|null|column=MSagent_profiles.description declared=NULL call=ok
 R|D.sp_add_agent_profile.agent-type-3.@default|0|column=MSagent_profiles.def_profile declared=0 call=ok
-R|TOTAL|1781
+R|TOTAL|1782

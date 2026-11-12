@@ -78,8 +78,8 @@ func splitRow(t *testing.T, row string) (file, id string) {
 }
 
 // listedContexts are the row contexts the defaults table is built from (plan
-// 3, Task 5), with the fresh-subscriber row of sp_addsubscription
-// @subscriber_type (Task 2).
+// 3, Task 5), with the fresh-subscriber rows of sp_addsubscription
+// @subscriber_type (push: Task 2; pull: Task 20).
 var listedContexts = func() []string {
 	out := []string{
 		"11-defaults D.sp_addpublication.transactional",
@@ -106,6 +106,7 @@ var listedContexts = func() []string {
 		"11-defaults D.sp_addlogreader_agent.publication-db",
 		"11-defaults D.sp_addsubscription.push",
 		"11-defaults D.sp_addsubscription.push.fresh-subscriber",
+		"11-defaults D.sp_addsubscription.pull.fresh-subscriber",
 		"11-defaults D.sp_addsubscription.pull",
 		"11-defaults D.sp_addpushsubscription_agent.push",
 		"11-defaults D.sp_addpullsubscription.pull",
