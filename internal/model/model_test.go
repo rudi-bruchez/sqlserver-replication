@@ -508,3 +508,38 @@ func TestLoadRejectsDuplicateKeys(t *testing.T) {
 		}
 	}
 }
+
+// An empty agent_profiles list (managed, none wanted) and an omitted one
+// (not managed) must survive Marshal then Load as they are: the planner
+// tells them apart by nil (plan.distributorStrategy).
+func TestAgentProfilesEmptyVsOmittedRoundTrip(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		in      AgentProfiles
+		wantKey bool
+	}{
+		{"empty", AgentProfiles{}, true},
+		{"omitted", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Config{Version: FormatVersion, Publisher: Publisher{Server: "S", Database: "D"}, AgentProfiles: tc.in}
+			out, err := Marshal(c)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			if got := strings.Contains(string(out), "agent_profiles: []\n"); got != tc.wantKey {
+				t.Errorf("agent_profiles: [] written = %v, want %v:\n%s", got, tc.wantKey, out)
+			}
+			if !tc.wantKey && strings.Contains(string(out), "agent_profiles") {
+				t.Errorf("omitted list wrote the key:\n%s", out)
+			}
+			got, err := Load(bytes.NewReader(out))
+			if err != nil {
+				t.Fatalf("Load: %v\n%s", err, out)
+			}
+			if (got.AgentProfiles == nil) != (tc.in == nil) || len(got.AgentProfiles) != 0 {
+				t.Errorf("loaded agent_profiles = %#v, want %#v", got.AgentProfiles, tc.in)
+			}
+		})
+	}
+}

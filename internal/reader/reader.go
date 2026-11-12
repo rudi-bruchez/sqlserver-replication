@@ -506,8 +506,9 @@ func (e *exporter) collectProfiles() error {
 }
 
 // selectProfiles returns every user-defined profile of an in-scope agent
-// type, whether or not an agent uses it, sorted by agent type then name.
-func selectProfiles(profiles map[int]profileRow, params map[int]map[string]string) []model.AgentProfile {
+// type, whether or not an agent uses it, sorted by agent type then name,
+// and an empty non-nil list when there is none.
+func selectProfiles(profiles map[int]profileRow, params map[int]map[string]string) model.AgentProfiles {
 	type entry struct {
 		code int
 		name string
@@ -532,7 +533,9 @@ func selectProfiles(profiles map[int]profileRow, params map[int]map[string]strin
 		}
 		return es[i].name < es[j].name
 	})
-	var out []model.AgentProfile
+	// Non-nil even when empty: the profiles were read, so the export
+	// manages them and writes agent_profiles: [] (model.AgentProfiles).
+	out := model.AgentProfiles{}
 	for _, e := range es {
 		out = append(out, e.prof)
 	}

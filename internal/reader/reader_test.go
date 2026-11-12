@@ -559,6 +559,27 @@ func TestSelectProfiles(t *testing.T) {
 	}
 }
 
+// A distributor whose profiles were read and hold no user profile of an
+// in-scope agent exports agent_profiles: [], so the file manages the
+// profiles; only an unread distributor leaves the key out.
+func TestSelectProfilesNoneIsEmptyList(t *testing.T) {
+	profiles := map[int]profileRow{
+		1: {name: "Default agent profile", agentType: 3, userDefined: false},
+		3: {name: "merge one", agentType: 9, userDefined: true},
+	}
+	got := selectProfiles(profiles, nil)
+	if got == nil || len(got) != 0 {
+		t.Fatalf("selectProfiles = %#v, want an empty non-nil list", got)
+	}
+	out, err := model.Marshal(&model.Config{Version: model.FormatVersion, AgentProfiles: got})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(out), "agent_profiles: []\n") {
+		t.Errorf("export lacks agent_profiles: []:\n%s", out)
+	}
+}
+
 func TestSubscriberQueryQuotesDatabase(t *testing.T) {
 	q := subscriberQuery("m sub]1")
 	if !strings.Contains(q, "[m sub]]1].dbo.MSreplication_subscriptions") {

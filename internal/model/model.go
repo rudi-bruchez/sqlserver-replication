@@ -17,11 +17,11 @@ func Ptr[T any](v T) *T { return &v }
 // Config is the root of the configuration file. It describes one publication
 // database and everything attached to it.
 type Config struct {
-	Version       int            `yaml:"version"`
-	Publisher     Publisher      `yaml:"publisher"`
-	Distributor   *Distributor   `yaml:"distributor,omitempty"`
-	Publications  []Publication  `yaml:"publications"`
-	AgentProfiles []AgentProfile `yaml:"agent_profiles,omitempty"`
+	Version       int           `yaml:"version"`
+	Publisher     Publisher     `yaml:"publisher"`
+	Distributor   *Distributor  `yaml:"distributor,omitempty"`
+	Publications  []Publication `yaml:"publications"`
+	AgentProfiles AgentProfiles `yaml:"agent_profiles,omitempty"`
 	// Findings lists what the export found and how plan 3 must treat it,
 	// each with the path of the element concerned.
 	Findings []Finding `yaml:"findings,omitempty"`
@@ -374,6 +374,18 @@ type PullAgent struct {
 	EnabledForSyncmgr *bool   `yaml:"enabled_for_syncmgr,omitempty"`
 	Description       *string `yaml:"description,omitempty"`
 }
+
+// AgentProfiles is the agent_profiles list. A nil list (the key omitted)
+// means the file does not manage the profiles; an empty one means it manages
+// them and wants none. yaml.v3 writes a nil slice as [] when the field has no
+// omitempty, and omitempty alone drops an empty slice too, so neither keeps
+// the two apart on output. omitempty asks IsZero first when the type has it:
+// IsZero true only for nil keeps the key out for nil and writes [] for an
+// empty list. Load already keeps them apart (an explicit [] decodes non-nil).
+type AgentProfiles []AgentProfile
+
+// IsZero reports whether the list is nil, for yaml.v3's omitempty.
+func (p AgentProfiles) IsZero() bool { return p == nil }
 
 // AgentProfile is a user-defined agent profile (MSagent_profiles.type = 1).
 type AgentProfile struct {
