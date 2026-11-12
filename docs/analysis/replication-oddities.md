@@ -312,6 +312,13 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Observed: every row is at status 2, `sync_type` 2, at once, on a publication without `immediate_sync`. On an `immediate_sync` publication whose snapshot has not run, the rows are the same (status 2, `sync_type` 2) beside a push subscription at status 1.
 - Source: measured, panel 3 Fable, verified item 4; `plan3-fold-review m3` (`rows_initial`).
 
+### Reinitializing a replication support only subscription
+
+- Expected: a reinit-flagged change marks every subscription of the article for reinitialization, as it does a snapshot-initialized one.
+- Observed: on a native publication without `immediate_sync`, a push subscription added with `@sync_type = N'replication support only'` (`syssubscriptions` status 2, `sync_type` 2, `nosync_type` 1): `sp_changearticle schema_option` with both flags at 1 answers "Article update successful" and the status stays 2; `sp_reinitsubscription @article = N'all'` answers "Cannot reinitialize article 'm_t' in subscription 'REPLLAB:m_sdb_rv' to publication 'm_rv_p' (subscribed with the 'no sync' option)" and the status stays 2, `MSsubscriptions` status 2, `sync_type` 2. Such a subscription never waits for a snapshot after a reinitialization; the planner neither marks it nor starts its agent for one. Backup and LSN subscriptions are `sync_type` 2 as well (`10-init-modes I2`, `I3`), but that they behave the same is a reading, not a measurement.
+- Also seen: `sp_addpublication` and `sp_addsubscription` on the fresh database created and started a log reader and a distribution job; the publication's drop removed both.
+- Source: measured on 2022 CU27 by the review of plan 4 Task 4 (2026-11-13), objects `m_pdb_rv`, `m_rv_p`, `m_sdb_rv`.
+
 ### sp_addarticle with a replication support only subscription
 
 - Expected: `sp_addarticle` on an `immediate_sync` publication subscribes the new article for every subscription, and the next snapshot delivers it.
