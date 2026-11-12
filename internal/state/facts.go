@@ -153,12 +153,14 @@ type Checks struct {
 
 // ServerCheck is a server of the file, as it was reached.
 type ServerCheck struct {
-	Name      string `json:"name"`
-	Version   string `json:"version"`
-	Edition   string `json:"edition"`
-	Error     string `json:"error"` // why it could not be reached
-	Reachable bool   `json:"reachable"`
-	Major     int    `json:"major"`
+	Name string `json:"name"`
+	// ServerName is @@SERVERNAME as the server answers it.
+	ServerName string `json:"server_name"`
+	Version    string `json:"version"`
+	Edition    string `json:"edition"`
+	Error      string `json:"error"` // why it could not be reached
+	Reachable  bool   `json:"reachable"`
+	Major      int    `json:"major"`
 }
 
 // TableCheck is a source table of an article, in the publication database.

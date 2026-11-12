@@ -99,7 +99,7 @@ func TestFactsJSONKeys(t *testing.T) {
 
 func TestChecksJSONKeys(t *testing.T) {
 	c := Checks{
-		Servers:             []ServerCheck{{Name: "S", Version: "16.0.4305.5", Edition: "Developer", Error: "e", Reachable: true, Major: 16}},
+		Servers:             []ServerCheck{{Name: "S", ServerName: "S", Version: "16.0.4305.5", Edition: "Developer", Error: "e", Reachable: true, Major: 16}},
 		Tables:              []TableCheck{{Schema: "dbo", Name: "T", Exists: true, HasPrimaryKey: true, Columns: []string{"id"}, KeyColumns: []string{"id"}}},
 		SubscriberDatabases: []DatabaseCheck{{Server: "S", Database: "D", Checked: true, Exists: true}},
 		Folders:             []FolderCheck{{Server: "S", Path: "/x", Checked: true, Exists: true}},
@@ -119,7 +119,7 @@ func TestChecksJSONKeys(t *testing.T) {
 	for _, k := range []string{
 		".servers", ".tables", ".subscriber_databases", ".folders", ".profiles",
 		".servers[].name", ".servers[].version", ".servers[].edition", ".servers[].error",
-		".servers[].reachable", ".servers[].major",
+		".servers[].reachable", ".servers[].major", ".servers[].server_name",
 		".tables[].schema", ".tables[].name", ".tables[].exists", ".tables[].has_primary_key", ".tables[].columns",
 		".tables[].key_columns", ".profiles[].name", ".profiles[].agent_type",
 		".subscriber_databases[].server", ".subscriber_databases[].database",

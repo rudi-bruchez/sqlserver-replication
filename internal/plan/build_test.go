@@ -18,7 +18,7 @@ func labChecks() *state.Checks {
 		c.Tables = append(c.Tables, state.TableCheck{Schema: "dbo", Name: n, Exists: true, HasPrimaryKey: n != "vCustomerFR",
 			Columns: []string{"ID"}})
 	}
-	c.Servers = []state.ServerCheck{{Name: "repllab", Version: "16.0.4275.1", Edition: "Developer Edition (64-bit)", Reachable: true, Major: 16}}
+	c.Servers = []state.ServerCheck{{Name: "repllab", ServerName: "repllab", Version: "16.0.4275.1", Edition: "Developer Edition (64-bit)", Reachable: true, Major: 16}}
 	c.SubscriberDatabases = []state.DatabaseCheck{{Server: "REPLLAB", Database: "SalesSub", Checked: true, Exists: true}}
 	c.Folders = []state.FolderCheck{{Server: "repllab", Path: "/var/opt/mssql/data/ReplData", Checked: true, Exists: true}}
 	// The lab's profiles, as TestLabPrecheck reads them (in part).

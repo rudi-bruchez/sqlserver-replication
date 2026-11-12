@@ -143,7 +143,7 @@ func TestLabPrecheck(t *testing.T) {
 		}
 	}
 	if server == nil || !server.Reachable || server.Major != 16 || !strings.Contains(server.Edition, "Developer") ||
-		!strings.HasPrefix(server.Version, "16.") {
+		!strings.HasPrefix(server.Version, "16.") || server.ServerName != "repllab" {
 		t.Errorf("repllab: %+v", server)
 	}
 	var subx *state.ServerCheck

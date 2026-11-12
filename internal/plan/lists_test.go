@@ -315,7 +315,7 @@ func TestListsOtherPreconditions(t *testing.T) {
 	checks := labChecks()
 	checks.Folders[0].Exists = false
 	p := buildFull(t, checks, nil, nil)
-	if len(p.Refusals) != 0 || !hasWarning(p.Warnings, "snapshot folder /var/opt/mssql/data/ReplData does not exist at repllab") {
+	if len(p.Refusals) != 0 || !hasWarning(p.Warnings, "snapshot folder /var/opt/mssql/data/ReplData is not visible to the SQL Server service at repllab") {
 		t.Errorf("refusals %+v, warnings %q", p.Refusals, p.Warnings)
 	}
 	if pc := precondOf(p, "snapshot folder", "/var/opt/mssql/data/ReplData"); pc == nil || pc.Status != "failed" {
@@ -529,5 +529,21 @@ func TestListsProfileNotFound(t *testing.T) {
 				t.Errorf("unchecked: %+v", r)
 			}
 		}
+	}
+}
+
+func TestListsServerNameAnswered(t *testing.T) {
+	// A case-only difference passes (the lab answers repllab, the
+	// fixture's subscriber is REPLLAB).
+	checks := labChecks()
+	checks.Servers[0].ServerName = "REPLLAB"
+	if p := buildFull(t, checks, nil, nil); len(p.Refusals) != 0 {
+		t.Errorf("case only: refusals %+v", p.Refusals)
+	}
+	checks.Servers[0].ServerName = "OTHERSRV"
+	p := buildFull(t, checks, nil, nil)
+	wantOnlyRefusal(t, p, "server repllab answers as OTHERSRV: check -server")
+	if pc := precondOf(p, "server version", "repllab"); pc == nil || pc.Status != "failed" {
+		t.Errorf("precondition %+v", pc)
 	}
 }

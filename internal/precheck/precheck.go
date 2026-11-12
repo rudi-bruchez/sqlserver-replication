@@ -8,9 +8,12 @@ package precheck
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+
+	mssql "github.com/microsoft/go-mssqldb"
 
 	"github.com/rudi-bruchez/sqlserver-replication/internal/decode"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
@@ -81,6 +84,13 @@ func Run(ctx context.Context, c Conns, desired *model.Config) (*state.Checks, er
 
 	// The source tables, in the publication database.
 	if reached[strings.ToLower(publisher)] != nil && c.Publication != nil {
+		var dbName string
+		if err := c.Publication.QueryRowContext(ctx, qDatabaseName).Scan(&dbName); err != nil {
+			return nil, fmt.Errorf("%s: publication database: %w", publisher, err)
+		}
+		if !strings.EqualFold(dbName, desired.Publisher.Database) {
+			return nil, fmt.Errorf("%s: the publication connection is in database %s, not %s", publisher, dbName, desired.Publisher.Database)
+		}
 		seenTable := map[string]bool{}
 		for _, p := range desired.Publications {
 			for _, a := range p.Articles {
@@ -109,6 +119,11 @@ func Run(ctx context.Context, c Conns, desired *model.Config) (*state.Checks, er
 			seenDB[k] = true
 			dc := state.DatabaseCheck{Server: s.Subscriber, Database: s.Database}
 			if db := reached[strings.ToLower(s.Subscriber)]; db != nil {
+				// The subscriber's own connection when there is one, also
+				// when the server plays another role (the lab's REPLLAB).
+				if own := subscriberConn(c.Subscribers, s.Subscriber); own != nil {
+					db = own
+				}
 				if err := readDatabase(ctx, db, &dc); err != nil {
 					return nil, fmt.Errorf("%s: database %s: %w", s.Subscriber, s.Database, err)
 				}
@@ -155,8 +170,8 @@ func Run(ctx context.Context, c Conns, desired *model.Config) (*state.Checks, er
 }
 
 func readServer(ctx context.Context, db *sql.DB, sc *state.ServerCheck) error {
-	var name, major sql.NullString
-	if err := db.QueryRowContext(ctx, qServer).Scan(&name, &sc.Version, &major, &sc.Edition); err != nil {
+	var major sql.NullString
+	if err := db.QueryRowContext(ctx, qServer).Scan(&sc.ServerName, &sc.Version, &major, &sc.Edition); err != nil {
 		return fmt.Errorf("%s: server: %w", sc.Name, err)
 	}
 	m, err := strconv.Atoi(major.String)
@@ -179,20 +194,19 @@ func readTable(ctx context.Context, db *sql.DB, schema, name string) (state.Tabl
 		name string
 	}
 	var keys []key
+	missing := false
 	for rows.Next() {
 		var (
-			id, ord    sql.NullInt64
-			pk, viewOK int
-			col        sql.NullString
+			id, ord sql.NullInt64
+			pk      int
+			col     sql.NullString
 		)
-		if err := rows.Scan(&id, &pk, &col, &ord, &viewOK); err != nil {
+		if err := rows.Scan(&id, &pk, &col, &ord); err != nil {
 			return tc, err
 		}
 		if !id.Valid {
-			if viewOK != 1 {
-				return tc, fmt.Errorf("not visible and the login lacks VIEW DEFINITION on the database: its absence cannot be told")
-			}
-			continue // does not exist
+			missing = true
+			continue
 		}
 		tc.Exists, tc.HasPrimaryKey = true, pk == 1
 		if col.Valid {
@@ -205,6 +219,9 @@ func readTable(ctx context.Context, db *sql.DB, schema, name string) (state.Tabl
 	if err := rows.Err(); err != nil {
 		return tc, err
 	}
+	if missing {
+		return tc, probeTable(ctx, db, schema, name)
+	}
 	tc.KeyColumns = make([]string, len(keys))
 	for _, k := range keys {
 		if k.ord < 1 || int(k.ord) > len(keys) {
@@ -216,6 +233,21 @@ func readTable(ctx context.Context, db *sql.DB, schema, name string) (state.Tabl
 		tc.KeyColumns = nil
 	}
 	return tc, nil
+}
+
+// probeTable tells a missing table (nil) from one the login cannot see
+// (an error), by selecting from it: see tableProbe.
+func probeTable(ctx context.Context, db *sql.DB, schema, name string) error {
+	_, err := db.ExecContext(ctx, tableProbe+quoteName(schema)+"."+quoteName(name))
+	var me mssql.Error
+	switch {
+	case err == nil:
+		return fmt.Errorf("cannot be read: OBJECT_ID is NULL but a SELECT from it succeeds")
+	case errors.As(err, &me) && me.Number == 208:
+		return nil
+	default:
+		return fmt.Errorf("cannot be read: OBJECT_ID is NULL and a SELECT from it fails: %w", err)
+	}
 }
 
 // readDatabase reads a subscriber database: HAS_DBACCESS NULL is a

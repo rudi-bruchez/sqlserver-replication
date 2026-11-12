@@ -27,7 +27,8 @@ const (
 	keyColumnOut     = "column %s of %s is part of its primary key and cannot be excluded (21250, measured)"
 	profileMissing   = "profile %s (%s) exists neither in the file nor at the distributor"
 	editionNeeded    = "sync_method %s needs the Enterprise or Developer edition of the publisher; %s runs %s"
-	folderWarning    = "snapshot folder %s does not exist at %s: the snapshot agent cannot write there until it is created (plan does not create it, spec Non-goals)"
+	folderWarning    = "snapshot folder %s is not visible to the SQL Server service at %s: the snapshot agent cannot write there unless it exists and the agent's account can reach it (plan does not create it, spec Non-goals)"
+	serverNameWrong  = "server %s answers as %s: check -server"
 	lockWarning      = "publication %s uses %s, which locks the published tables for most of each generation; moving to concurrent costs %s; concurrent and concurrent_c still lock the tables briefly near the start and the end of each run; the cost of a move to database snapshot is not measured"
 	fullGenWarning   = "publication %s generates every article at every run of its snapshot agent (%s)"
 	agentWarning     = "distribution agent of %s is %s; plan cannot see a snapshot generated and not delivered (campaign item 14)"
@@ -441,6 +442,11 @@ func (b *builder) preconditions(ops []Operation) []Precondition {
 		case sc == nil:
 		case !sc.Reachable:
 			pc.Detail = "not reachable: " + sc.Error
+		case sc.ServerName != "" && !strings.EqualFold(sc.ServerName, name):
+			// The address reached another server (R7: case does not count;
+			// the lab answers repllab, the fixture's subscriber is REPLLAB).
+			pc.Status, pc.Detail = precondFailed, fmt.Sprintf(serverNameWrong, name, sc.ServerName)
+			b.refuse(name, serverNameWrong, name, sc.ServerName)
 		case sc.Major != 16:
 			pc.Status, pc.Detail = precondFailed, fmt.Sprintf(r18Version, name, sc.Version)
 			b.refuse(name, r18Version, name, sc.Version)
@@ -542,7 +548,7 @@ func (b *builder) preconditions(ops []Operation) []Precondition {
 			case !fc.Checked:
 				pc.Detail = "could not be read"
 			case !fc.Exists:
-				pc.Status, pc.Detail = precondFailed, "does not exist"
+				pc.Status, pc.Detail = precondFailed, "not visible to the SQL Server service"
 				b.warnings = append(b.warnings, fmt.Sprintf(folderWarning, f, dist))
 			default:
 				pc.Status = precondOK
