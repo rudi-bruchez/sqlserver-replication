@@ -233,6 +233,25 @@ func TestSyncMethodCosts(t *testing.T) {
 	})
 }
 
+// An existing article's omitted destination.schema takes its creation
+// default in the current publication's context (Task 20 fix round 1): the
+// article was created under the current sync_method, and the change does
+// not rewrite destination_owner (O16: the default is the source schema
+// under native, NULL under character).
+func TestSyncMethodOmittedDestination(t *testing.T) {
+	ops := plannedAlone(t, buildLab(t, nil, func(des, _ *model.Config) {
+		p := pubOf(t, des, "SalesRef")
+		for i := range p.Articles {
+			p.Articles[i].Destination = model.Destination{}
+		}
+		p.SyncMethod = str("character")
+	}))
+	op := oneAlone(t, ops, "sp_changepublication")
+	wantParam(t, op, "@property", "N'sync_method'")
+	wantParam(t, op, "@value", "N'character'")
+	wantOpCosts(t, op, CostOnline)
+}
+
 func TestSyncMethodUnmeasuredRefused(t *testing.T) {
 	p := buildLab(t, nil, func(des, _ *model.Config) {
 		pubOf(t, des, "SalesRef").SyncMethod = str("concurrent_c")

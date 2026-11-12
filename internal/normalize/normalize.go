@@ -845,9 +845,10 @@ func (n *normalizer) fillOwn(sv reflect.Value, path string, parents []model.Step
 		}
 		p := model.Join(path, key)
 		pattern := model.Pattern(p)
-		d, ok := n.lookup(f, pattern)
+		ff := n.creationFrame(f, pattern)
+		d, ok := n.lookup(ff, pattern)
 		if !ok {
-			n.refuse(p, "%s", f.notMeasured(pattern))
+			n.refuse(p, "%s", ff.notMeasured(pattern))
 			return
 		}
 		value := d.Value
@@ -863,6 +864,40 @@ func (n *normalizer) fillOwn(sv reflect.Value, path string, parents []model.Step
 			n.refuse(p, "default %q (%s): %v", value, d.Row, err)
 		}
 	})
+}
+
+// destinationSchema is the pattern of an article's destination schema.
+const destinationSchema = "publications[*].articles[*].destination.schema"
+
+// creationFrame is the frame whose context gives the default of pattern.
+// An existing article's omitted destination.schema takes its creation
+// default in the current publication's context, its current sync_method
+// (controller's ruling, Task 20 fix round 1): the article was created under
+// it, and a sync_method change does not rewrite destination_owner, whose
+// default differs by method (O16: the source schema under native, NULL
+// under character and concurrent_c). Measured by the Task 20 convergence
+// test: with the desired context, native to character refused every
+// article whose destination the file omits. A new article keeps the
+// desired context.
+func (n *normalizer) creationFrame(f frame, pattern string) frame {
+	if pattern != destinationSchema || f.pub == nil || f.art == nil || n.current == nil {
+		return f
+	}
+	for i := range n.current.Publications {
+		cp := &n.current.Publications[i]
+		if cp.Name != f.pub.Name {
+			continue
+		}
+		for j := range cp.Articles {
+			if cp.Articles[j].Name == f.art.Name {
+				pub := *f.pub
+				pub.SyncMethod = cp.SyncMethod
+				f.pub = &pub
+				return f
+			}
+		}
+	}
+	return f
 }
 
 // fillNested allocates each omitted nested object that applies and fills
