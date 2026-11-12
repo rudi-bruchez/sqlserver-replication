@@ -252,9 +252,12 @@ func (c Command) OmittedOK(key string, parents []Step) bool {
 // OmittedOK: a push subscription has no pull agent, a pull subscription has
 // no push distribution agent, and a subscription of a publication without an
 // independent agent uses the shared agent (push or pull) of its subscriber
-// database.
+// database. The backup and the LSN only serve the creation call and are
+// never read.
 func (s Subscription) OmittedOK(key string, parents []Step) bool {
 	switch key {
+	case "backup", "lsn":
+		return true
 	case "pull_agent":
 		if s.Type != nil && *s.Type == "push" {
 			return true

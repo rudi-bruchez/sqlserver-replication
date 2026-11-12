@@ -211,6 +211,11 @@ func fullConfig() *Config {
 				Initialization:    Ptr("automatic"),
 				LoopbackDetection: Ptr(false),
 				DistributionAgent: &DistributionAgent{Agent: agent("dist"), SubscriptionStreams: Ptr(4), MemoryOptimized: Ptr(false)},
+				Backup: &BackupInitialization{
+					DeviceType: Ptr("disk"), DeviceName: Ptr("/b/Sales.bak"), MediaPasswordSecret: Ptr("SQLREPL_MEDIA"),
+					PasswordSecret: Ptr("SQLREPL_BACKUP"), FileIDHint: Ptr(1), Unload: Ptr(true),
+				},
+				LSN: Ptr("0x0000002a000001f40001"),
 			}, {
 				Subscriber:        "SUB2",
 				Database:          "PullDB",

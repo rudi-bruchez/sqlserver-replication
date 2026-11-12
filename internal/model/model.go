@@ -313,6 +313,26 @@ type Subscription struct {
 	// independent agent. Otherwise the subscription uses the shared pull
 	// agent of its subscriber database, under publisher.shared_pull_agents.
 	PullAgent *PullAgent `yaml:"pull_agent,omitempty"`
+	// Backup is how an initialize with backup subscription restores its
+	// backup (sp_addsubscription @backupdevicetype and the parameters after
+	// it). It only serves the creation call; the server stores nothing.
+	Backup *BackupInitialization `yaml:"backup,omitempty"`
+	// LSN is the hexadecimal @subscriptionlsn of an initialize from lsn
+	// subscription. It only serves the creation call: what the server keeps
+	// (MSsubscriptions.subscription_seqno) is the subscription's window,
+	// runtime state.
+	LSN *string `yaml:"lsn,omitempty"`
+}
+
+// BackupInitialization holds the parameters of sp_addsubscription read when
+// sync_type is initialize with backup (11-defaults, no-column).
+type BackupInitialization struct {
+	DeviceType          *string `yaml:"device_type,omitempty"`
+	DeviceName          *string `yaml:"device_name,omitempty"`
+	MediaPasswordSecret *string `yaml:"media_password_secret,omitempty"`
+	PasswordSecret      *string `yaml:"password_secret,omitempty"`
+	FileIDHint          *int    `yaml:"file_id_hint,omitempty"`
+	Unload              *bool   `yaml:"unload,omitempty"`
 }
 
 // DistributionAgent extends Agent with the distribution-specific settings.

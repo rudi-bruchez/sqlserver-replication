@@ -978,3 +978,53 @@ WHERE agent_id = @p1 AND runstatus = 2 ORDER BY time, timestamp`, agentID)
 		t.Errorf("last_generation = %q, want %q, the generation (the no-op run ended at %s)", got, times[0], times[1])
 	}
 }
+
+// uncoveredNils returns the paths of NilProperties(cfg) that concern the
+// objects own accepts and that no finding names or contains.
+func uncoveredNils(cfg *model.Config, own func(string) bool) []string {
+	var out []string
+	for _, p := range model.NilProperties(cfg) {
+		if !own(p) {
+			continue
+		}
+		covered := false
+		for _, f := range cfg.Findings {
+			if p == f.Path || strings.HasPrefix(p, f.Path+".") || strings.HasPrefix(p, f.Path+"[") {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// The export writes every property of the lab's own objects: a nil property
+// that no finding covers is one the reader does not read. The second read
+// adds the pull subscription of testdata/pull-setup.sql, read at its
+// subscriber.
+func TestReadLabExportsEveryProperty(t *testing.T) {
+	// Profiles of other sessions are on the same distributor: only the
+	// lab's own profile is judged.
+	labOwn := func(p string) bool {
+		if strings.HasPrefix(p, "agent_profiles[") {
+			return strings.HasPrefix(p, "agent_profiles[distribution/lab-distrib]")
+		}
+		return labFinding(p)
+	}
+	if got := uncoveredNils(labRead(t).Config, labOwn); len(got) != 0 {
+		t.Errorf("Sales: properties not exported: %q", got)
+	}
+
+	pullSetup(t)
+	cfg := labReadWith(t, map[string]*sql.DB{"repllab": labDB(t, "master")}).Config
+	pullSubscription(t, cfg)
+	withPull := func(p string) bool {
+		return labOwn(p) || strings.HasPrefix(p, "publications[m_pp]")
+	}
+	if got := uncoveredNils(cfg, withPull); len(got) != 0 {
+		t.Errorf("Sales with the pull subscription: properties not exported: %q", got)
+	}
+}
