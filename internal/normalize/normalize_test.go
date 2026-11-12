@@ -221,7 +221,7 @@ func TestNormalizePrerequisites(t *testing.T) {
 	}
 
 	pull := testPub("P")
-	pull.Subscriptions = []model.Subscription{{Subscriber: "S", Database: "D", Type: str("pull"), Initialization: str("snapshot")}}
+	pull.Subscriptions = []model.Subscription{{Subscriber: "S", Database: "D", Type: str("pull"), SubscriberType: str("sql_server"), Initialization: str("snapshot")}}
 	out, rs = Normalize(testConfig(pull), nil)
 	noRefusal(t, "pull", rs)
 	if got := out.Publications[0].AllowPull; got == nil || !*got {
@@ -239,7 +239,7 @@ func TestNormalizePrerequisites(t *testing.T) {
 
 func TestNormalizeConflicts(t *testing.T) {
 	sub := func(typ string, arts ...string) []model.Subscription {
-		return []model.Subscription{{Subscriber: "S", Database: "D", Type: str(typ), Initialization: str("snapshot"), Articles: arts}}
+		return []model.Subscription{{Subscriber: "S", Database: "D", Type: str(typ), SubscriberType: str("sql_server"), Initialization: str("snapshot"), Articles: arts}}
 	}
 	cases := []struct {
 		name   string
@@ -303,7 +303,7 @@ func TestNormalizeConflicts(t *testing.T) {
 		}, "publications[P].snapshot_agent.schedules[s].interval", "interval of a daily schedule must be written"},
 	}
 	for _, c := range cases {
-		q := testPub("P", testTable("A", "dbo", "T"))
+		q := testPub("P", testTable("A", "dbo", "T"), testTable("B", "dbo", "U"))
 		c.edit(&q)
 		_, rs := Normalize(testConfig(q), nil)
 		if !refused(rs, c.path, c.reason) {
@@ -337,6 +337,36 @@ func TestNormalizeEnumerations(t *testing.T) {
 	}
 	if out.Findings != nil {
 		t.Errorf("findings kept: %v", out.Findings)
+	}
+
+	// Only the publication with the refused value skips the later rules.
+	bad := testPub("P", testTable("A", "dbo", "T"))
+	bad.SyncMethod = str("concurent")
+	good := testPub("Q", testTable("A", "dbo", "T"))
+	good.AllowAnonymous, good.ImmediateSync = model.Ptr(true), model.Ptr(false)
+	out, rs = Normalize(testConfig(bad, good), nil)
+	if !refused(rs, "publications[P].sync_method", "unknown value") || !refused(rs, "publications[Q].allow_anonymous", "20011") {
+		t.Errorf("two publications: refusals %v, want P's enumeration and Q's 20011", rs)
+	}
+	if out.Publications[0].Name != "P" || out.Publications[0].RetentionHours != nil || !reflect.DeepEqual(out.Publications[1].RetentionHours, model.Ptr(336)) {
+		t.Errorf("two publications: P retention %s, Q retention %s; want P skipped, Q filled", show(out.Publications[0].RetentionHours), show(out.Publications[1].RetentionHours))
+	}
+
+	// A refused subscription type gets no agent block, so one refusal.
+	q = testPub("P", testTable("A", "dbo", "T"))
+	q.IndependentAgent = model.Ptr(true)
+	q.Subscriptions = []model.Subscription{{Subscriber: "S", Database: "D", Type: str("anonymous"), Initialization: str("snapshot")}}
+	out, rs = Normalize(testConfig(q), nil)
+	if len(rs) != 1 || !refused(rs, "publications[P].subscriptions[S/D].type", "out of scope") {
+		t.Errorf("anonymous: refusals %v, want one", rs)
+	}
+	if s := out.Publications[0].Subscriptions[0]; s.DistributionAgent != nil || s.PullAgent != nil {
+		t.Errorf("anonymous: agents allocated %s", show(s))
+	}
+	q.Subscriptions[0].Type = str("pusch")
+	out, rs = Normalize(testConfig(q), nil)
+	if len(rs) != 1 || out.Publications[0].Subscriptions[0].PullAgent != nil {
+		t.Errorf("type pusch: refusals %v, want one, and no pull agent", rs)
 	}
 
 	q = testPub("P", testTable("A", "dbo", "T"))
@@ -526,6 +556,14 @@ func TestNormalizeKeepsCurrent(t *testing.T) {
 	if !refused(rs, "publisher.sync_with_backup", "not measured") {
 		t.Errorf("sync_with_backup true against false: refusals %v", rs)
 	}
+	// A fresh database: a declared value is set at creation.
+	fresh := testConfig(testPub("P", testTable("A", "dbo", "T")))
+	fresh.Publisher.SyncWithBackup = model.Ptr(true)
+	out, rs = Normalize(fresh, nil)
+	noRefusal(t, "sync_with_backup on a fresh database", rs)
+	if !reflect.DeepEqual(out.Publisher.SyncWithBackup, model.Ptr(true)) {
+		t.Errorf("fresh sync_with_backup %s, want true", show(out.Publisher.SyncWithBackup))
+	}
 }
 
 // TestNormalizeInstanceDependent: the distributor's folders and files and a
@@ -534,9 +572,9 @@ func TestNormalizeKeepsCurrent(t *testing.T) {
 func TestNormalizeInstanceDependent(t *testing.T) {
 	pull := testPub("P")
 	pull.IndependentAgent, pull.AllowPull = model.Ptr(true), model.Ptr(true)
-	pull.Subscriptions = []model.Subscription{{Subscriber: "S", Database: "D", Type: str("pull"), Initialization: str("snapshot")}}
+	pull.Subscriptions = []model.Subscription{{Subscriber: "S", Database: "D", Type: str("pull"), SubscriberType: str("sql_server"), Initialization: str("snapshot")}}
 	c := testConfig(pull)
-	c.Distributor = &model.Distributor{Server: "S", Database: "distribution"}
+	c.Distributor = &model.Distributor{Server: "S", Database: "distribution", AdminPasswordSecret: str("ADMIN")}
 	out, rs := Normalize(c, nil)
 	noRefusal(t, "new", rs)
 	ds := out.Distributor
@@ -590,7 +628,7 @@ func TestNormalizeIdempotent(t *testing.T) {
 		names.SchemaOptions = &[]string{"object_creation", "identity_property", "timestamp_as_timestamp"}
 		pull := testPub("P")
 		pull.IndependentAgent = model.Ptr(true)
-		pull.Subscriptions = []model.Subscription{{Subscriber: "S", Database: "D", Type: str("pull"), Initialization: str("snapshot")}}
+		pull.Subscriptions = []model.Subscription{{Subscriber: "S", Database: "D", Type: str("pull"), SubscriberType: str("sql_server"), Initialization: str("snapshot")}}
 		sched := testPub("P")
 		sched.SnapshotAgent = &model.Agent{Schedules: &[]model.Schedule{{Name: "s", Frequency: "once"}}}
 		return []*model.Config{
@@ -627,5 +665,120 @@ func TestNormalizeExportUnchanged(t *testing.T) {
 	}
 	if fx.Publications[0].Snapshot.FTP != nil {
 		t.Error("Normalize changed its input")
+	}
+}
+
+func TestNormalizeSchemaOptionsCanonical(t *testing.T) {
+	fx := loadFixture(t)
+	want, rs := Normalize(fx, fx)
+	noRefusal(t, "fixture", rs)
+	opts := func(c *model.Config) *[]string { return c.Publications[1].Articles[0].SchemaOptions }
+	for name, edit := range map[string]func([]string) []string{
+		"reversed": func(xs []string) []string {
+			out := []string{}
+			for i := len(xs) - 1; i >= 0; i-- {
+				out = append(out, xs[i])
+			}
+			return out
+		},
+		"duplicated": func(xs []string) []string { return append([]string{xs[0]}, xs...) },
+		"known bit in hexadecimal": func(xs []string) []string {
+			return append([]string{"0x1"}, xs[1:]...)
+		},
+	} {
+		d := loadFixture(t)
+		*opts(d) = edit(*opts(d))
+		out, rs := Normalize(d, fx)
+		noRefusal(t, name, rs)
+		if !reflect.DeepEqual(opts(out), opts(want)) {
+			t.Errorf("%s: %s, want %s", name, show(opts(out)), show(opts(want)))
+		}
+	}
+
+	a := testTable("A", "dbo", "T")
+	a.SchemaOptions = &[]string{"object_creation", "0x8", "0x4", "0x1000000000000000"}
+	a.IdentityRangeManagement = str("manual")
+	out, rs := Normalize(testConfig(testPub("P", a)), nil)
+	noRefusal(t, "hexadecimal", rs)
+	na := out.Publications[0].Articles[0]
+	if got := *na.SchemaOptions; !reflect.DeepEqual(got, []string{"object_creation", "timestamp_as_timestamp", "0x1000000000000000"}) {
+		t.Errorf("hexadecimal: schema_options %v, want 0x8 named, 0x4 removed under manual, the unknown bit kept", got)
+	}
+	if !reflect.DeepEqual(na.InsertColumnNames, model.Ptr(true)) {
+		t.Errorf("0x8: insert_column_names %s, want true", show(na.InsertColumnNames))
+	}
+}
+
+func TestNormalizeSubscriptionArticles(t *testing.T) {
+	fx := loadFixture(t)
+	for name, arts := range map[string][]string{"every article": {"Orders", "Customer", "Orders"}, "empty": {}} {
+		d := loadFixture(t)
+		d.Publications[0].Subscriptions[0].Articles = arts
+		out, rs := Normalize(d, fx)
+		noRefusal(t, name, rs)
+		if got := out.Publications[0].Subscriptions[0].Articles; got != nil {
+			t.Errorf("%s: articles %v, want nil", name, got)
+		}
+	}
+	d := loadFixture(t)
+	d.Publications[0].Subscriptions[0].Articles = []string{"Customer"}
+	_, rs := Normalize(d, fx)
+	if !refused(rs, "publications[SalesPub].subscriptions[REPLLAB/SalesSub].articles", "14100") {
+		t.Errorf("a real subset: refusals %v, want 14100", rs)
+	}
+}
+
+func TestNormalizePasswords(t *testing.T) {
+	sqlAgent := func() *model.Config {
+		q := testPub("P", testTable("A", "dbo", "T"))
+		q.SnapshotAgent = &model.Agent{Connection: &model.Connection{Security: str("sql"), Login: str("l")}}
+		return testConfig(q)
+	}
+	_, rs := Normalize(sqlAgent(), nil)
+	if !refused(rs, "publications[P].snapshot_agent.connection.password_secret", "a SQL login needs its password_secret") {
+		t.Errorf("created agent: refusals %v", rs)
+	}
+	out, rs := Normalize(sqlAgent(), sqlAgent())
+	noRefusal(t, "existing agent", rs)
+	if out.Publications[0].SnapshotAgent.Connection.PasswordSecret != nil {
+		t.Error("existing agent: password_secret filled")
+	}
+
+	fx := loadFixture(t)
+	d := loadFixture(t)
+	d.Distributor.AdminPasswordSecret = nil
+	_, rs = Normalize(d, fx)
+	noRefusal(t, "existing distributor", rs)
+	_, rs = Normalize(d, nil)
+	if !refused(rs, "distributor.admin_password_secret", "a SQL login needs its password_secret") {
+		t.Errorf("created distributor: refusals %v", rs)
+	}
+}
+
+func TestNormalizeObjectsDoNotLeak(t *testing.T) {
+	for _, d := range Defaults {
+		if objectBases[d.Context.Object] == "distributor" && distributorOwner(d.Path) != d.Context.Object {
+			t.Errorf("%s: %s owned by %s", d.Row, d.Path, distributorOwner(d.Path))
+		}
+	}
+	table := []Default{
+		{Context: Context{Object: "push_subscription"}, Path: "loopback_detection", Value: "true"},
+		{Context: Context{Object: "pull_subscription"}, Path: "loopback_detection", Value: "false"},
+		{Context: Context{Object: "distpublisher"}, Path: "max_retention_hours", Value: "1"},
+	}
+	q := testPub("P")
+	q.Subscriptions = []model.Subscription{
+		{Subscriber: "S1", Database: "D", Type: str("push"), Initialization: str("snapshot")},
+		{Subscriber: "S2", Database: "D", Type: str("pull"), Initialization: str("snapshot")},
+	}
+	c := testConfig(q)
+	c.Distributor = &model.Distributor{Server: "S", Database: "distribution"}
+	out, rs := normalize(table, c, nil)
+	subs := out.Publications[0].Subscriptions
+	if !reflect.DeepEqual(subs[0].LoopbackDetection, model.Ptr(true)) || !reflect.DeepEqual(subs[1].LoopbackDetection, model.Ptr(false)) {
+		t.Errorf("loopback_detection push %s, pull %s; want true, false", show(subs[0].LoopbackDetection), show(subs[1].LoopbackDetection))
+	}
+	if out.Distributor.MaxRetentionHours != nil || !refused(rs, "distributor.max_retention_hours", "not measured") {
+		t.Errorf("max_retention_hours %s from distpublisher's entry; refusals %v", show(out.Distributor.MaxRetentionHours), rs)
 	}
 }

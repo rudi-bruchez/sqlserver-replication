@@ -7,7 +7,7 @@ import "strings"
 // Context is what a default depends on (spec "Omitted properties"). An empty
 // PubType, SyncMethod or ArticleKind of an entry matches any value.
 type Context struct {
-	Object      string // publication, article, subscription, snapshot_agent, push_agent, shared_push_agent, pull_subscription, pull_agent, log_reader_agent, distributor, distribution_db, distpublisher, profile
+	Object      string // publication, article, push_subscription, pull_subscription (sp_addsubscription), subscriber_pull_subscription (sp_addpullsubscription), snapshot_agent, push_agent, shared_push_agent, pull_agent, log_reader_agent, distributor, distribution_db, distpublisher, profile
 	PubType     string // transactional, snapshot, or "" for any
 	SyncMethod  string // a decode name, or "" for any
 	ArticleKind string // table, view_schema_only, proc_schema_only, func_schema_only, or ""
@@ -35,21 +35,25 @@ type Default struct {
 }
 
 // objectBases gives, for each Object, the model path pattern its entries'
-// paths are relative to.
+// paths are relative to. Objects that share a base never fill each other's
+// paths: Normalize looks a subscription's properties up in the push or the
+// pull objects by the subscription's type, and a distributor property in
+// the one object that owns it (normalize.go, distributorOwner).
 var objectBases = map[string]string{
-	"publication":       "publications[*]",
-	"article":           "publications[*].articles[*]",
-	"subscription":      "publications[*].subscriptions[*]",
-	"snapshot_agent":    "publications[*].snapshot_agent",
-	"push_agent":        "publications[*].subscriptions[*].distribution_agent",
-	"shared_push_agent": "publisher.shared_distribution_agents[*].distribution_agent",
-	"pull_subscription": "publications[*].subscriptions[*]",
-	"pull_agent":        "publications[*].subscriptions[*].pull_agent",
-	"log_reader_agent":  "publisher.log_reader_agent",
-	"distributor":       "distributor",
-	"distribution_db":   "distributor",
-	"distpublisher":     "distributor",
-	"profile":           "agent_profiles[*]",
+	"publication":                  "publications[*]",
+	"article":                      "publications[*].articles[*]",
+	"push_subscription":            "publications[*].subscriptions[*]",
+	"snapshot_agent":               "publications[*].snapshot_agent",
+	"push_agent":                   "publications[*].subscriptions[*].distribution_agent",
+	"shared_push_agent":            "publisher.shared_distribution_agents[*].distribution_agent",
+	"pull_subscription":            "publications[*].subscriptions[*]",
+	"subscriber_pull_subscription": "publications[*].subscriptions[*]",
+	"pull_agent":                   "publications[*].subscriptions[*].pull_agent",
+	"log_reader_agent":             "publisher.log_reader_agent",
+	"distributor":                  "distributor",
+	"distribution_db":              "distributor",
+	"distpublisher":                "distributor",
+	"profile":                      "agent_profiles[*]",
 }
 
 // Lookup returns the default of path for ctx: among the entries of the
@@ -802,7 +806,7 @@ var Defaults = concat(
 		e("@publisher_security_mode", "connection.security", "windows", "1"),
 		e("@publisher_login", "connection.login", "", "''"),
 	),
-	measured("11-defaults D.sp_addsubscription.push", Context{"subscription", "transactional", "", ""},
+	measured("11-defaults D.sp_addsubscription.push", Context{"push_subscription", "transactional", "", ""},
 		e("@article", "articles", "[]", "1/1"),
 		e("@sync_type", "initialization", "snapshot", "sync_type=1 nosync_type=0"),
 		e("@subscription_type", "type", "push", "0"),
@@ -821,10 +825,10 @@ var Defaults = concat(
 		e("@subscriber_security_mode", "distribution_agent.connection.security", "windows", "1"),
 		e("@subscriber_login", "distribution_agent.connection.login", "", "''"),
 	),
-	measured("11-defaults D.sp_addsubscription.push.fresh-subscriber", Context{"subscription", "transactional", "", ""},
+	measured("11-defaults D.sp_addsubscription.push.fresh-subscriber", Context{"push_subscription", "transactional", "", ""},
 		e("@subscriber_type", "subscriber_type", "sql_server", "0"),
 	),
-	measured("11-defaults D.sp_addsubscription.pull", Context{"subscription", "transactional", "", ""},
+	measured("11-defaults D.sp_addsubscription.pull", Context{"pull_subscription", "transactional", "", ""},
 		e("@article", "articles", "[]", "1/1"),
 		e("@sync_type", "initialization", "snapshot", "sync_type=1 nosync_type=0"),
 		e("@loopback_detection", "loopback_detection", "true", "1"),
@@ -867,7 +871,7 @@ var Defaults = concat(
 		e("@subscriptionstreams", "subscription_streams", "0", "null"),
 		e("@memory_optimized", "memory_optimized", "false", "0"),
 	),
-	measured("11-defaults D.sp_addpullsubscription.pull", Context{"pull_subscription", "transactional", "", ""},
+	measured("11-defaults D.sp_addpullsubscription.pull", Context{"subscriber_pull_subscription", "transactional", "", ""},
 		e("@description", "pull_agent.description", "", "null"),
 	),
 	measured("11-defaults D.sp_addpullsubscription_agent.pull", Context{"pull_agent", "transactional", "", ""},

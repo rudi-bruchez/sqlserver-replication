@@ -23,31 +23,71 @@ type Refusal struct {
 // The rules run in a fixed order (plan 3, Task 6): enumerations, required
 // properties, names, prerequisites, defaults, the properties kept current,
 // conflicts, the identity schema option, the derived insert_column_names.
-// When an enumeration is refused, the rules after the names stop there: the
-// contexts the defaults depend on cannot be read.
+// A publication with a refused enumeration skips the rules after the
+// names: the contexts its defaults depend on cannot be read. The other
+// publications are normalized and refused as usual (R3: every refusal at
+// once).
 func Normalize(desired, current *model.Config) (*model.Config, []Refusal) {
+	return normalize(Defaults, desired, current)
+}
+
+func normalize(table []Default, desired, current *model.Config) (*model.Config, []Refusal) {
 	out := clone(desired)
 	out.Findings = nil
-	n := &normalizer{current: current}
+	n := &normalizer{current: current, table: table}
 	n.enumerations(out)
-	unknown := len(n.refusals) > 0
+	unread := n.refusedPublications(out)
 	n.required(out)
 	n.names(out)
-	if unknown {
-		return out, n.refusals
+
+	all := out.Publications
+	if len(unread) > 0 {
+		out.Publications = nil
+		for _, p := range all {
+			if !unread[p.Name] {
+				out.Publications = append(out.Publications, p)
+			}
+		}
 	}
 	n.prerequisites(out)
 	n.defaults(out)
 	n.keepCurrent(out)
+	n.passwords(out)
 	n.conflicts(out)
 	n.identityOption(out)
 	n.timestampColumns(out)
+	if len(unread) > 0 {
+		done := out.Publications
+		out.Publications = make([]model.Publication, 0, len(all))
+		for _, p := range all {
+			if unread[p.Name] {
+				out.Publications = append(out.Publications, p)
+			} else {
+				out.Publications, done = append(out.Publications, done[0]), done[1:]
+			}
+		}
+	}
 	return out, n.refusals
 }
 
 type normalizer struct {
 	current  *model.Config
+	table    []Default
 	refusals []Refusal
+}
+
+// refusedPublications names the publications a refusal so far is under.
+func (n *normalizer) refusedPublications(c *model.Config) map[string]bool {
+	out := map[string]bool{}
+	for i := range c.Publications {
+		pp := pubPath(&c.Publications[i])
+		for _, r := range n.refusals {
+			if r.Path == pp || strings.HasPrefix(r.Path, pp+".") {
+				out[c.Publications[i].Name] = true
+			}
+		}
+	}
+	return out
 }
 
 func (n *normalizer) refuse(path, format string, args ...any) {
@@ -266,11 +306,20 @@ func (n *normalizer) enumerations(c *model.Config) {
 			check(ap+".pre_creation_cmd", a.PreCreationCmd, code(decode.PreCreationCmdCode))
 			check(ap+".identity_range_management", a.IdentityRangeManagement, set("none", "manual", "auto"))
 			if a.SchemaOptions != nil {
+				before := len(n.refusals)
 				for _, o := range *a.SchemaOptions {
 					check(ap+".schema_options", &o, func(s string) error {
 						_, err := decode.EncodeSchemaOptions([]string{s})
 						return err
 					})
+				}
+				// The canonical list, as the export writes it: in bit
+				// order, once each, a known bit written in hexadecimal
+				// by its name, an unknown one kept in hexadecimal.
+				if len(n.refusals) == before {
+					v, _ := decode.EncodeSchemaOptions(*a.SchemaOptions)
+					names := decode.SchemaOptionNames(v)
+					a.SchemaOptions = &names
 				}
 			}
 			if cs := a.Commands; cs != nil {
@@ -356,6 +405,13 @@ func (n *normalizer) names(c *model.Config) {
 		}
 	}
 	for i := range c.Publications {
+		p := &c.Publications[i]
+		for j := range p.Subscriptions {
+			s := &p.Subscriptions[j]
+			if s.Articles != nil && (len(s.Articles) == 0 || everyArticle(p, s.Articles)) {
+				s.Articles = nil // every article, as the export writes it
+			}
+		}
 		for j := range c.Publications[i].Articles {
 			a := &c.Publications[i].Articles[j]
 			qualify(&a.Source)
@@ -372,6 +428,23 @@ func (n *normalizer) names(c *model.Config) {
 			}
 		}
 	}
+}
+
+// everyArticle: names, as a set, are the publication's article names.
+func everyArticle(p *model.Publication, names []string) bool {
+	set := map[string]bool{}
+	for _, x := range names {
+		set[x] = true
+	}
+	if len(set) != len(p.Articles) {
+		return false
+	}
+	for _, a := range p.Articles {
+		if !set[a.Name] {
+			return false
+		}
+	}
+	return true
 }
 
 // Rule 4: an omitted prerequisite takes the value the declared property
@@ -440,6 +513,43 @@ var objectOrder = func() []string {
 type frame struct {
 	pub *model.Publication
 	art *model.Article
+	sub *model.Subscription
+}
+
+// applies tells whether the entries of object o may fill the property rel
+// of its base. Objects sharing a base never fill each other's paths: a
+// subscription takes the push objects (the call without
+// @subscription_type is push) or the pull ones by its type, and a
+// distributor property comes from the procedure that sets it.
+func (f frame) applies(o, rel string) bool {
+	switch o {
+	case "push_subscription":
+		return f.sub != nil && deref(f.sub.Type) != "pull"
+	case "pull_subscription", "subscriber_pull_subscription":
+		return f.sub != nil && deref(f.sub.Type) == "pull"
+	case "distributor", "distribution_db", "distpublisher":
+		return distributorOwner(rel) == o
+	}
+	return true
+}
+
+// distributorOwners: the distributor properties that sp_adddistributiondb
+// and sp_adddistpublisher set; every other one is sp_adddistributor's.
+var distributorOwners = map[string]string{
+	"min_retention_hours": "distribution_db", "max_retention_hours": "distribution_db",
+	"history_retention_hours": "distribution_db", "delete_batch_size_xact": "distribution_db",
+	"delete_batch_size_cmd": "distribution_db", "data_folder": "distribution_db", "data_file": "distribution_db",
+	"log_folder": "distribution_db", "log_file": "distribution_db", "data_file_size_mb": "distribution_db",
+	"log_file_size_mb": "distribution_db", "creation_connection": "distribution_db",
+	"working_directory": "distpublisher", "publisher_connection": "distpublisher", "trusted": "distpublisher",
+}
+
+func distributorOwner(rel string) string {
+	key, _, _ := strings.Cut(rel, ".")
+	if o, ok := distributorOwners[key]; ok {
+		return o
+	}
+	return "distributor"
 }
 
 func (f frame) context(object string) Context {
@@ -454,11 +564,11 @@ func (f frame) context(object string) Context {
 }
 
 // lookup finds the default of the property at the path pattern pattern.
-func (f frame) lookup(pattern string) (Default, bool) {
+func (n *normalizer) lookup(f frame, pattern string) (Default, bool) {
 	for _, o := range objectOrder {
 		base := objectBases[o]
-		if rel, ok := strings.CutPrefix(pattern, base+"."); ok {
-			if d, ok := Lookup(f.context(o), rel); ok {
+		if rel, ok := strings.CutPrefix(pattern, base+"."); ok && f.applies(o, rel) {
+			if d, ok := lookup(n.table, f.context(o), rel); ok {
 				return d, true
 			}
 		}
@@ -473,7 +583,7 @@ func (f frame) notMeasured(pattern string) string {
 		return fmt.Sprintf("default of %s not measured on snapshot publications", rel)
 	}
 	for _, o := range objectOrder {
-		if rel, ok := strings.CutPrefix(pattern, objectBases[o]+"."); ok {
+		if rel, ok := strings.CutPrefix(pattern, objectBases[o]+"."); ok && f.applies(o, rel) {
 			ctx := f.context(o)
 			var parts []string
 			for _, s := range []string{ctx.PubType, ctx.SyncMethod, ctx.ArticleKind} {
@@ -527,7 +637,7 @@ func notFilled(judge reflect.Value, key string) bool {
 	if t == reflect.TypeFor[model.SharedPullAgent]() && instanceDependent[reflect.TypeFor[model.PullAgent]()][key] {
 		return true
 	}
-	switch judge.Interface().(type) {
+	switch j := judge.Interface().(type) {
 	case model.Config:
 		return key == "distributor" // R4: an omitted distributor is the current one
 	case model.Publisher:
@@ -535,7 +645,14 @@ func notFilled(judge reflect.Value, key string) bool {
 	case model.Publication:
 		return key == "status"
 	case model.Subscription:
-		return key == "initialization"
+		switch key {
+		case "initialization":
+			return true
+		case "pull_agent": // none for a refused or omitted type
+			return deref(j.Type) != "pull"
+		case "distribution_agent":
+			return deref(j.Type) != "push"
+		}
 	case model.Filter, model.Command:
 		return key == "procedure" // required; generated, mode only
 	case model.Article:
@@ -595,6 +712,8 @@ func (n *normalizer) fillStruct(sv reflect.Value, path string, parents []model.S
 	case *model.Article:
 		f.art = x
 		n.articleType(x, path, f)
+	case *model.Subscription:
+		f.sub = x
 	}
 	n.fillOwn(sv, path, parents, f)
 	if d, ok := sv.Addr().Interface().(*model.Distributor); ok {
@@ -619,7 +738,7 @@ func (n *normalizer) fillOwn(sv reflect.Value, path string, parents []model.Step
 		}
 		p := model.Join(path, key)
 		pattern := model.Pattern(p)
-		d, ok := f.lookup(pattern)
+		d, ok := n.lookup(f, pattern)
 		if !ok {
 			n.refuse(p, "%s", f.notMeasured(pattern))
 			return
@@ -683,7 +802,7 @@ func (n *normalizer) fillNested(sv reflect.Value, path string, parents []model.S
 
 // fillProperties fills the omitted keys of the MSdistributor properties.
 func (n *normalizer) fillProperties(d *model.Distributor, path string, f frame) {
-	for _, def := range Defaults {
+	for _, def := range n.table {
 		key, ok := strings.CutPrefix(def.Path, "properties.")
 		if !ok || objectBases[def.Context.Object] != "distributor" {
 			continue
@@ -691,7 +810,7 @@ func (n *normalizer) fillProperties(d *model.Distributor, path string, f frame) 
 		if _, ok := d.Properties[key]; ok {
 			continue
 		}
-		if _, ok := f.lookup("distributor." + def.Path); !ok {
+		if _, ok := n.lookup(f, "distributor."+def.Path); !ok {
 			continue
 		}
 		if d.Properties == nil {
@@ -749,7 +868,7 @@ func (n *normalizer) publicationType(p *model.Publication, f frame) {
 	if p.Type != nil {
 		return
 	}
-	if d, ok := Lookup(Context{Object: "publication", PubType: "transactional"}, "type"); ok {
+	if d, ok := lookup(n.table, Context{Object: "publication", PubType: "transactional"}, "type"); ok {
 		p.Type = model.Ptr(d.Value)
 	}
 }
@@ -768,7 +887,7 @@ func (n *normalizer) articleType(a *model.Article, path string, f frame) {
 	}
 	ctx := f.context("article")
 	ctx.ArticleKind = "table"
-	d, ok := Lookup(ctx, "type")
+	d, ok := lookup(n.table, ctx, "type")
 	if !ok {
 		n.refuse(path+".type", "%s", f.notMeasured("publications[*].articles[*].type"))
 		return
@@ -803,7 +922,9 @@ func (n *normalizer) keepCurrent(c *model.Config) {
 	switch sw := c.Publisher.SyncWithBackup; {
 	case sw == nil && curSync != nil:
 		c.Publisher.SyncWithBackup = model.Ptr(*curSync)
-	case sw != nil && (curSync == nil || *curSync != *sw):
+	case sw != nil && curSync != nil && *curSync != *sw:
+		// A declared value on a database with no current one (a fresh
+		// database) is set at creation (controller's ruling).
 		n.refuse("publisher.sync_with_backup", "a sync_with_backup other than the current value is not measured (11-defaults holds no sync with backup row); omit it")
 	}
 	for i := range c.Publications {
@@ -842,6 +963,30 @@ func (n *normalizer) keepCurrent(c *model.Config) {
 		}
 		if r.pull != nil && cr.pull != nil {
 			keep(&r.pull.Distributor, cr.pull.Distributor)
+		}
+	}
+}
+
+// passwords: a connection the plan creates with SQL Server authentication
+// needs the name of its password secret (controller's ruling); on an
+// existing object a nil one stays nil and is not compared.
+func (n *normalizer) passwords(c *model.Config) {
+	const reason = "a SQL login needs its password_secret"
+	need := func(path string, cn *model.Connection) {
+		if cn != nil && deref(cn.Security) == "sql" && cn.PasswordSecret == nil {
+			n.refuse(path+".password_secret", reason)
+		}
+	}
+	for _, r := range agents(c) {
+		if n.currentAgent(r.key) == nil {
+			need(r.path+".connection", r.agent.Connection)
+			need(r.path+".distributor_connection", r.agent.DistributorConnection)
+		}
+	}
+	if d := c.Distributor; d != nil && (n.current == nil || n.current.Distributor == nil) {
+		need("distributor.publisher_connection", d.PublisherConnection)
+		if deref(d.AdminLinkSecurity) == "sql" && d.AdminPasswordSecret == nil {
+			n.refuse("distributor.admin_password_secret", reason)
 		}
 	}
 }

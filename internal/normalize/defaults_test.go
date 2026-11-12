@@ -343,7 +343,7 @@ func decodeStored(d Default) (string, error) {
 			return num(decode.PublicationType)
 		case "article":
 			return num(decode.ArticleType)
-		case "subscription":
+		case "push_subscription":
 			return num(decode.SubscriptionType)
 		}
 	case "status":
