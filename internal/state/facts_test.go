@@ -104,6 +104,10 @@ func TestChecksJSONKeys(t *testing.T) {
 		SubscriberDatabases: []DatabaseCheck{{Server: "S", Database: "D", Checked: true, Exists: true}},
 		Folders:             []FolderCheck{{Server: "S", Path: "/x", Checked: true, Exists: true}},
 		Profiles:            []ProfileCheck{{Name: "P", AgentType: "distribution"}},
+		JobPermissions:      []JobPermissionCheck{{Server: "S", Checked: true, Sysadmin: true, Operator: true, ReadsJobs: true}},
+		Agents:              []AgentServiceCheck{{Server: "S", Checked: true, Running: true, Detail: "d"}},
+		LSNs:                []LSNCheck{{Publication: "P", Subscriber: "S", Database: "D", LSN: "0x00", Checked: true, Valid: true, Reason: "r"}},
+		Schemas:             []SchemaCheck{{Server: "S", Database: "D", Schema: "s", Checked: true, Exists: true}},
 	}
 	b, err := json.Marshal(c)
 	if err != nil {
@@ -125,6 +129,12 @@ func TestChecksJSONKeys(t *testing.T) {
 		".subscriber_databases[].server", ".subscriber_databases[].database",
 		".subscriber_databases[].checked", ".subscriber_databases[].exists",
 		".folders[].server", ".folders[].path", ".folders[].checked", ".folders[].exists",
+		".job_permissions", ".job_permissions[].server", ".job_permissions[].checked", ".job_permissions[].sysadmin",
+		".job_permissions[].operator", ".job_permissions[].reads_jobs",
+		".agents", ".agents[].server", ".agents[].checked", ".agents[].running", ".agents[].detail",
+		".lsns", ".lsns[].publication", ".lsns[].subscriber", ".lsns[].database", ".lsns[].lsn",
+		".lsns[].checked", ".lsns[].valid", ".lsns[].reason",
+		".schemas", ".schemas[].server", ".schemas[].database", ".schemas[].schema", ".schemas[].checked", ".schemas[].exists",
 	} {
 		want[k] = true
 	}

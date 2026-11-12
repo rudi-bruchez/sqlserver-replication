@@ -1,6 +1,6 @@
 package precheck
 
-// Every query is a SELECT. @p1 is the only parameter.
+// Every query reads and changes nothing. @p1 is the only parameter.
 const (
 	// qServer runs at each server of the file.
 	qServer = `
@@ -53,6 +53,60 @@ SELECT DB_ID(@p1), HAS_DBACCESS(@p1)`
 	// file_is_a_directory 1 (measured).
 	qFolder = `
 SELECT CAST(file_is_a_directory AS int) FROM sys.dm_os_file_exists(@p1)`
+
+	// qJobPermission runs at the distributor and at each subscriber (R55):
+	// sysadmin, SQLAgentOperatorRole membership read in msdb, and SELECT on
+	// the three msdb tables the job operations read (the prologue reads
+	// sysjobs, JobIdle sysjobactivity and syssessions: 20-apply
+	// AP.perm.m_ap_oper.prologue, .activity and .jobactivity, 229 for an
+	// operator without them). A NULL membership is not a member.
+	qJobPermission = `
+DECLARE @operator int;
+EXEC msdb.sys.sp_executesql N'SELECT @o = IS_ROLEMEMBER(N''SQLAgentOperatorRole'')', N'@o int OUTPUT', @o = @operator OUTPUT;
+SELECT CAST(ISNULL(IS_SRVROLEMEMBER(N'sysadmin'), 0) AS int),
+       CAST(ISNULL(@operator, 0) AS int),
+       CAST(CASE WHEN HAS_PERMS_BY_NAME(N'msdb.dbo.sysjobs', N'OBJECT', N'SELECT') = 1
+                  AND HAS_PERMS_BY_NAME(N'msdb.dbo.sysjobactivity', N'OBJECT', N'SELECT') = 1
+                  AND HAS_PERMS_BY_NAME(N'msdb.dbo.syssessions', N'OBJECT', N'SELECT') = 1
+                 THEN 1 ELSE 0 END AS int)`
+
+	// qAgent runs at the same servers (R56): the SQL Server Agent row of
+	// sys.dm_server_services, Running or Stopped (agent-stopped
+	// AS.detect.dm_server_services.*; on Linux the view has that row only).
+	// The permission a login that is not sysadmin needs is not measured
+	// (VIEW SERVER STATE is the documented one): a refused read is
+	// unchecked.
+	qAgent = `
+SELECT TOP (1) CAST(servicename AS nvarchar(256)), CAST(status_desc AS nvarchar(60))
+FROM sys.dm_server_services
+WHERE servicename LIKE N'SQL Server Agent%'
+ORDER BY servicename`
+
+	// qLogEnd runs at the publisher (R57): the end of the log of the
+	// publication database @p1, vlf:block:slot in hexadecimal (20-apply
+	// AP.lsn.log_end_format). sys.dm_db_log_stats(NULL) reads the current
+	// database, so a missing database reads no row.
+	qLogEnd = `
+SELECT CONVERT(nvarchar(30), s.log_end_lsn)
+FROM (SELECT DB_ID(@p1) AS id) AS d
+CROSS APPLY sys.dm_db_log_stats(d.id) AS s
+WHERE d.id IS NOT NULL`
+
+	// qRestored runs at a subscriber (R57): the backup the database @p1 was
+	// last restored from, its last_lsn as text, its database and server
+	// (20-apply AP.lsn.restorehistory equal, AP.lsn.backupset_database
+	// db=yes server=yes).
+	qRestored = `
+SELECT TOP (1) CONVERT(varchar(30), b.last_lsn), b.database_name, b.server_name
+FROM msdb.dbo.restorehistory AS h
+JOIN msdb.dbo.backupset AS b ON b.backup_set_id = h.backup_set_id
+WHERE h.destination_database_name = @p1
+ORDER BY h.restore_history_id DESC`
+
+	// qSchema runs at a subscriber, {db} replaced by the quoted subscriber
+	// database: 1 when the schema @p1 exists there (R59 minor 7).
+	qSchema = `
+SELECT CAST(COUNT(*) AS int) FROM {db}.sys.schemas WHERE name = @p1`
 
 	// qProfiles runs at the distributor: every agent profile, system ones
 	// included.

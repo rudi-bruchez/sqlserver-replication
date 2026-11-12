@@ -250,12 +250,12 @@ func TestListsPullJobAtSubscriber(t *testing.T) {
 		!strings.Contains(start.Call.Prologue, "rs.publication = N'SalesPub' AND rs.subscription_type = 1") {
 		t.Errorf("pull start at %s.%s %s:\n%s", start.Server, start.Database, start.Path, start.Call.Prologue)
 	}
-	if pc := precondOf(p, "msdb job permission", "sysadmin, or SQLAgentOperatorRole owning the jobs"); pc == nil {
+	if pc := precondOf(p, "msdb job permission", jobPermissionObject); pc == nil {
 		t.Errorf("preconditions %+v", p.Preconditions)
 	}
 	var servers []string
 	for _, pc := range p.Preconditions {
-		if pc.Name == "msdb job permission" && pc.Status == "unchecked" && pc.Detail == "checked by apply" {
+		if pc.Name == "msdb job permission" && pc.Status == "unchecked" && pc.Detail == "not read" {
 			servers = append(servers, pc.Server)
 		}
 	}
@@ -704,4 +704,103 @@ func removePub(c *model.Config, name string) {
 		}
 	}
 	c.Publications = keep
+}
+
+// R55 and R56: the msdb job permission and SQL Server Agent of a server
+// that runs job operations, from the checks.
+func TestBuildJobPreconditions(t *testing.T) {
+	const operatorDetail = "SQLAgentOperatorRole without SELECT on msdb.dbo.sysjobs, sysjobactivity and syssessions: the job prologue and JobIdle fail with 229 (20-apply AP.perm.m_ap_oper.prologue, .activity)"
+	cases := []struct {
+		name   string
+		jp     *state.JobPermissionCheck
+		ag     *state.AgentServiceCheck
+		status string // of msdb job permission
+		detail string
+		agent  string // status of sql server agent
+	}{
+		{"sysadmin", &state.JobPermissionCheck{Checked: true, Sysadmin: true}, &state.AgentServiceCheck{Checked: true, Running: true, Detail: "SQL Server Agent (MSSQLSERVER): Running"},
+			"ok", "sysadmin", "ok"},
+		{"neither role", &state.JobPermissionCheck{Checked: true, ReadsJobs: true}, nil,
+			"failed", "neither sysadmin nor a member of SQLAgentOperatorRole in msdb: the job operations fail with 229 or 14262 (20-apply AP.perm.m_ap_user, m_ap_none)", "unchecked"},
+		{"operator without ReadsJobs", &state.JobPermissionCheck{Checked: true, Operator: true}, nil,
+			"failed", operatorDetail, "unchecked"},
+		{"operator with ReadsJobs", &state.JobPermissionCheck{Checked: true, Operator: true, ReadsJobs: true}, nil,
+			"ok", "SQLAgentOperatorRole with SELECT on msdb.dbo.sysjobs, sysjobactivity and syssessions (that grant is not measured)", "unchecked"},
+		{"not read", &state.JobPermissionCheck{}, &state.AgentServiceCheck{Detail: "sys.dm_server_services could not be read: x"},
+			"unchecked", "not read", "unchecked"},
+		{"no check", nil, &state.AgentServiceCheck{Checked: true, Detail: "SQL Server Agent (MSSQLSERVER): Stopped"},
+			"unchecked", "not read", "failed"},
+	}
+	for _, c := range cases {
+		checks := labChecks()
+		if c.jp != nil {
+			jp := *c.jp
+			jp.Server = "REPLLAB" // the case does not count (R7)
+			checks.JobPermissions = []state.JobPermissionCheck{jp}
+		}
+		if c.ag != nil {
+			ag := *c.ag
+			ag.Server = "repllab"
+			checks.Agents = []state.AgentServiceCheck{ag}
+		}
+		p := buildFull(t, checks, nil, func(des, _ *model.Config) { addTo(t, des, "SalesRef", newTable("m_t")) })
+		pc := precondOf(p, "msdb job permission", jobPermissionObject)
+		if pc == nil || pc.Server != "repllab" || pc.Status != c.status || pc.Detail != c.detail {
+			t.Errorf("%s: msdb job permission %+v, want %s: %s", c.name, pc, c.status, c.detail)
+		}
+		ag := precondOf(p, "sql server agent", agentObject)
+		if ag == nil || ag.Server != "repllab" || ag.Status != c.agent {
+			t.Errorf("%s: sql server agent %+v, want %s", c.name, ag, c.agent)
+		}
+		if ag != nil && c.agent == "failed" && ag.Detail != "SQL Server Agent is not running: the jobs apply starts would not run" {
+			t.Errorf("%s: sql server agent detail %q", c.name, ag.Detail)
+		}
+		// A failed precondition does not refuse the plan (R58: apply does).
+		if len(p.Refusals) != 0 {
+			t.Errorf("%s: refusals %+v", c.name, p.Refusals)
+		}
+	}
+	// Without job operations, neither is listed.
+	p := buildFull(t, labChecks(), nil, nil)
+	if precondOf(p, "msdb job permission", jobPermissionObject) != nil || precondOf(p, "sql server agent", agentObject) != nil {
+		t.Errorf("preconditions without job operations %+v", p.Preconditions)
+	}
+}
+
+// R59 minor 7: a new article whose destination schema is not dbo, whose
+// schema_option lacks create_schemas, and whose schema the checks read
+// absent at a subscriber gets a warning.
+func TestBuildSchemaMissingWarns(t *testing.T) {
+	const want = "schema m_nos does not exist at REPLLAB/SalesSub: the delivery fails"
+	noCreate := []string{"object_creation", "custom_procedures", "identity_property", "clustered_index",
+		"primary_key", "user_triggers", "nonclustered_indexes"}
+	article := func(schema string, options []string) model.Article {
+		a := newTable("m_t")
+		a.Destination.Schema = model.Ptr(schema)
+		if options != nil {
+			a.SchemaOptions = &options
+		}
+		return a
+	}
+	run := func(a model.Article, schemas []state.SchemaCheck) Operation {
+		t.Helper()
+		checks := withTable(labChecks(), "m_t", true, true)
+		checks.Schemas = schemas
+		return one(t, planned(t, buildLab(t, checks, func(des, _ *model.Config) { addTo(t, des, "SalesRef", a) })), "sp_addarticle")
+	}
+	missing := []state.SchemaCheck{{Server: "REPLLAB", Database: "SalesSub", Schema: "m_nos", Checked: true}}
+	wantWarning(t, run(article("m_nos", noCreate), missing), want)
+	// Not read: the warning says so.
+	wantWarning(t, run(article("m_nos", noCreate), nil), "schema m_nos may not exist at REPLLAB/SalesSub (not checked): the delivery fails if it does not")
+	for name, op := range map[string]Operation{
+		"exists":         run(article("m_nos", noCreate), []state.SchemaCheck{{Server: "REPLLAB", Database: "SalesSub", Schema: "m_nos", Checked: true, Exists: true}}),
+		"create_schemas": run(article("m_nos", append(noCreate, "create_schemas")), missing),
+		"dbo":            run(article("dbo", noCreate), nil),
+	} {
+		for _, w := range op.Warnings {
+			if strings.Contains(w, "schema ") {
+				t.Errorf("%s: warning %q", name, w)
+			}
+		}
+	}
 }

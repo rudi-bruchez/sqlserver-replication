@@ -407,6 +407,21 @@ func encArticleList(v any) (string, error) {
 // Param.Secret, never into Value (R16).
 func encSecret(v any) (string, error) { return asString(v) }
 
+// encLSN writes an LSN as the bare binary(10) literal sp_addsubscription
+// @subscriptionlsn takes (10-init-modes.sh line 199): 0x and 20
+// hexadecimal digits, as the file must write it (R57).
+func encLSN(v any) (string, error) {
+	s, err := asString(v)
+	if err != nil {
+		return "", err
+	}
+	digits, ok := strings.CutPrefix(s, "0x")
+	if !ok || len(digits) != 20 || strings.Trim(digits, "0123456789abcdefABCDEF") != "" {
+		return "", fmt.Errorf("lsn %q is not 0x and 20 hexadecimal digits", s)
+	}
+	return "0x" + strings.ToUpper(digits), nil
+}
+
 // encFromIdentity marks a parameter the caller always supplies.
 func encFromIdentity(any) (string, error) {
 	return "", fmt.Errorf("supplied by the caller as an identity parameter")
@@ -420,7 +435,7 @@ var (
 	encPubTypeCode  = encCode(decode.PublicationTypeCode)
 	encSyncMethod   = encWord(syncMethodWords)
 	encReplFreq     = encWord(map[string]string{"transactional": "continuous", "snapshot": "snapshot"})
-	encSyncType     = encWord(map[string]string{"snapshot": "automatic", "replication_support_only": "replication support only", "backup": "initialize with backup"})
+	encSyncType     = encWord(map[string]string{"snapshot": "automatic", "replication_support_only": "replication support only", "backup": "initialize with backup", "lsn": "initialize from lsn"})
 	encSubscription = encWord(map[string]string{"push": "push", "pull": "pull"})
 )
 
@@ -537,6 +552,7 @@ var encoders = func() map[string]encoder {
 	set(encSubscription, sub, "@subscription_type")
 	set(encBool, sub, "@loopback_detection", "@unload", "@memory_optimized")
 	set(encSecret, sub, "@mediapassword", "@password")
+	set(encLSN, sub, "@subscriptionlsn")
 	set(encInt, sub, "@fileidhint", "@subscriptionstreams")
 	set(encSubscriber, sub, "@subscriber_type")
 
@@ -579,7 +595,6 @@ var neverPassed = map[string]string{
 	"sp_addpushsubscription_agent.@job_name":              "job_name is never compared; the server names the job (R41)",
 	"sp_addpullsubscription_agent.@optional_command_line": "the command line is never compared (R32) and the exported one is the whole generated line, which @optional_command_line would append to (R41: not passed)",
 	"sp_addsubscription.@optional_command_line":           "the command line is never compared (R32) and the exported one is the whole generated line, which @optional_command_line would append to (R41: not passed)",
-	"sp_addsubscription.@subscriptionlsn":                 "creation_only for a subscription initialized from an LSN, which the plan does not create (R21)",
 	"sp_addarticle.@source_table":                         "@source_object names the same table; the campaign scripts pass @source_owner and @source_object (03-add-article.sh)",
 	"sp_addarticle.@filter":                               "measured by a reader: 14027, the procedure does not exist before sp_articlefilter creates it, and the call's sys.sp_MSreinit_article adds 20026",
 	"sp_addsubscription.@frequency_type":                  rDeprecated,

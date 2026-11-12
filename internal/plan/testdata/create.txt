@@ -27,7 +27,8 @@ Preconditions:
   unchecked subscriber database REPLLAB/SalesSub
   unchecked subscriber database REPLLAB/m_sdb
   unchecked snapshot folder /var/opt/mssql/data/ReplData
-  unchecked msdb job permission sysadmin, or SQLAgentOperatorRole owning the jobs: checked by apply
+  unchecked msdb job permission sysadmin, or SQLAgentOperatorRole with SELECT on msdb.dbo.sysjobs, sysjobactivity and syssessions: not read
+  unchecked sql server agent SQL Server Agent service: not read
 Agents apply will start:
   snapshot m_p: pending
   distribution m_p REPLLAB/m_sdb: delivery

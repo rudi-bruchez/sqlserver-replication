@@ -579,7 +579,45 @@ func (n *normalizer) prerequisites(c *model.Config) {
 		if p.ReplicatePartitionSwitch == nil && p.AllowPartitionSwitch != nil {
 			p.ReplicatePartitionSwitch = model.Ptr(*p.AllowPartitionSwitch)
 		}
+		// R57: sp_addsubscription @sync_type = N'initialize from lsn' needs
+		// allow_initialize_from_backup (18786, 20-apply
+		// AP.lsn.no_backup_flag). Only a subscription the plan creates
+		// asks it: an existing one keeps whatever the publication has.
+		for _, s := range p.Subscriptions {
+			if deref(s.Initialization) != "lsn" || n.currentSubscription(p.Name, s.Key()) {
+				continue
+			}
+			if p.AllowInitializeFromBackup == nil {
+				p.AllowInitializeFromBackup = model.Ptr(true)
+			} else if !*p.AllowInitializeFromBackup {
+				n.refuse(pubPath(p)+".allow_initialize_from_backup", lsnNeedsBackupFlag, s.Key())
+			}
+		}
 	}
+}
+
+// lsnNeedsBackupFlag is the refusal of a subscription created from an LSN
+// on a publication the file declares without allow_initialize_from_backup.
+const lsnNeedsBackupFlag = "subscription %s is initialized from an LSN, which needs allow_initialize_from_backup: sp_addsubscription refuses it with 18786 (20-apply AP.lsn.no_backup_flag)"
+
+// currentSubscription tells whether the current configuration has the
+// subscription key of publication pub, compared without regard to case.
+func (n *normalizer) currentSubscription(pub, key string) bool {
+	if n.current == nil {
+		return false
+	}
+	for i := range n.current.Publications {
+		c := &n.current.Publications[i]
+		if !strings.EqualFold(c.Name, pub) {
+			continue
+		}
+		for _, s := range c.Subscriptions {
+			if strings.EqualFold(s.Key(), key) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // articleKind is the ArticleKind of a defaults context: "table" for the

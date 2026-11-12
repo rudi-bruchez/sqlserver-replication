@@ -195,7 +195,7 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 		Subscribers:       subs,
 		Unreachable:       unreachable,
 		DistributorServer: distName,
-	}, desired)
+	}, desired, res.Config)
 	if err != nil {
 		return err
 	}

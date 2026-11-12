@@ -137,7 +137,7 @@ func newFakeRun(t *testing.T, fail map[string]string) *fakeRun {
 		return &reader.Result{Config: &model.Config{Version: model.FormatVersion,
 			Publisher: model.Publisher{Server: "P", Database: r.probe.Name}}, Facts: &state.Facts{}}, nil
 	}
-	runPrecheck = func(_ context.Context, c precheck.Conns, _ *model.Config) (*state.Checks, error) {
+	runPrecheck = func(_ context.Context, c precheck.Conns, _, _ *model.Config) (*state.Checks, error) {
 		r.conns = c
 		return &state.Checks{}, nil
 	}

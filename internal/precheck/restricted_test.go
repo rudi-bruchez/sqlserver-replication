@@ -145,7 +145,7 @@ func fixDesired(tables ...string) *model.Config {
 func runAs(t *testing.T, pub *sql.DB, des *model.Config) (*state.Checks, error) {
 	t.Helper()
 	master := labDB(t, "master")
-	return Run(context.Background(), Conns{Publisher: master, Publication: pub, Distributor: master}, des)
+	return Run(context.Background(), Conns{Publisher: master, Publication: pub, Distributor: master}, des, nil)
 }
 
 func TestLabPrecheckKeys(t *testing.T) {
@@ -268,7 +268,7 @@ func TestLabPrecheckSubscriberLogin(t *testing.T) {
 	des.Publications[0].Subscriptions = []model.Subscription{{Subscriber: "REPLLAB", Database: "SalesSub", Type: model.Ptr("push")}}
 	master := labDB(t, "master")
 	c, err := Run(context.Background(), Conns{Publisher: master, Publication: labDB(t, "Sales"), Distributor: master,
-		Subscribers: map[string]*sql.DB{"repllab": sub("master")}}, des)
+		Subscribers: map[string]*sql.DB{"repllab": sub("master")}}, des, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

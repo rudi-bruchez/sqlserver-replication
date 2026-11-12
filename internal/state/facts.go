@@ -149,6 +149,63 @@ type Checks struct {
 	// Profiles is every row of msdb.dbo.MSagent_profiles at the
 	// distributor, system profiles included; empty when it was not read.
 	Profiles []ProfileCheck `json:"profiles"`
+	// JobPermissions and Agents are read at the distributor and at each
+	// subscriber, where apply runs job operations (R55, R56).
+	JobPermissions []JobPermissionCheck `json:"job_permissions"`
+	Agents         []AgentServiceCheck  `json:"agents"`
+	// LSNs is one check per subscription of the file initialized from an
+	// LSN (R57).
+	LSNs []LSNCheck `json:"lsns"`
+	// Schemas is the destination schemas of the articles, at each
+	// subscriber database that receives them (R59 minor 7).
+	Schemas []SchemaCheck `json:"schemas"`
+}
+
+// JobPermissionCheck is what the login apply connects with may do with the
+// replication jobs of a server (R55): Sysadmin is IS_SRVROLEMEMBER
+// sysadmin, Operator membership of SQLAgentOperatorRole in msdb, ReadsJobs
+// SELECT on msdb.dbo.sysjobs, sysjobactivity and syssessions, all three
+// (the job prologue reads the first, JobIdle the other two). Checked is
+// false when the server was not reached or the read was refused.
+type JobPermissionCheck struct {
+	Server    string `json:"server"`
+	Checked   bool   `json:"checked"`
+	Sysadmin  bool   `json:"sysadmin"`
+	Operator  bool   `json:"operator"` // SQLAgentOperatorRole in msdb
+	ReadsJobs bool   `json:"reads_jobs"`
+}
+
+// AgentServiceCheck is the SQL Server Agent service of a server, as
+// sys.dm_server_services reads it (R56); Detail is the service and its
+// status, or why it was not read.
+type AgentServiceCheck struct {
+	Server  string `json:"server"`
+	Checked bool   `json:"checked"`
+	Running bool   `json:"running"`
+	Detail  string `json:"detail"`
+}
+
+// LSNCheck is the check of the LSN of a subscription initialized from an
+// LSN (R57), LSN as the file writes it. Valid only when Checked; Reason
+// says why it is not valid, or why it was not checked.
+type LSNCheck struct {
+	Publication string `json:"publication"`
+	Subscriber  string `json:"subscriber"`
+	Database    string `json:"database"`
+	LSN         string `json:"lsn"`
+	Checked     bool   `json:"checked"`
+	Valid       bool   `json:"valid"`
+	Reason      string `json:"reason"`
+}
+
+// SchemaCheck is a schema of a subscriber database; Checked is false when
+// the database could not be read.
+type SchemaCheck struct {
+	Server   string `json:"server"`
+	Database string `json:"database"`
+	Schema   string `json:"schema"`
+	Checked  bool   `json:"checked"`
+	Exists   bool   `json:"exists"`
 }
 
 // ServerCheck is a server of the file, as it was reached.

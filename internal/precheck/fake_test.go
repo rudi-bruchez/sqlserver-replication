@@ -51,6 +51,19 @@ func (s fakeStmt) Query([]driver.Value) (driver.Rows, error) {
 		return &fakeRows{rows: [][]driver.Value{{int64(7), int64(1)}}}, nil
 	case strings.TrimSpace(qProfiles):
 		return &fakeRows{}, nil
+	case strings.TrimSpace(qFolder):
+		return &fakeRows{rows: [][]driver.Value{{int64(1)}}}, nil
+	case strings.TrimSpace(qJobPermission):
+		return &fakeRows{rows: [][]driver.Value{{int64(1), int64(1), int64(1)}}}, nil
+	case strings.TrimSpace(qAgent):
+		return &fakeRows{rows: [][]driver.Value{{"SQL Server Agent (MSSQLSERVER)", "Running"}}}, nil
+	case strings.TrimSpace(qLogEnd):
+		return &fakeRows{rows: [][]driver.Value{{"00000030:00000010:0002"}}}, nil
+	case strings.TrimSpace(qRestored):
+		return &fakeRows{}, nil
+	}
+	if strings.HasPrefix(strings.TrimSpace(s.q), "SELECT CAST(COUNT(*) AS int) FROM ") {
+		return &fakeRows{rows: [][]driver.Value{{int64(1)}}}, nil
 	}
 	return nil, fmt.Errorf("fake: unexpected query %q", s.q)
 }
@@ -92,7 +105,7 @@ func fakeDesired() *model.Config {
 
 func TestFakeNullServerName(t *testing.T) {
 	db := fakeDB(t, "null")
-	c, err := Run(context.Background(), Conns{Publisher: db, Publication: db, Distributor: db}, fakeDesired())
+	c, err := Run(context.Background(), Conns{Publisher: db, Publication: db, Distributor: db}, fakeDesired(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +119,7 @@ func TestFakeSubscriberOwnServerName(t *testing.T) {
 	run := func(sub *sql.DB) string {
 		t.Helper()
 		c, err := Run(context.Background(), Conns{Publisher: pub, Publication: pub, Distributor: pub,
-			Subscribers: map[string]*sql.DB{"repllab": sub}}, fakeDesired())
+			Subscribers: map[string]*sql.DB{"repllab": sub}}, fakeDesired(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -148,7 +161,7 @@ func TestRunChecksEveryConnServer(t *testing.T) {
 		Distributor: fakeDB(t, "PUB"),
 		Subscribers: map[string]*sql.DB{"OLDPULL": fakeDB(t, "OTHERSRV")},
 		Unreachable: map[string]string{"GONE": "dial tcp: refused"},
-	}, desired)
+	}, desired, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +181,7 @@ func TestRunDistributorServer(t *testing.T) {
 		Publisher:         fakeDB(t, "PUB"),
 		Distributor:       fakeDB(t, "DIST"),
 		DistributorServer: "DIST",
-	}, desired)
+	}, desired, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -214,6 +214,7 @@ func (b *builder) addArticle(pd, pc *model.Publication, a *model.Article) bool {
 	}
 	op.Reason = "the file declares an article that does not exist"
 	op.Sources = append(op.Sources, "spec Strategies (Articles)", "lab row 12")
+	op.Warnings = append(op.Warnings, b.schemaWarnings(pd, a)...)
 	b.add(op)
 
 	var ops []Operation

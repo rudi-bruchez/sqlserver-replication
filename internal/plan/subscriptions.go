@@ -9,6 +9,7 @@ import (
 	"github.com/rudi-bruchez/sqlserver-replication/internal/cost"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/normalize"
+	"github.com/rudi-bruchez/sqlserver-replication/internal/state"
 )
 
 func init() { strategies = append(strategies, subscriptionsStrategy) }
@@ -33,11 +34,18 @@ const (
 	r35Missing      = "subscription %s misses articles %s; completing it with @article = 'all' loses the rows changed while they were missing (measured); drop the subscription in one plan (remove it from the file) and add it back in the next"
 	r21Type         = "a change of type of subscription %s (%s to %s) is refused: drop it in one plan and add it in another (R21)"
 	r21PullShared   = "a pull subscription to publication %s, which has no independent_agent, is refused: its shared pull agent is not measured (R21)"
-	r21Lsn          = "initialization from an LSN: its precondition check is plan 4's (R21; a wrong LSN is accepted and stops the subscriptions of the database)"
 	r21Extension    = "extension of a %s-initialized subscription not measured"
 	r21InitNote     = "the initialization of subscription %s of %s changes from %s to %s: it only serves the creation of a subscription, so the plan changes nothing (R21)"
 	sharedPullStays = "the shared pull agent job stays at the subscriber after sp_droppullsubscription"
 	r12LosesAll     = "subscription %s would lose every article before the new ones are added, which drops it with its agent (measured); drop and add it in two plans"
+)
+
+// R57's texts.
+const (
+	r57Unchecked = "the LSN of %s cannot be checked: %s"
+	r57Invalid   = "the LSN %s of %s is refused: %s (R57)"
+	r57NoCheck   = "no check of it was read"
+	r57Pull      = "a pull subscription initialized from an LSN is not measured (10-init-modes I3 creates push subscriptions)"
 )
 
 const subPrefix = "publications[*].subscriptions[*]."
@@ -153,16 +161,21 @@ func (b *builder) articleList(p *model.Publication, s *model.Subscription, path 
 // @independent_agent and @immediate_sync from the publication, R15) and
 // sp_addpullsubscription_agent at the subscriber, in the subscription
 // database. Only the publisher-side calls carry the add_subscription entry,
-// so new_snapshot is counted once (Task 9). R21: initialization from an LSN
-// and a pull subscription to a publication without independent_agent are
-// refused.
+// so new_snapshot is counted once (Task 9). R21: a pull subscription to a
+// publication without independent_agent is refused. R57: initialization
+// from an LSN only for a push subscription whose LSN the checks read valid.
 func (b *builder) addSubscription(pd *model.Publication, s *model.Subscription) {
 	path := subPath(pd.Name, s)
 	pubType := stringOr(pd.Type, "transactional")
 	typ := stringOr(s.Type, "push")
 	if stringOr(s.Initialization, initSnapshot) == "lsn" {
-		b.refuse(path+".initialization", "%s", r21Lsn)
-		return
+		if typ == "pull" {
+			b.refuse(path+".type", "%s", r57Pull)
+			return
+		}
+		if !b.lsnChecked(pd, s, path) {
+			return
+		}
 	}
 	if typ == "pull" && !boolOf(pd.IndependentAgent) {
 		b.refuse(path+".type", r21PullShared, pd.Name)
@@ -234,6 +247,38 @@ func (b *builder) addSubscription(pd *model.Publication, s *model.Subscription) 
 	if typ == "pull" {
 		b.pullSubscription(pd, s, path, key)
 	}
+}
+
+// lsnChecked tells whether the LSN of a subscription the plan creates from
+// one was read valid (R57): not zero, not beyond the end of the
+// publication database's log, and equal to the last_lsn of the backup its
+// database was restored from. Otherwise it refuses the subscription, with
+// the check's reason: a wrong LSN is accepted by sp_addsubscription and
+// stops every subscription of the database (lab/README.md, "Initialization
+// without a snapshot"). The check must be of the file's LSN.
+func (b *builder) lsnChecked(pd *model.Publication, s *model.Subscription, path string) bool {
+	label := "subscription " + s.Key() + " of " + pd.Name
+	var lc *state.LSNCheck
+	if c := b.in.Checks; c != nil {
+		for i := range c.LSNs {
+			l := &c.LSNs[i]
+			if strings.EqualFold(l.Publication, pd.Name) && strings.EqualFold(l.Subscriber, s.Subscriber) &&
+				strings.EqualFold(l.Database, s.Database) && s.LSN != nil && strings.EqualFold(l.LSN, *s.LSN) {
+				lc = l
+			}
+		}
+	}
+	switch {
+	case lc == nil:
+		b.refuse(path+".lsn", r57Unchecked, label, r57NoCheck)
+	case !lc.Checked:
+		b.refuse(path+".lsn", r57Unchecked, label, lc.Reason)
+	case !lc.Valid:
+		b.refuse(path+".lsn", r57Invalid, lc.LSN, label, lc.Reason)
+	default:
+		return true
+	}
+	return false
 }
 
 // subArticles is the articles of a re-add call (art, or every article the

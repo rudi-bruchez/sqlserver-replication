@@ -511,8 +511,9 @@ func (b *builder) jobOp(step int, order, kind, change string, s agentSlot, enabl
 // tables and their keys (14088), the primary key columns a column subset
 // keeps (21250), the profiles the agents name, the subscriber databases of
 // the subscriptions the plan creates, the snapshot folders (a warning), the
-// edition a database snapshot sync_method needs, and the msdb permission of
-// the job operations (plan 4 checks it).
+// edition a database snapshot sync_method needs, and, at each server that
+// runs job operations, the msdb job permission (R55) and SQL Server Agent
+// (R56).
 func (b *builder) preconditions(ops []Operation) []Precondition {
 	checks := b.in.Checks
 	var out []Precondition
@@ -690,8 +691,122 @@ func (b *builder) preconditions(ops []Operation) []Precondition {
 			continue
 		}
 		seenJob[strings.ToLower(op.Server)] = true
-		out = append(out, Precondition{Name: "msdb job permission", Server: op.Server,
-			Object: "sysadmin, or SQLAgentOperatorRole owning the jobs", Status: precondUnchecked, Detail: "checked by apply"})
+		out = append(out, jobPermission(checks, op.Server), agentService(checks, op.Server))
+	}
+	return out
+}
+
+// The objects and texts of R55's and R56's preconditions.
+const (
+	jobPermissionObject = "sysadmin, or SQLAgentOperatorRole with SELECT on msdb.dbo.sysjobs, sysjobactivity and syssessions"
+	agentObject         = "SQL Server Agent service"
+	notRead             = "not read"
+	jobSysadmin         = "sysadmin"
+	jobOperatorReads    = "SQLAgentOperatorRole with SELECT on msdb.dbo.sysjobs, sysjobactivity and syssessions (that grant is not measured)"
+	jobOperatorRefused  = "SQLAgentOperatorRole without SELECT on msdb.dbo.sysjobs, sysjobactivity and syssessions: the job prologue and JobIdle fail with 229 (20-apply AP.perm.m_ap_oper.prologue, .activity)"
+	jobNoRole           = "neither sysadmin nor a member of SQLAgentOperatorRole in msdb: the job operations fail with 229 or 14262 (20-apply AP.perm.m_ap_user, m_ap_none)"
+	agentStoppedDetail  = "SQL Server Agent is not running: the jobs apply starts would not run"
+)
+
+// jobPermission is R55's precondition at a server that runs job
+// operations. Every job operation begins with the prologue, which reads
+// msdb.dbo.sysjobs, and a job_start's JobIdle reads sysjobactivity and
+// syssessions: SQLAgentOperatorRole alone runs sp_update_job and
+// sp_start_job but fails with 229 on both reads (20-apply
+// AP.perm.m_ap_oper.*). So it is ok for a sysadmin, or for an operator
+// granted SELECT on the three tables, a case no row measured; failed
+// otherwise; unchecked when it was not read.
+func jobPermission(c *state.Checks, server string) Precondition {
+	pc := Precondition{Name: "msdb job permission", Server: server, Object: jobPermissionObject, Status: precondUnchecked, Detail: notRead}
+	var jp *state.JobPermissionCheck
+	if c != nil {
+		for i := range c.JobPermissions {
+			if strings.EqualFold(c.JobPermissions[i].Server, server) {
+				jp = &c.JobPermissions[i]
+			}
+		}
+	}
+	switch {
+	case jp == nil || !jp.Checked:
+	case jp.Sysadmin:
+		pc.Status, pc.Detail = precondOK, jobSysadmin
+	case jp.Operator && jp.ReadsJobs:
+		pc.Status, pc.Detail = precondOK, jobOperatorReads
+	case jp.Operator:
+		pc.Status, pc.Detail = precondFailed, jobOperatorRefused
+	default:
+		pc.Status, pc.Detail = precondFailed, jobNoRole
+	}
+	return pc
+}
+
+// agentService is R56's precondition at a server that runs job operations:
+// the SQL Server Agent row of sys.dm_server_services reads Running
+// (agent-stopped AS.detect.dm_server_services.*).
+func agentService(c *state.Checks, server string) Precondition {
+	pc := Precondition{Name: "sql server agent", Server: server, Object: agentObject, Status: precondUnchecked, Detail: notRead}
+	var ag *state.AgentServiceCheck
+	if c != nil {
+		for i := range c.Agents {
+			if strings.EqualFold(c.Agents[i].Server, server) {
+				ag = &c.Agents[i]
+			}
+		}
+	}
+	switch {
+	case ag == nil:
+	case !ag.Checked:
+		if ag.Detail != "" {
+			pc.Detail = ag.Detail
+		}
+	case ag.Running:
+		pc.Status, pc.Detail = precondOK, ag.Detail
+	default:
+		pc.Status, pc.Detail = precondFailed, agentStoppedDetail
+	}
+	return pc
+}
+
+// The warnings of R59 minor 7 on a new article's destination schema.
+const (
+	schemaMissing   = "schema %s does not exist at %s/%s: the delivery fails"
+	schemaUnchecked = "schema %s may not exist at %s/%s (not checked): the delivery fails if it does not"
+)
+
+// schemaWarnings are the warnings of an article the plan adds whose
+// destination schema is not dbo and whose schema_option lacks
+// create_schemas (0x8000000): at each subscription of the file that
+// receives it, the schema must exist in the subscriber database, which
+// the checks read absent or did not read.
+func (b *builder) schemaWarnings(pd *model.Publication, a *model.Article) []string {
+	schema := stringOr(a.Destination.Schema, "")
+	if schema == "" || strings.EqualFold(schema, "dbo") {
+		return nil
+	}
+	if a.SchemaOptions != nil && hasFold(*a.SchemaOptions, "create_schemas") {
+		return nil
+	}
+	var out []string
+	for i := range pd.Subscriptions {
+		s := &pd.Subscriptions[i]
+		if !covers(s, a.Name) {
+			continue
+		}
+		var sc *state.SchemaCheck
+		if c := b.in.Checks; c != nil {
+			for j := range c.Schemas {
+				x := &c.Schemas[j]
+				if strings.EqualFold(x.Server, s.Subscriber) && strings.EqualFold(x.Database, s.Database) && strings.EqualFold(x.Schema, schema) {
+					sc = x
+				}
+			}
+		}
+		switch {
+		case sc == nil || !sc.Checked:
+			out = append(out, fmt.Sprintf(schemaUnchecked, schema, s.Subscriber, s.Database))
+		case !sc.Exists:
+			out = append(out, fmt.Sprintf(schemaMissing, schema, s.Subscriber, s.Database))
+		}
 	}
 	return out
 }

@@ -318,7 +318,7 @@ func (e *env) inputs(t *testing.T, des *model.Config) plan.Inputs {
 		t.Fatal(err)
 	}
 	checks, err := precheck.Run(ctx, precheck.Conns{Publisher: e.master, Publication: pub, Distributor: e.master,
-		Subscribers: subs, DistributorServer: distName}, des)
+		Subscribers: subs, DistributorServer: distName}, des, res.Config)
 	if err != nil {
 		t.Fatal(err)
 	}

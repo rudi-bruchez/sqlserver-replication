@@ -7,6 +7,7 @@ import (
 
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/normalize"
+	"github.com/rudi-bruchez/sqlserver-replication/internal/state"
 )
 
 // newSub is a subscription of the file to a database of the lab subscriber.
@@ -315,14 +316,74 @@ func TestPullNonIndependentRefused(t *testing.T) {
 		"a pull subscription to publication SalesRef, which has no independent_agent, is refused: its shared pull agent is not measured (R21)")
 }
 
-func TestLsnInitializationRefused(t *testing.T) {
-	p := buildLab(t, nil, func(des, _ *model.Config) {
+// R57: a subscription initialized from an LSN is created only when its
+// LSNCheck is valid; refused with its reason otherwise, and when nothing
+// checked it.
+func TestBuildLSNSubscription(t *testing.T) {
+	const path = "publications[SalesRef].subscriptions[REPLLAB/m_sdb_lsn]"
+	edit := func(des, _ *model.Config) {
 		s := newSub("m_sdb_lsn", "push", "lsn")
-		s.LSN = str("0x0000002A000001F00003")
+		s.LSN = str("0x00000025000001080001")
 		addSub(t, des, "SalesRef", s)
+		// normalization fills it true only when omitted (R57 prerequisite)
+		pubOf(t, des, "SalesRef").AllowInitializeFromBackup = nil
+	}
+	checks := func(lc *state.LSNCheck) *state.Checks {
+		c := labChecks()
+		c.SubscriberDatabases = append(c.SubscriberDatabases, state.DatabaseCheck{Server: "REPLLAB", Database: "m_sdb_lsn", Checked: true, Exists: true})
+		if lc != nil {
+			c.LSNs = []state.LSNCheck{*lc}
+		}
+		return c
+	}
+	valid := &state.LSNCheck{Publication: "SalesRef", Subscriber: "REPLLAB", Database: "m_sdb_lsn", LSN: "0x00000025000001080001", Checked: true, Valid: true}
+	ops := planned(t, buildLab(t, checks(valid), edit))
+	add := one(t, ops, "sp_addsubscription")
+	wantParam(t, add, "@sync_type", "N'initialize from lsn'")
+	wantParam(t, add, "@subscriptionlsn", "0x00000025000001080001")
+	// The prerequisite: allow_initialize_from_backup, false on the lab, is
+	// set before the subscription (18786, 20-apply AP.lsn.no_backup_flag).
+	chg := one(t, ops, "sp_changepublication")
+	wantParam(t, chg, "@property", "N'allow_initialize_from_backup'")
+	if chg.Seq >= add.Seq {
+		t.Errorf("sp_changepublication at %d, sp_addsubscription at %d", chg.Seq, add.Seq)
+	}
+
+	invalid := *valid
+	invalid.Valid, invalid.Reason = false, "0x00000025000001080001 is above the last_lsn 0x00000025000001070001 of the backup"
+	wantRefusal(t, buildLab(t, checks(&invalid), edit), path+".lsn",
+		"the LSN 0x00000025000001080001 of subscription REPLLAB/m_sdb_lsn of SalesRef is refused: 0x00000025000001080001 is above the last_lsn 0x00000025000001070001 of the backup (R57)")
+
+	unchecked := *valid
+	unchecked.Checked, unchecked.Valid, unchecked.Reason = false, false, "REPLLAB/m_sdb_lsn has no restore history"
+	wantRefusal(t, buildLab(t, checks(&unchecked), edit), path+".lsn",
+		"the LSN of subscription REPLLAB/m_sdb_lsn of SalesRef cannot be checked: REPLLAB/m_sdb_lsn has no restore history")
+	// No check at all, with checks or without.
+	for _, c := range []*state.Checks{checks(nil), nil} {
+		wantRefusal(t, buildLab(t, c, edit), path+".lsn",
+			"the LSN of subscription REPLLAB/m_sdb_lsn of SalesRef cannot be checked: no check of it was read")
+	}
+	// A check of another LSN than the file's does not count.
+	other := *valid
+	other.LSN = "0x00000025000001080002"
+	wantRefusal(t, buildLab(t, checks(&other), edit), path+".lsn",
+		"the LSN of subscription REPLLAB/m_sdb_lsn of SalesRef cannot be checked: no check of it was read")
+
+	// allow_initialize_from_backup declared false: refused by normalization.
+	p := buildLab(t, checks(valid), func(des, cur *model.Config) {
+		edit(des, cur)
+		pubOf(t, des, "SalesRef").AllowInitializeFromBackup = model.Ptr(false)
 	})
-	wantRefusal(t, p, "publications[SalesRef].subscriptions[REPLLAB/m_sdb_lsn].initialization",
-		"initialization from an LSN: its precondition check is plan 4's (R21; a wrong LSN is accepted and stops the subscriptions of the database)")
+	wantRefusal(t, p, "publications[SalesRef].allow_initialize_from_backup",
+		"subscription REPLLAB/m_sdb_lsn is initialized from an LSN, which needs allow_initialize_from_backup: sp_addsubscription refuses it with 18786 (20-apply AP.lsn.no_backup_flag)")
+
+	// A pull subscription from an LSN is not measured.
+	p = buildLab(t, checks(valid), func(des, cur *model.Config) {
+		edit(des, cur)
+		pubOf(t, des, "SalesRef").AllowPull = model.Ptr(true)
+		subOf(t, des, "SalesRef", "m_sdb_lsn").Type = str("pull")
+	})
+	wantRefusal(t, p, path+".type", "a pull subscription initialized from an LSN is not measured (10-init-modes I3 creates push subscriptions)")
 }
 
 func TestTypeChangeRefused(t *testing.T) {

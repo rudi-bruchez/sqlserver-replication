@@ -40,7 +40,9 @@ func TestPrecheckQueriesParse(t *testing.T) {
 	}
 	queries := map[string]string{
 		"qServer": qServer, "qTable": qTable, "qDatabase": qDatabase,
-		"qFolder": qFolder, "qProfiles": qProfiles,
+		"qFolder": qFolder, "qProfiles": qProfiles, "qDatabaseName": qDatabaseName,
+		"qJobPermission": qJobPermission, "qAgent": qAgent, "qLogEnd": qLogEnd, "qRestored": qRestored,
+		"qSchema": strings.Replace(qSchema, "{db}", quoteName("master"), 1),
 	}
 	for name, q := range queries {
 		batch := "DECLARE @p1 nvarchar(256);\n" + q
@@ -127,7 +129,7 @@ func TestLabPrecheck(t *testing.T) {
 		Distributor: master,
 		Subscribers: map[string]*sql.DB{"repllab": master}, // the file says REPLLAB
 		Unreachable: map[string]string{"M_SUBX": "dial tcp: refused"},
-	}, des)
+	}, des, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,5 +216,80 @@ func TestLabPrecheck(t *testing.T) {
 		if !have[k] {
 			t.Errorf("profile %s missing from %v", k, checks.Profiles)
 		}
+	}
+}
+
+// TestLabPrecheckApply reads the preconditions apply needs on the lab, as
+// sa: the job permission and SQL Server Agent of the lab's server (R55,
+// R56), the destination schemas at SalesSub (R59 minor 7), and the LSN of
+// a subscription whose database has no restore history (R57), which reads
+// unchecked. It passes no LSN to the server.
+func TestLabPrecheckApply(t *testing.T) {
+	master := labDB(t, "master")
+	des := loadFixture(t)
+	var pub *model.Publication
+	for i := range des.Publications {
+		if des.Publications[i].Name == "SalesPub" {
+			pub = &des.Publications[i]
+		}
+	}
+	if pub == nil {
+		t.Fatal("SalesPub not in the fixture")
+	}
+	a := model.Article{Name: "m_nos_art", Source: model.ObjectName{Schema: "dbo", Name: "Customer"},
+		Destination: model.Destination{Schema: model.Ptr("m_nos"), Name: model.Ptr("Customer")}}
+	pub.Articles = append(pub.Articles, a)
+	pub.Subscriptions = append(pub.Subscriptions, model.Subscription{Subscriber: "REPLLAB", Database: "m_nolsn",
+		Type: model.Ptr("push"), Initialization: model.Ptr("lsn"), LSN: model.Ptr("0x00000025000001080001"),
+		Articles: []string{"m_nos_art"}})
+	ctx := context.Background()
+	checks, err := Run(ctx, Conns{
+		Publisher:   master,
+		Publication: labDB(t, "Sales"),
+		Distributor: master,
+		Subscribers: map[string]*sql.DB{"repllab": master},
+	}, des, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(checks.JobPermissions) != 1 || !strings.EqualFold(checks.JobPermissions[0].Server, "repllab") ||
+		!checks.JobPermissions[0].Checked || !checks.JobPermissions[0].Sysadmin || !checks.JobPermissions[0].ReadsJobs {
+		t.Errorf("job permissions %+v, want repllab once, sa a sysadmin reading the jobs", checks.JobPermissions)
+	}
+	if len(checks.Agents) != 1 || !checks.Agents[0].Checked || !checks.Agents[0].Running ||
+		!strings.HasPrefix(checks.Agents[0].Detail, "SQL Server Agent") {
+		t.Errorf("agents %+v, want repllab's running", checks.Agents)
+	}
+
+	schemas := map[string]state.SchemaCheck{}
+	for _, sc := range checks.Schemas {
+		schemas[sc.Server+"/"+sc.Database+"/"+sc.Schema] = sc
+	}
+	if sc, ok := schemas["REPLLAB/SalesSub/dbo"]; !ok || !sc.Checked || !sc.Exists {
+		t.Errorf("dbo in SalesSub: %+v (%t)", sc, ok)
+	}
+	if sc, ok := schemas["REPLLAB/SalesSub/m_nos"]; !ok || !sc.Checked || sc.Exists {
+		t.Errorf("m_nos in SalesSub: %+v (%t), want checked and missing", sc, ok)
+	}
+	if sc, ok := schemas["REPLLAB/m_nolsn/m_nos"]; !ok || sc.Checked {
+		t.Errorf("m_nos in the missing m_nolsn: %+v (%t), want unchecked", sc, ok)
+	}
+
+	if len(checks.LSNs) != 1 || checks.LSNs[0].Checked || checks.LSNs[0].Valid ||
+		checks.LSNs[0].Reason != "REPLLAB/m_nolsn has no restore history" || checks.LSNs[0].LSN != "0x00000025000001080001" {
+		t.Errorf("LSNs %+v, want one unchecked for the missing restore history", checks.LSNs)
+	}
+	// The log end of Sales reads in the form lsnFromLogEnd parses.
+	var e string
+	if err := master.QueryRowContext(ctx, qLogEnd, "Sales").Scan(&e); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := lsnFromLogEnd(e); err != nil || b == [10]byte{} {
+		t.Errorf("log end %q: %x %v", e, b, err)
+	}
+	// A missing database reads no row, not the current database's log.
+	if err := master.QueryRowContext(ctx, qLogEnd, "m_nodb").Scan(&e); err != sql.ErrNoRows {
+		t.Errorf("log end of m_nodb: %q %v, want no row", e, err)
 	}
 }
