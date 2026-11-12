@@ -384,3 +384,100 @@ func sharedPull(db string, enabled bool) model.SharedPullAgent {
 	a.Schedules = &[]model.Schedule{}
 	return a
 }
+
+// userDefaultSnapshot makes m_def, a user snapshot profile, the current
+// default, used by SalesRef's snapshot agent.
+func userDefaultSnapshot(f *state.Facts) {
+	for i := range f.DefaultProfiles {
+		if f.DefaultProfiles[i].AgentType == "snapshot" {
+			f.DefaultProfiles[i].Name = "m_def"
+		}
+	}
+	f.ProfileUses = []state.ProfileUse{profileUse("m_def", "snapshot", "SalesRef", "", "")}
+}
+
+func mDef() model.AgentProfile {
+	return model.AgentProfile{Name: "m_def", AgentType: "snapshot", Description: str(""), Default: model.Ptr(true),
+		Parameters: map[string]string{"-BcpBatchSize": "100000"}}
+}
+
+func TestOmittedProfileAfterDefaultDrop(t *testing.T) {
+	// d23: the file drops m_def and omits SalesRef's snapshot profile: the
+	// agent is bound to the template system profile, then m_def is dropped.
+	ops := planned(t, buildLabFacts(t, userDefaultSnapshot, func(des, cur *model.Config) {
+		cur.AgentProfiles = append(cur.AgentProfiles, mDef())
+		pubOf(t, cur, "SalesRef").SnapshotAgent.Profile = str("m_def")
+		pubOf(t, des, "SalesRef").SnapshotAgent.Profile = nil
+	}))
+	bind := one(t, ops, "[distribution].dbo.sp_update_agent_profile")
+	drop := one(t, ops, "sp_drop_agent_profile")
+	if !strings.Contains(bind.Call.Prologue, "SELECT @profile_id = MIN(profile_id) FROM msdb.dbo.MSagent_profiles WHERE agent_type = 1 AND type = 0;") ||
+		bind.Changes[0].After != "the template system profile of snapshot" {
+		t.Errorf("binding:\n%s\n%+v", bind.Call.Prologue, bind.Changes)
+	}
+	if !strings.Contains(drop.Call.Prologue, "N'm_def'") || drop.Seq < bind.Seq {
+		t.Errorf("drop seq %d after binding seq %d:\n%s", drop.Seq, bind.Seq, drop.Call.Prologue)
+	}
+	// SalesPub's snapshot agent is on a system profile: not rebound.
+	if n := len(opsCalling(ops, "[distribution].dbo.sp_update_agent_profile")); n != 1 {
+		t.Errorf("%d bindings", n)
+	}
+
+	// The file keeps m_def as the default: SalesRef stays on it, no drop.
+	ops = planned(t, buildLabFacts(t, userDefaultSnapshot, func(des, cur *model.Config) {
+		both(des, cur, func(c *model.Config) { c.AgentProfiles = append(c.AgentProfiles, mDef()) })
+		pubOf(t, cur, "SalesRef").SnapshotAgent.Profile = str("m_def")
+		pubOf(t, des, "SalesRef").SnapshotAgent.Profile = nil
+	}))
+	if len(ops) != 0 {
+		t.Errorf("a kept default:\n%s", opsString(ops))
+	}
+}
+
+func TestBoundProfileKept(t *testing.T) {
+	// A profile absent from the file that an agent of the plan is bound to
+	// is not dropped.
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		des.AgentProfiles = nil
+		salesPubAgent(t, des).Profile = str("lab-distrib")
+	}))
+	one(t, ops, "[distribution].dbo.sp_update_agent_profile")
+	if n := len(opsCalling(ops, "sp_drop_agent_profile")); n != 0 {
+		t.Errorf("a profile the plan binds to is dropped:\n%s", opsString(ops))
+	}
+}
+
+func TestDefaultProfileChecks(t *testing.T) {
+	// Two desired defaults of one type.
+	p := buildLab(t, nil, func(des, _ *model.Config) {
+		for _, n := range []string{"m_a", "m_b"} {
+			des.AgentProfiles = append(des.AgentProfiles, model.AgentProfile{Name: n, AgentType: "snapshot",
+				Default: model.Ptr(true), Parameters: labTemplate(t, "snapshot")})
+		}
+	})
+	wantRefusal(t, p, "agent_profiles[snapshot/m_b].default", "profiles m_a and m_b are both the default of snapshot")
+	// d24: a new default while the file keeps the current user default
+	// without default true.
+	p = buildLabFacts(t, userDefaultSnapshot, func(des, cur *model.Config) {
+		cur.AgentProfiles = append(cur.AgentProfiles, mDef())
+		kept := mDef()
+		kept.Default = nil
+		des.AgentProfiles = append(des.AgentProfiles, kept, model.AgentProfile{Name: "m_new", AgentType: "snapshot",
+			Default: model.Ptr(true), Parameters: labTemplate(t, "snapshot")})
+	})
+	wantRefusal(t, p, "agent_profiles[snapshot/m_def].default", r6Default)
+}
+
+func TestCreatedSnapshotJobEnabledLeft(t *testing.T) {
+	// N7: a created snapshot agent declared disabled is Task 15's
+	// job_restore, not an sp_update_job of this strategy.
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		p := testPub("m_p", testTable("m_t", "dbo", "m_t"))
+		p.SnapshotAgent = &model.Agent{JobEnabled: model.Ptr(false)}
+		des.Publications = append(des.Publications, p)
+	}))
+	one(t, ops, "sp_addpublication_snapshot")
+	if n := len(opsCalling(ops, "msdb.dbo.sp_update_job")); n != 0 {
+		t.Errorf("%d sp_update_job for a created snapshot agent:\n%s", n, opsString(ops))
+	}
+}

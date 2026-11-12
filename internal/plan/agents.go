@@ -355,13 +355,24 @@ func agentProfiles(c *model.Config) []agentProfile {
 	return out
 }
 
-// defaultProfile is the default profile of an agent type this plan leaves
-// in place: a profile of the file with default true (a new one gets it from
-// sp_add_agent_profile @default = 1 in step 2; normalization refuses two),
-// otherwise state.Facts.DefaultProfiles; "" when unknown (R41, fix round 1
-// of Task 14). Measured by the Task 14 review: sp_add_agent_profile
-// @default = 1 rebinds no existing agent, so an omitted profile is bound to
-// the new default by this plan.
+// templateProfile stands for the template system profile of a type, the
+// system profile MIN(profile_id) (stored-procedures/sp_add_agent_profile.sql:82),
+// whose name the facts do not give.
+const templateProfile = "\x00template"
+
+// defaultProfile is the default profile of an agent type this plan leaves in
+// place (R41; fix rounds 1 and 3 of Task 14), in this order: a profile of the
+// file of that type with default true (a new one takes the flag from
+// sp_add_agent_profile @default = 1 in step 2; normalization refuses two, and
+// a default change of a kept profile is refused, R6); else the current
+// default (state.Facts.DefaultProfiles) when the plan keeps it, a system
+// profile or a user profile the file declares; else, the plan dropping the
+// current default user profile, templateProfile (measured by the Task 14
+// review: dropping an unused default user profile makes the template the
+// default again). "" when unknown. Measured by the review too:
+// sp_add_agent_profile @default = 1 rebinds no existing agent, so an agent
+// whose profile the file omits is bound by this plan, and an agent created
+// after it starts on the new default.
 func (b *builder) defaultProfile(agentType string) string {
 	for _, p := range b.des.AgentProfiles {
 		if p.AgentType == agentType && boolOf(p.Default) {
@@ -372,11 +383,26 @@ func (b *builder) defaultProfile(agentType string) string {
 		return ""
 	}
 	for _, d := range b.in.Facts.DefaultProfiles {
-		if d.AgentType == agentType {
-			return d.Name
+		if d.AgentType != agentType {
+			continue
 		}
+		if b.userProfile(b.cur, agentType, d.Name) && !b.userProfile(b.des, agentType, d.Name) {
+			return templateProfile // the plan drops it
+		}
+		return d.Name
 	}
 	return ""
+}
+
+// userProfile tells a user profile of c, matched without regard to case
+// (R7).
+func (b *builder) userProfile(c *model.Config, agentType, name string) bool {
+	for _, p := range c.AgentProfiles {
+		if p.AgentType == agentType && strings.EqualFold(p.Name, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // planAgent plans one agent: its profile binding, then, for an existing
@@ -461,7 +487,14 @@ func (b *builder) binding(s agentSlot) {
 			have = *s.cur.Profile // "": no profile id, the default
 		}
 	}
-	if have != "" && strings.EqualFold(have, want) {
+	switch {
+	case want == templateProfile && have != templateProfile:
+		if !b.userProfile(b.cur, s.agentType, have) {
+			// A system profile: taken as the template, whose name the facts
+			// do not give (another system profile is not told apart).
+			return
+		}
+	case have != "" && strings.EqualFold(have, want):
 		return
 	}
 	if b.rebound == nil {
@@ -482,10 +515,9 @@ func (b *builder) binding(s agentSlot) {
 	from, where := b.agentRow(s, dist)
 	pro := "DECLARE @agent_id int, @profile_id int;\n" +
 		"SELECT @agent_id = a.id " + from + " WHERE " + where + ";\n" +
-		"SELECT @profile_id = profile_id FROM msdb.dbo.MSagent_profiles WHERE profile_name = " + literal(want) +
-		" AND agent_type = " + strconv.Itoa(code) + ";\n" +
+		profileLookup(want, code) +
 		"IF @agent_id IS NULL OR @profile_id IS NULL THROW 50000, " +
-		literal(fmt.Sprintf("the agent %s or the profile %s (%s) does not exist", s.path, want, s.agentType)) + ", 1;"
+		literal(fmt.Sprintf("the agent %s or the profile %s (%s) does not exist", s.path, profileLabel(want, s.agentType), s.agentType)) + ", 1;"
 	op := b.distOp(10, s.path+sep+"1", "agent_binding", "change", s.path, Call{Procedure: "sp_update_agent_profile", Prologue: pro, Params: []Param{
 		{Name: "@agent_type", Value: strconv.Itoa(code)},
 		{Name: "@agent_id", Value: "@agent_id"},
@@ -493,7 +525,7 @@ func (b *builder) binding(s agentSlot) {
 	}})
 	op.Call.Procedure = procedureName("sp_update_agent_profile", b.distributionDB())
 	withCites(&op, e)
-	op.Changes = []PropertyChange{{Path: s.path + ".profile", Before: have, After: want}}
+	op.Changes = []PropertyChange{{Path: s.path + ".profile", Before: profileLabel(have, s.agentType), After: profileLabel(want, s.agentType)}}
 	op.Affects = s.affects()
 	op.Reason = "the agent is bound to its profile after its creation and the profile's (spec Agents and profiles)"
 	if s.des.Profile == nil {
@@ -501,6 +533,24 @@ func (b *builder) binding(s agentSlot) {
 	}
 	op.Sources = append(op.Sources, "spec Agents and profiles", "spec Order step 10")
 	b.add(op)
+}
+
+// profileLookup sets @profile_id to the profile named want of the type
+// code, or to the type's template system profile.
+func profileLookup(want string, code int) string {
+	if want == templateProfile {
+		return "SELECT @profile_id = MIN(profile_id) FROM msdb.dbo.MSagent_profiles WHERE agent_type = " + strconv.Itoa(code) + " AND type = 0;\n"
+	}
+	return "SELECT @profile_id = profile_id FROM msdb.dbo.MSagent_profiles WHERE profile_name = " + literal(want) +
+		" AND agent_type = " + strconv.Itoa(code) + ";\n"
+}
+
+// profileLabel writes a profile name, templateProfile as words.
+func profileLabel(name, agentType string) string {
+	if name == templateProfile {
+		return "the template system profile of " + agentType
+	}
+	return name
 }
 
 // agentKey names an agent of this publication database as a

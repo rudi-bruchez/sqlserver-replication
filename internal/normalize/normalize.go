@@ -1099,6 +1099,19 @@ func (n *normalizer) passwords(c *model.Config) {
 
 // Rule 7: combinations the server refuses, after defaults.
 func (n *normalizer) conflicts(c *model.Config) {
+	// One default profile per agent type: sp_add_agent_profile @default = 1
+	// takes the flag from the previous one (19-profiles PF.create_default).
+	defaults := map[string]string{}
+	for _, pr := range c.AgentProfiles {
+		if pr.Default == nil || !*pr.Default {
+			continue
+		}
+		if other, ok := defaults[pr.AgentType]; ok {
+			n.refuse("agent_profiles"+model.Element(pr.Key())+".default", "profiles %s and %s are both the default of %s", other, pr.Name, pr.AgentType)
+			continue
+		}
+		defaults[pr.AgentType] = pr.Name
+	}
 	if d := c.Distributor; d != nil && d.MinRetentionHours != nil && d.MaxRetentionHours != nil && *d.MinRetentionHours > *d.MaxRetentionHours {
 		// Measured by the Task 14 review: sp_changedistributiondb refuses a
 		// min above the max, and a max below the min, with 14107.

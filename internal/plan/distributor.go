@@ -535,9 +535,10 @@ func (b *builder) dropProfile(p *model.AgentProfile) {
 }
 
 // profileUsed tells whether a profile the file omits is still used after
-// this plan: by a row of Facts.ProfileUses that this plan's drops of
-// publications and subscriptions do not remove (virtual rows included), or
-// by an agent of the file that names it. Names are compared without regard
+// this plan: by an agent this plan binds to it, by a row of
+// Facts.ProfileUses that this plan's drops of publications and
+// subscriptions do not remove (virtual rows included), or by an agent of
+// the file that names it. Names are compared without regard
 // to case, on the agent type (R6). Without facts, every profile is used.
 func (b *builder) profileUsed(p *model.AgentProfile) bool {
 	if b.in.Facts == nil {
@@ -545,6 +546,12 @@ func (b *builder) profileUsed(p *model.AgentProfile) bool {
 	}
 	for _, a := range agentProfiles(b.des) {
 		if a.agentType == p.AgentType && strings.EqualFold(a.profile, p.Name) {
+			return true
+		}
+	}
+	for k, want := range b.rebound {
+		// An agent this plan binds to it (agentsStrategy runs first).
+		if strings.HasPrefix(k, p.AgentType+sep) && strings.EqualFold(want, p.Name) {
 			return true
 		}
 	}
