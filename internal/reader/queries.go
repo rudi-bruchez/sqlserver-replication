@@ -24,7 +24,7 @@ const (
 	// offline or restoring database fails before any query.
 	qProbe = `
 SELECT ISNULL((SELECT TOP (1) datasource FROM master.dbo.sysservers WHERE srvstatus & 8 <> 0), N''),
-       state_desc, is_in_standby, is_published, is_merge_published
+       state_desc, is_in_standby, is_published, is_merge_published, name
 FROM sys.databases WHERE name = @p1`
 
 	// sp_replicationdboption 'sync with backup'; NULL when the database is not
@@ -35,11 +35,14 @@ FROM sys.databases WHERE name = @p1`
 	// repl_distributor and its login mappings, lowest local principal first
 	// (0 is the mapping for every login). sys.sp_adddistributor builds
 	// provider_string through sys.fn_getproviderstring, then appends
-	// MultiSubnetFailover=Yes; when asked.
+	// MultiSubnetFailover=Yes; when asked. provider_string is NULL and
+	// sys.linked_logins has no row for a login without ALTER ANY LINKED
+	// SERVER (measured, SQL Server 2022 CU27), hence the last column.
 	qDistributorLink = `
 SELECT s.provider_string,
        CAST(l.uses_self_credential AS int),
-       l.remote_name
+       l.remote_name,
+       HAS_PERMS_BY_NAME(NULL, NULL, N'ALTER ANY LINKED SERVER')
 FROM sys.servers AS s
 LEFT JOIN sys.linked_logins AS l
        ON l.server_id = s.server_id AND l.local_principal_id = 0 -- the mapping for all logins
@@ -79,6 +82,7 @@ SELECT a.pubid, a.artid, a.name, a.type, a.status, a.pre_creation_cmd, a.schema_
        ISNULL(a.ins_cmd, N''), ISNULL(a.upd_cmd, N''), ISNULL(a.del_cmd, N''),
        CAST(a.filter_clause AS nvarchar(max)),
        ISNULL(OBJECT_SCHEMA_NAME(NULLIF(a.filter, 0)), N''), ISNULL(OBJECT_NAME(NULLIF(a.filter, 0)), N''),
+       ISNULL(a.filter, 0),
        ISNULL(a.sync_objid, 0), a.objid,
        ISNULL(OBJECT_SCHEMA_NAME(NULLIF(a.sync_objid, 0)), N''), ISNULL(OBJECT_NAME(NULLIF(a.sync_objid, 0)), N''),
        ISNULL(a.creation_script, N''),
@@ -93,11 +97,11 @@ FROM dbo.sysarticles AS a`
 
 	// The tables whose identity range the publisher manages
 	// (@identityrangemanagementoption = 'auto'). The table only exists in
-	// some publication databases, hence the guard: with deferred name
-	// resolution the batch compiles without it and returns no result set.
-	qAutoIdentityRange = `
-IF OBJECT_ID(N'dbo.MSpub_identity_range') IS NOT NULL
-	SELECT objid FROM dbo.MSpub_identity_range`
+	// some publication databases. Its absence is told by the query's error
+	// 208, not by OBJECT_ID, which returns NULL for a table the login cannot
+	// see; a login denied the table gets error 229 (both measured, SQL
+	// Server 2022 CU27).
+	qAutoIdentityRange = `SELECT objid FROM dbo.MSpub_identity_range`
 
 	qSchemaArticles = `
 SELECT a.pubid, a.artid, a.name, a.type, a.pre_creation_cmd, a.schema_option,
@@ -181,9 +185,13 @@ SELECT property, ISNULL(CAST(value AS nvarchar(4000)), N'')
 FROM msdb.dbo.MSdistributor
 ORDER BY property`
 
-	// MSreplservers exists since SQL Server 2016 SP2 CU3 and 2017 CU6.
-	// The table name is passed as a parameter, not spliced into the literal.
-	qHasReplServers = `SELECT CASE WHEN OBJECT_ID(@p1) IS NULL THEN 0 ELSE 1 END`
+	// The version of the distributor instance, which decides whether its
+	// distribution databases have MSreplservers (replServersSince). The table
+	// is not probed with OBJECT_ID: it returns NULL for a table the login
+	// cannot see (measured with DENY SELECT, SQL Server 2022 CU27), and the
+	// fallback would then name the servers from master.sys.servers, whose ids
+	// differ.
+	qDistributorVersion = `SELECT CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(128))`
 
 	// fallbackServers replaces MSreplservers on older distributors.
 	fallbackServers = `(SELECT server_id AS srvid, name AS srvname FROM master.sys.servers)`

@@ -315,8 +315,9 @@ func (e *exporter) readProfileUses() error {
 	}
 
 	// Every distribution database of an instance has the same version, so
-	// whether {dist} has MSreplservers stands for all of them.
-	rows, err = e.src.Distributor.QueryContext(e.ctx, profileUsesQuery(dbs, e.servers == fallbackServers))
+	// whether the distributor's version has MSreplservers stands for all of
+	// them.
+	rows, err = e.src.Distributor.QueryContext(e.ctx, profileUsesQuery(dbs, !e.replServers))
 	if err != nil {
 		return err
 	}

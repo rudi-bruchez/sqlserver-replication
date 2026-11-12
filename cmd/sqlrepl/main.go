@@ -114,6 +114,8 @@ func runExport(args []string, stdout io.Writer) error {
 	if _, _, err := probe.Start(); err != nil {
 		return err
 	}
+	// The stored name, in its own case, from here on.
+	*database = probe.Name
 	pub, err := open(ctx, *publisher, *database, cp)
 	if err != nil {
 		return fmt.Errorf("publisher: %w", err)

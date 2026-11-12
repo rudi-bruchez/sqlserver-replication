@@ -62,7 +62,7 @@ func TestQueriesParse(t *testing.T) {
 		"qAutoIdentityRange": qAutoIdentityRange,
 		"qSubscriptions":     qSubscriptions, "qDistPublisher": qDistPublisher,
 		"qDistributionDB": qDistributionDB, "qDistributorProperties": qDistributorProperties,
-		"qHasReplServers": qHasReplServers, "qServerID": qServerID,
+		"qDistributorVersion": qDistributorVersion, "qServerID": qServerID,
 		"qLogReaderAgent": qLogReaderAgent, "qSnapshotAgents": qSnapshotAgents,
 		"qDistributionAgents": qDistributionAgents, "qJob": qJob,
 		"qJobSchedules": qJobSchedules, "qAgentProfiles": qAgentProfiles,
@@ -189,6 +189,8 @@ func TestStartDecision(t *testing.T) {
 			[]string{model.FindingNote, model.FindingOutOfScope}},
 		{"merge only, no distributor", PublisherProbe{State: "ONLINE", MergePublished: true}, true, "",
 			[]string{model.FindingNote, model.FindingOutOfScope}},
+		{"merge beside transactional", PublisherProbe{State: "ONLINE", Distributor: "D", Published: true, MergePublished: true}, false, "",
+			[]string{model.FindingOutOfScope}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -658,5 +660,70 @@ func TestFactTimeFormat(t *testing.T) {
 	}
 	if !regexp.MustCompile(`^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$`).MatchString(got) {
 		t.Errorf("read_at = %q, want 2006-01-02 15:04:05.000", got)
+	}
+}
+
+func TestReplServersSince(t *testing.T) {
+	cases := []struct {
+		version string
+		want    bool
+	}{
+		{"12.0.6024.0", false},
+		{"13.0.5102.14", false}, // 2016 SP2 GDR
+		{"13.0.5153.0", false},  // 2016 SP2 CU2
+		{"13.0.5216.0", true},   // 2016 SP2 CU3
+		{"13.0.6300.2", true},   // 2016 SP3
+		{"14.0.2027.2", false},  // 2017 RTM GDR
+		{"14.0.3022.28", false}, // 2017 CU5
+		{"14.0.3025.34", true},  // 2017 CU6
+		{"15.0.2000.5", true},
+		{"16.0.4305.5", true},
+		{"17.0.1000.7", true},
+	}
+	for _, c := range cases {
+		got, err := replServersSince(c.version)
+		if err != nil || got != c.want {
+			t.Errorf("replServersSince(%q) = %v, %v, want %v", c.version, got, err, c.want)
+		}
+	}
+	for _, bad := range []string{"", "16", "16.0", "x.0.1"} {
+		if _, err := replServersSince(bad); err == nil {
+			t.Errorf("replServersSince(%q): no error", bad)
+		}
+	}
+}
+
+func TestLinkSettings(t *testing.T) {
+	msf := sql.NullString{String: "addr=tcp:dist,1433;MultiSubnetFailover=Yes;Encrypt=Strict", Valid: true}
+	windows := sql.NullInt64{Int64: 1, Valid: true}
+
+	var d model.Distributor
+	if f := linkSettings(&d, true, msf, windows, sql.NullString{}); len(f) != 0 {
+		t.Errorf("visible: findings %+v, want none", f)
+	}
+	if d.MultiSubnetFailover == nil || !*d.MultiSubnetFailover || deref(d.LinkEncrypt) != "Strict" || deref(d.AdminLinkSecurity) != "windows" {
+		t.Errorf("visible: %+v", d)
+	}
+
+	// Without ALTER ANY LINKED SERVER the provider string and the login
+	// mappings read NULL: nothing is set, each path is unreadable.
+	d = model.Distributor{}
+	got := map[string]string{}
+	for _, f := range linkSettings(&d, false, sql.NullString{}, sql.NullInt64{}, sql.NullString{}) {
+		if f.Kind != model.FindingUnreadable {
+			t.Errorf("hidden: finding %+v, want unreadable", f)
+		}
+		got[f.Path] = f.Message
+	}
+	for _, k := range []string{"multi_subnet_failover", "link_encrypt", "link_trust_server_certificate", "link_host_name_in_certificate", "admin_link_security"} {
+		if !strings.Contains(got["distributor."+k], "ALTER ANY LINKED SERVER") {
+			t.Errorf("hidden: distributor.%s: message %q, want the visibility cause", k, got["distributor."+k])
+		}
+	}
+	if len(got) != 5 {
+		t.Errorf("hidden: %d findings, want 5: %v", len(got), got)
+	}
+	if d.MultiSubnetFailover != nil || d.LinkEncrypt != nil || d.LinkTrustServerCertificate != nil || d.LinkHostNameInCertificate != nil || d.AdminLinkSecurity != nil {
+		t.Errorf("hidden: %+v, want every link property nil", d)
 	}
 }

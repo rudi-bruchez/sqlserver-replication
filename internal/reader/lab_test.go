@@ -2,11 +2,14 @@ package reader
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"net/url"
 	"os"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -146,8 +149,13 @@ func TestReadLabSales(t *testing.T) {
 	}
 }
 
+// The empty configuration still reads what exists at the distributor: its
+// section, the agent profiles as a normal export lists them and, with the
+// facts, the profile uses (testdata/prof-setup.sql binds the m_ profile
+// m_prof_snap to a snapshot agent of Sales).
 func TestReadLabUnpublishedDatabase(t *testing.T) {
 	ctx := context.Background()
+	labScripts(t, "prof")
 	master := labDB(t, "master")
 	if _, err := master.ExecContext(ctx, "CREATE DATABASE m_empty"); err != nil {
 		t.Fatal(err)
@@ -167,6 +175,7 @@ func TestReadLabUnpublishedDatabase(t *testing.T) {
 		Distributor: labDB(t, "master"),
 		Database:    "m_empty",
 		Probe:       probe,
+		Facts:       true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -188,6 +197,27 @@ func TestReadLabUnpublishedDatabase(t *testing.T) {
 	}
 	if len(cfg.Findings) != 1 || cfg.Findings[0].Kind != model.FindingNote || cfg.Findings[0].Path != "publications" {
 		t.Errorf("findings = %+v, want one note at publications", cfg.Findings)
+	}
+	// The profiles of a normal export of Sales, with their parameters.
+	var want, got []string
+	for _, p := range labRead(t).Config.AgentProfiles {
+		want = append(want, p.Key())
+	}
+	for _, p := range cfg.AgentProfiles {
+		got = append(got, p.Key())
+	}
+	if !reflect.DeepEqual(got, want) || !slices.Contains(got, "snapshot/m_prof_snap") {
+		t.Errorf("agent_profiles = %q, want those of Sales %q, snapshot/m_prof_snap included", got, want)
+	}
+	checkLabMaps(t, "empty configuration", cfg)
+	uses := 0
+	for _, u := range res.Facts.ProfileUses {
+		if u.Profile == "m_prof_snap" && u.PublisherDB == "Sales" && u.Publication == "m_prof" && u.AgentType == "snapshot" {
+			uses++
+		}
+	}
+	if uses != 1 {
+		t.Errorf("profile uses = %+v, want the snapshot agent of m_prof using m_prof_snap", res.Facts.ProfileUses)
 	}
 }
 
@@ -1152,5 +1182,244 @@ func TestReadLabIdentityRangeManagement(t *testing.T) {
 	}
 	for _, f := range findingsUnder(cfg, "publications[m_idr].articles") {
 		t.Errorf("unexpected finding %s %s: %s", f.Kind, f.Path, f.Message)
+	}
+}
+
+// labLogin creates the SQL Server login name (an m_ name) with a random
+// password and, in each database of dbs, a user of it in db_datareader, then
+// runs each grant, {database, batch}, as sa. A login left by an
+// earlier run is removed first, and everything again in t.Cleanup. It returns
+// a function that opens a database of the lab as the login; the handles it
+// opens are closed before the login is dropped.
+func labLogin(t *testing.T, name string, dbs []string, grants ...[2]string) func(database string) *sql.DB {
+	t.Helper()
+	ctx := context.Background()
+	master := labDB(t, "master")
+	// in runs a batch in database db: USE inside EXEC () ends with it, and
+	// leaves the pooled connection in master.
+	in := func(db, batch string) error {
+		_, err := master.ExecContext(ctx, "EXEC (@p1)", "USE "+quoteName(db)+";\n"+batch)
+		return err
+	}
+	drop := func() error {
+		for _, db := range dbs {
+			if err := in(db, "IF USER_ID(N'"+name+"') IS NOT NULL DROP USER "+quoteName(name)); err != nil {
+				return err
+			}
+		}
+		_, err := master.ExecContext(ctx, `
+DECLARE @k nvarchar(max) = N'';
+SELECT @k += N'KILL ' + CAST(session_id AS nvarchar(10)) + N';' FROM sys.dm_exec_sessions WHERE login_name = @p1;
+EXEC (@k);
+IF SUSER_ID(@p1) IS NOT NULL EXEC (N'DROP LOGIN ' + @p2);`, name, quoteName(name))
+		return err
+	}
+	if err := drop(); err != nil {
+		t.Fatalf("removing login %s before the test: %v", name, err)
+	}
+	t.Cleanup(func() {
+		if err := drop(); err != nil {
+			t.Errorf("removing login %s: %v", name, err)
+		}
+	})
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatal(err)
+	}
+	password := "Aa1!" + hex.EncodeToString(b)
+	if _, err := master.ExecContext(ctx, `
+EXEC (N'CREATE LOGIN ' + @p1 + N' WITH PASSWORD = ' + @p2 + N', CHECK_POLICY = OFF')`,
+		quoteName(name), "N'"+password+"'"); err != nil {
+		t.Fatalf("creating login %s: %v", name, err)
+	}
+	for _, db := range dbs {
+		if err := in(db, "CREATE USER "+quoteName(name)+"; ALTER ROLE db_datareader ADD MEMBER "+quoteName(name)); err != nil {
+			t.Fatalf("user %s in %s: %v", name, db, err)
+		}
+	}
+	for _, g := range grants {
+		if err := in(g[0], g[1]); err != nil {
+			t.Fatalf("%s in %s: %v", g[1], g[0], err)
+		}
+	}
+	return func(database string) *sql.DB {
+		t.Helper()
+		u, err := url.Parse(os.Getenv("SQLREPL_TEST_DSN"))
+		if err != nil {
+			t.Fatal("SQLREPL_TEST_DSN is not a URL")
+		}
+		u.User = url.UserPassword(name, password)
+		q := u.Query()
+		q.Set("database", database)
+		u.RawQuery = q.Encode()
+		db, err := sql.Open("sqlserver", u.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { db.Close() })
+		return db
+	}
+}
+
+// readAs reads Sales as the login of open, the distributor being the lab.
+func readAs(open func(string) *sql.DB, facts bool) (*Result, error) {
+	ctx := context.Background()
+	probe, err := Probe(ctx, open("master"), "Sales")
+	if err != nil {
+		return nil, err
+	}
+	return Read(ctx, Source{
+		Publisher:   open("Sales"),
+		Distributor: open("master"),
+		Database:    "Sales",
+		Probe:       probe,
+		Facts:       facts,
+	})
+}
+
+// A login that may not read MSreplservers gets an error. The server table is
+// chosen from the distributor's version, not from what the login sees: the
+// fallback on master.sys.servers numbers the servers differently, and every
+// agent would read as missing.
+func TestReadLabReplServersDenied(t *testing.T) {
+	open := labLogin(t, "m_lo_rs", []string{"Sales", "msdb", "distribution"},
+		[2]string{"distribution", "DENY SELECT ON dbo.MSreplservers TO m_lo_rs"})
+	res, err := readAs(open, false)
+	if err == nil {
+		t.Fatalf("read succeeded, want an error; log reader agent %v, findings %+v", res.Config.Publisher.LogReaderAgent != nil, res.Config.Findings)
+	}
+	if !strings.Contains(err.Error(), "MSreplservers") {
+		t.Errorf("err = %v, want the permission error on MSreplservers", err)
+	}
+}
+
+// A login with db_datareader only, and denied MSpub_identity_range: what it
+// cannot see is reported unreadable, never read as absent.
+func TestReadLabLowPrivilege(t *testing.T) {
+	open := labLogin(t, "m_lo_rd", []string{"Sales", "msdb", "distribution"},
+		[2]string{"Sales", "DENY SELECT ON dbo.MSpub_identity_range TO m_lo_rd"})
+	res, err := readAs(open, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := res.Config
+	findings := map[string][]model.Finding{}
+	for _, f := range cfg.Findings {
+		findings[f.Path] = append(findings[f.Path], f)
+	}
+	unreadable := func(path, cause string) {
+		t.Helper()
+		for _, f := range findings[path] {
+			if f.Kind == model.FindingUnreadable && strings.Contains(f.Message, cause) {
+				return
+			}
+		}
+		t.Errorf("%s: findings %+v, want unreadable naming %q", path, findings[path], cause)
+	}
+
+	// The agents are found: the server table is the right one.
+	if cfg.Publisher.LogReaderAgent == nil {
+		t.Errorf("no log reader agent; findings %+v", findings["publisher.log_reader_agent"])
+	}
+
+	// The link: provider string and login mappings are hidden.
+	d := cfg.Distributor
+	if d.MultiSubnetFailover != nil || d.LinkEncrypt != nil || d.AdminLinkSecurity != nil {
+		t.Errorf("link: multi_subnet_failover %v, link_encrypt %v, admin_link_security %v, want nil",
+			d.MultiSubnetFailover, d.LinkEncrypt, d.AdminLinkSecurity)
+	}
+	for _, k := range []string{"multi_subnet_failover", "link_encrypt", "link_trust_server_certificate",
+		"link_host_name_in_certificate", "admin_link_security"} {
+		unreadable("distributor."+k, "ALTER ANY LINKED SERVER")
+	}
+
+	// sys.master_files hides the distribution database's files.
+	for _, k := range []string{"data_folder", "data_file", "log_folder", "log_file"} {
+		unreadable("distributor."+k, "sys.master_files")
+	}
+
+	// The filter procedure of SalesPub.Customer is not visible.
+	var customer *model.Article
+	for i, p := range cfg.Publications {
+		for j, a := range p.Articles {
+			if p.Name == "SalesPub" && a.Name == "Customer" {
+				customer = &cfg.Publications[i].Articles[j]
+			}
+		}
+	}
+	if customer == nil {
+		t.Fatal("SalesPub.Customer not exported")
+	}
+	if customer.Filter == nil || customer.Filter.Clause == "" || customer.Filter.Procedure != nil {
+		t.Errorf("Customer filter = %+v, want its clause and no procedure", customer.Filter)
+	}
+	filterPath := articlePath("SalesPub", "Customer") + ".filter"
+	unreadable(filterPath, "not visible")
+	for _, f := range findings[filterPath] {
+		if f.Kind == model.FindingIncomplete {
+			t.Errorf("filter: %+v, want no incomplete finding", f)
+		}
+	}
+
+	// identity_range_management cannot be decided without MSpub_identity_range.
+	if customer.IdentityRangeManagement != nil {
+		t.Errorf("Customer identity_range_management = %q, want nil", *customer.IdentityRangeManagement)
+	}
+	unreadable(articlePath("SalesPub", "Customer")+".identity_range_management", "MSpub_identity_range")
+}
+
+// A database whose publications are all snapshot has no log reader agent,
+// and the export does not report one missing.
+func TestReadLabSnapshotOnlyDatabase(t *testing.T) {
+	ctx := context.Background()
+	labScripts(t, "snaponly")
+	master := labDB(t, "master")
+	var rows int
+	if err := master.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM distribution.dbo.MSlogreader_agents WHERE publisher_db = N'm_snaponly'").Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("%d log reader rows for m_snaponly, the setup expects none", rows)
+	}
+	probe, err := Probe(ctx, master, "m_snaponly")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Read(ctx, Source{Publisher: labDB(t, "m_snaponly"), Distributor: master, Database: "m_snaponly", Probe: probe})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := res.Config
+	if len(cfg.Publications) != 1 || cfg.Publications[0].SnapshotAgent == nil {
+		t.Fatalf("publications %+v, want m_so with its snapshot agent", cfg.Publications)
+	}
+	for _, f := range cfg.Findings {
+		if strings.HasPrefix(f.Path, "publisher.log_reader_agent") {
+			t.Errorf("finding %s %s: %s, want none for a snapshot-only database", f.Kind, f.Path, f.Message)
+		}
+	}
+	for _, p := range model.NilProperties(cfg) {
+		if p == "publisher.log_reader_agent" {
+			t.Error("NilProperties lists publisher.log_reader_agent for a snapshot-only database")
+		}
+	}
+}
+
+// -database typed in another case is read under the stored name: the
+// distribution tables and a subscriber may compare it case-sensitively.
+func TestReadLabDatabaseNameCase(t *testing.T) {
+	ctx := context.Background()
+	master := labDB(t, "master")
+	probe, err := Probe(ctx, master, "sAlEs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Read(ctx, Source{Publisher: labDB(t, "Sales"), Distributor: master, Database: "sAlEs", Probe: probe})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Config.Publisher.Database; got != "Sales" {
+		t.Errorf("publisher.database = %q, want the stored name Sales", got)
 	}
 }

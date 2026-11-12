@@ -282,13 +282,27 @@ func (s Subscription) OmittedOK(key string, parents []Step) bool {
 	return false
 }
 
-// OmittedOK: a database with no publication needs no log reader agent.
+// OmittedOK: a database with no transactional publication needs no log
+// reader agent.
 func (p Publisher) OmittedOK(key string, parents []Step) bool {
 	if key != "log_reader_agent" || len(parents) == 0 {
 		return false
 	}
 	c, ok := parents[0].Value.(*Config)
-	return ok && len(c.Publications) == 0
+	return ok && !c.NeedsLogReader()
+}
+
+// NeedsLogReader tells whether a publication of c is transactional, or of
+// an unknown type. A database whose publications are all snapshot has no log
+// reader agent: sp_addpublication creates none (measured, no
+// MSlogreader_agents row and no job, SQL Server 2022 CU27).
+func (c *Config) NeedsLogReader() bool {
+	for _, p := range c.Publications {
+		if p.Type == nil || *p.Type != "snapshot" {
+			return true
+		}
+	}
+	return false
 }
 
 // OmittedOK: no job login has no password secret, and only the snapshot and

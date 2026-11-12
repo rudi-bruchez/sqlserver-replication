@@ -138,26 +138,41 @@ func (e *exporter) readArticleColumns() (map[int][]string, error) {
 }
 
 // readAutoIdentityRange returns the object ids of the tables whose identity
-// range is managed automatically.
-func (e *exporter) readAutoIdentityRange() (map[int]bool, error) {
+// range is managed automatically. A missing MSpub_identity_range is no such
+// table; one the login may not read returns a nil map and the reason.
+func (e *exporter) readAutoIdentityRange() (map[int]bool, string, error) {
 	auto := map[int]bool{}
-	rows, err := e.src.Publisher.QueryContext(e.ctx, qAutoIdentityRange)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var objid int
-		if err := rows.Scan(&objid); err != nil {
-			return nil, err
+	err := func() error {
+		rows, err := e.src.Publisher.QueryContext(e.ctx, qAutoIdentityRange)
+		if err != nil {
+			return err
 		}
-		auto[objid] = true
+		defer rows.Close()
+		for rows.Next() {
+			var objid int
+			if err := rows.Scan(&objid); err != nil {
+				return err
+			}
+			auto[objid] = true
+		}
+		return rows.Err()
+	}()
+	switch errorNumber(err) {
+	case 0:
+		if err != nil {
+			return nil, "", err
+		}
+		return auto, "", nil
+	case 208:
+		return map[int]bool{}, "", nil
+	case 229:
+		return nil, err.Error(), nil
 	}
-	return auto, rows.Err()
+	return nil, "", err
 }
 
 func (e *exporter) readTableArticles(columns map[int][]string) error {
-	autoIdentity, err := e.readAutoIdentityRange()
+	autoIdentity, identityDenied, err := e.readAutoIdentityRange()
 	if err != nil {
 		return err
 	}
@@ -169,6 +184,7 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 	for rows.Next() {
 		var (
 			pubid, artid, typ, status, preCreation, syncObjID, objID, fireTriggers, tableColumns int
+			filterID                                                                             int
 			schemaOption                                                                         []byte
 			insCmd, updCmd, delCmd, filterSchema, filterName                                     string
 			filterClauseNull, syncDefinition                                                     sql.NullString
@@ -181,7 +197,7 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 			&t.description, &a.Source.Schema, &a.Source.Name,
 			&t.destSchema, &t.destName,
 			&insCmd, &updCmd, &delCmd,
-			&filterClauseNull, &filterSchema, &filterName,
+			&filterClauseNull, &filterSchema, &filterName, &filterID,
 			&syncObjID, &objID, &syncSchema, &syncName,
 			&t.creationScript, &fireTriggers, &tableColumns, &syncDefinition, &hasSyncView, &identityNFR)
 		if err != nil {
@@ -213,12 +229,20 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 		// before any sp_articlefilter call. The synchronization view is
 		// generated as syncobj_0x<hex> unless sp_articleview or a manual
 		// view type named it. Measured on SQL Server 2022 (lab/README.md).
+		//
+		// OBJECT_NAME is NULL for a procedure the login cannot see (under
+		// db_datareader, measured): sysarticles.filter tells that there is
+		// one.
 		filterClause := filterClauseNull.String
-		if filterClause != "" || filterName != "" {
+		filterHidden := filterID != 0 && filterName == ""
+		if filterClause != "" || filterName != "" || filterHidden {
 			a.Filter = &model.Filter{Clause: filterClause}
-			if filterName != "" {
+			switch {
+			case filterName != "":
 				a.Filter.Procedure = &model.ObjectName{Schema: filterSchema, Name: filterName}
-			} else if filterClause != "" {
+			case filterHidden:
+				e.find(model.FindingUnreadable, model.Join(articlePath(p.Name, a.Name), "filter"), "article %s.%s: the filter procedure (object id %d in sysarticles.filter) is not visible to the login, or no longer exists", p.Name, a.Name, filterID)
+			case filterClause != "":
 				// Measured (lab/campaign/04-filter-clause.sh, case F1): such a clause
 				// filters the snapshot, not the log reader.
 				e.find(model.FindingIncomplete, model.Join(articlePath(p.Name, a.Name), "filter"), "article %s.%s: filter clause without a filter procedure (sp_articlefilter); it filters the snapshot only, changes are replicated unfiltered", p.Name, a.Name)
@@ -241,6 +265,8 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 		// without an identity column included. Measured on SQL Server 2022
 		// (Task 12 fix 1 report).
 		switch {
+		case autoIdentity == nil:
+			e.find(model.FindingUnreadable, model.Join(articlePath(p.Name, a.Name), "identity_range_management"), "article %s.%s: dbo.MSpub_identity_range cannot be read, so whether the identity range is managed automatically is unknown: %s", p.Name, a.Name, identityDenied)
 		case autoIdentity[objID]:
 			e.find(model.FindingOutOfScope, model.Join(articlePath(p.Name, a.Name), "identity_range_management"), "article %s.%s: automatic identity range management serves updatable subscriptions, out of scope", p.Name, a.Name)
 		case identityNFR != 0:

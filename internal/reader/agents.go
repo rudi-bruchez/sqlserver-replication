@@ -355,7 +355,7 @@ func (e *exporter) readLogReaderAgent() error {
 	err := e.src.Distributor.QueryRowContext(e.ctx, e.distQuery(qLogReaderAgent), e.publisherID, e.src.Database).Scan(
 		&id, &name, &r.securityMode, &r.login, &r.profileID, &r.jobID, &r.stepUID, &r.jobLogin)
 	if err == sql.ErrNoRows {
-		if len(e.cfg.Publications) > 0 {
+		if e.cfg.NeedsLogReader() {
 			e.find(model.FindingIncomplete, "publisher.log_reader_agent", "no log reader agent found for %s.%s", e.cfg.Publisher.Server, e.src.Database)
 		}
 		return nil

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/rudi-bruchez/sqlserver-replication/internal/decode"
@@ -23,7 +24,8 @@ type Source struct {
 	// Distributor is connected to the distributor instance, any database. It
 	// may be nil when the probe finds no distributor.
 	Distributor *sql.DB
-	// Database is the publication database name.
+	// Database is the publication database name. Read replaces it by
+	// Probe.Name, the stored name, when the probe has one.
 	Database string
 	// PublisherName overrides the publisher name used to look the publisher
 	// up at the distributor. Empty means @@SERVERNAME of the publisher.
@@ -68,13 +70,18 @@ type PublisherProbe struct {
 	// MergePublished is true when the database is published for merge
 	// replication.
 	MergePublished bool
+	// Name is the database name as sys.databases stores it, which may differ
+	// in case from the name typed: Read uses it from the probe on, because
+	// the distribution tables and a subscriber may compare it under a
+	// case-sensitive collation.
+	Name string
 }
 
 // Probe queries the publisher, through a connection to its master database.
 func Probe(ctx context.Context, publisher *sql.DB, database string) (PublisherProbe, error) {
 	var p PublisherProbe
 	err := publisher.QueryRowContext(ctx, qProbe, database).Scan(
-		&p.Distributor, &p.State, &p.Standby, &p.Published, &p.MergePublished)
+		&p.Distributor, &p.State, &p.Standby, &p.Published, &p.MergePublished, &p.Name)
 	if err == sql.ErrNoRows {
 		return p, fmt.Errorf("database %q not found at the publisher", database)
 	}
@@ -101,7 +108,9 @@ func (p PublisherProbe) Start() (empty bool, findings []model.Finding, err error
 		findings = append(findings, model.Finding{Kind: model.FindingNote, Path: "publications",
 			Message: "the database is not enabled for transactional or snapshot publishing"})
 	}
-	if empty && p.MergePublished {
+	// Merge publications are out of scope even beside transactional ones:
+	// plan 3 refuses the database rather than ignore them.
+	if p.MergePublished {
 		findings = append(findings, model.Finding{Kind: model.FindingOutOfScope,
 			Message: "the database is published for merge replication"})
 	}
@@ -120,6 +129,9 @@ type Result struct {
 // Read reads the whole configuration of the publication database, or the
 // empty configuration when the probe says there is nothing to read.
 func Read(ctx context.Context, src Source) (*Result, error) {
+	if src.Probe.Name != "" {
+		src.Database = src.Probe.Name
+	}
 	e := &exporter{ctx: ctx, src: src}
 	if err := e.run(); err != nil {
 		return nil, err
@@ -135,6 +147,7 @@ type exporter struct {
 
 	dist        string // quoted distribution database name
 	servers     string // server name table at the distributor
+	replServers bool   // the distributor's version has MSreplservers
 	publisherID int
 
 	pubIndex     map[int]int      // pubid → index in cfg.Publications
@@ -217,18 +230,24 @@ func (e *exporter) run() error {
 		return fmt.Errorf("reading the distributor time: %w", err)
 	}
 	if empty {
-		if e.src.Probe.Distributor != "" && e.src.Distributor != nil {
-			if err := e.readDistributor(true); err != nil {
-				return fmt.Errorf("reading distributor: %w", err)
-			}
+		// What exists at the distributor is read even with no publication:
+		// plan 3 must not create it again. The agent profiles live in msdb
+		// and are shared by every publisher.
+		if e.src.Probe.Distributor == "" || e.src.Distributor == nil {
+			return nil
 		}
-		return nil
+		steps := []step{
+			{"distributor", func() error { return e.readDistributor(true) }},
+			{"agent profiles", e.readProfiles},
+			{"agent profile parameters", e.collectProfiles},
+		}
+		if e.src.Facts {
+			steps = append(steps, step{"profile uses", e.readProfileUses})
+		}
+		return runSteps(steps)
 	}
 
-	steps := []struct {
-		what string
-		fn   func() error
-	}{
+	return runSteps([]step{
 		{"distributor", func() error { return e.readDistributor(false) }},
 		{"agent profiles", e.readProfiles},
 		{"publications", e.readPublications},
@@ -239,7 +258,16 @@ func (e *exporter) run() error {
 		{"distribution agents", e.readDistributionAgents},
 		{"agent profile parameters", e.collectProfiles},
 		{"facts", e.readFacts},
-	}
+	})
+}
+
+// step is one read of run, named for its error.
+type step struct {
+	what string
+	fn   func() error
+}
+
+func runSteps(steps []step) error {
 	for _, s := range steps {
 		if err := s.fn(); err != nil {
 			return fmt.Errorf("reading %s: %w", s.what, err)
@@ -262,10 +290,18 @@ func (e *exporter) readDistributor(lenient bool) error {
 	if err := db.QueryRowContext(e.ctx, qServerName).Scan(&d.Server); err != nil {
 		return err
 	}
+	var version string
+	if err := db.QueryRowContext(e.ctx, qDistributorVersion).Scan(&version); err != nil {
+		return fmt.Errorf("distributor version: %w", err)
+	}
+	var err error
+	if e.replServers, err = replServersSince(version); err != nil {
+		return err
+	}
 
 	var security, trusted, hasStorage int
 	var workingDirectory, login, publisherType string
-	err := db.QueryRowContext(e.ctx, qDistPublisher, e.cfg.Publisher.Server).Scan(
+	err = db.QueryRowContext(e.ctx, qDistPublisher, e.cfg.Publisher.Server).Scan(
 		&d.Database, &workingDirectory, &security, &login, &trusted, &publisherType, &hasStorage)
 	if err == sql.ErrNoRows && lenient {
 		e.find(model.FindingNote, "distributor", "publisher %q is not registered at the distributor", e.cfg.Publisher.Server)
@@ -334,11 +370,7 @@ func (e *exporter) readDistributor(lenient bool) error {
 		return err
 	}
 
-	var hasReplServers int
-	if err := db.QueryRowContext(e.ctx, qHasReplServers, e.dist+".dbo.MSreplservers").Scan(&hasReplServers); err != nil {
-		return err
-	}
-	if hasReplServers == 1 {
+	if e.replServers {
 		e.servers = e.dist + ".dbo.MSreplservers"
 	} else {
 		e.servers = fallbackServers
@@ -348,6 +380,32 @@ func (e *exporter) readDistributor(lenient bool) error {
 		return fmt.Errorf("publisher %q not found in the server table of %s", e.cfg.Publisher.Server, d.Database)
 	}
 	return err
+}
+
+// replServersSince tells, from the distributor's ProductVersion, whether its
+// distribution databases have MSreplservers: since SQL Server 2016 SP2 CU3
+// (13.0.5216) and 2017 CU6 (14.0.3025), and in every later version (Learn,
+// MSreplservers). The decision never depends on what the login can see, so a
+// login denied the table gets the permission error of the query that reads it.
+func replServersSince(version string) (bool, error) {
+	parts := strings.Split(version, ".")
+	if len(parts) < 3 {
+		return false, fmt.Errorf("distributor version %q: want major.minor.build", version)
+	}
+	major, err1 := strconv.Atoi(parts[0])
+	build, err2 := strconv.Atoi(parts[2])
+	if err1 != nil || err2 != nil {
+		return false, fmt.Errorf("distributor version %q: want major.minor.build", version)
+	}
+	switch {
+	case major > 14:
+		return true, nil
+	case major == 14:
+		return build >= 3025, nil
+	case major == 13:
+		return build >= 5216, nil
+	}
+	return false, nil
 }
 
 func (e *exporter) readProfiles() error {
@@ -526,10 +584,14 @@ func (e *exporter) readDistributionFiles(d *model.Distributor) error {
 		return err
 	}
 	if !haveData {
-		e.find(model.FindingUnreadable, "distributor.data_file", "no data file of %s in sys.master_files", d.Database)
+		for _, k := range []string{"data_folder", "data_file"} {
+			e.find(model.FindingUnreadable, "distributor."+k, "no data file of %s in sys.master_files", d.Database)
+		}
 	}
 	if !haveLog {
-		e.find(model.FindingUnreadable, "distributor.log_file", "no log file of %s in sys.master_files", d.Database)
+		for _, k := range []string{"log_folder", "log_file"} {
+			e.find(model.FindingUnreadable, "distributor."+k, "no log file of %s in sys.master_files", d.Database)
+		}
 	}
 	return nil
 }
@@ -555,12 +617,13 @@ func (e *exporter) readDistributorLink(d *model.Distributor) error {
 	var found bool
 	var provider, remote sql.NullString
 	var self sql.NullInt64
+	var canSee int
 	for rows.Next() {
 		if found {
 			continue // sys.servers names are unique: one row at most
 		}
 		found = true
-		if err := rows.Scan(&provider, &self, &remote); err != nil {
+		if err := rows.Scan(&provider, &self, &remote, &canSee); err != nil {
 			return err
 		}
 	}
@@ -572,18 +635,41 @@ func (e *exporter) readDistributorLink(d *model.Distributor) error {
 		e.find(model.FindingUnreadable, "distributor.multi_subnet_failover", "linked server repl_distributor not found at the publisher")
 		return nil
 	}
-	d.MultiSubnetFailover = model.Ptr(multiSubnetFailover(provider))
-	d.LinkEncrypt, d.LinkTrustServerCertificate, d.LinkHostNameInCertificate = distributorLinkEncryption(provider)
+	for _, f := range linkSettings(d, canSee == 1, provider, self, remote) {
+		e.find(f.Kind, f.Path, "%s", f.Message)
+	}
+	return nil
+}
+
+// linkSettings sets the distributor properties read from the repl_distributor
+// linked server and returns the findings of those it cannot read. Without
+// ALTER ANY LINKED SERVER (canSee false) the provider string reads NULL
+// whatever it holds, so multi_subnet_failover and the link_* keys are
+// unreadable, not absent; the login mapping is hidden too.
+func linkSettings(d *model.Distributor, canSee bool, provider sql.NullString, self sql.NullInt64, remote sql.NullString) []model.Finding {
+	var out []model.Finding
+	if canSee {
+		d.MultiSubnetFailover = model.Ptr(multiSubnetFailover(provider))
+		d.LinkEncrypt, d.LinkTrustServerCertificate, d.LinkHostNameInCertificate = distributorLinkEncryption(provider)
+	} else {
+		for _, k := range []string{"multi_subnet_failover", "link_encrypt", "link_trust_server_certificate", "link_host_name_in_certificate"} {
+			out = append(out, model.Finding{Kind: model.FindingUnreadable, Path: "distributor." + k,
+				Message: "the provider string of repl_distributor is NULL to a login without ALTER ANY LINKED SERVER"})
+		}
+	}
 	switch {
 	case self.Valid && self.Int64 == 1:
 		d.AdminLinkSecurity = model.Ptr("windows")
 	case self.Valid && self.Int64 == 0 && strings.EqualFold(remote.String, "distributor_admin"):
 		d.AdminLinkSecurity = model.Ptr("sql")
+	case !canSee:
+		out = append(out, model.Finding{Kind: model.FindingUnreadable, Path: "distributor.admin_link_security",
+			Message: "the login mappings of repl_distributor (sys.linked_logins) are not visible to a login without ALTER ANY LINKED SERVER"})
 	default:
-		e.find(model.FindingUnreadable, "distributor.admin_link_security",
-			"the login mapping of repl_distributor is neither the current security context nor distributor_admin")
+		out = append(out, model.Finding{Kind: model.FindingUnreadable, Path: "distributor.admin_link_security",
+			Message: "the login mapping of repl_distributor is neither the current security context nor distributor_admin"})
 	}
-	return nil
+	return out
 }
 
 // providerStringValue returns the value of key in a provider string, a list

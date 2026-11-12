@@ -329,6 +329,19 @@ func TestNilProperties(t *testing.T) {
 	if got := NilProperties(c); len(got) != 0 {
 		t.Errorf("log reader without publication: got %q, want none", got)
 	}
+	// A database whose publications are all snapshot has no log reader.
+	c = fullConfig()
+	c.Publisher.LogReaderAgent = nil
+	for i := range c.Publications {
+		c.Publications[i].Type = Ptr("snapshot")
+	}
+	if got := NilProperties(c); len(got) != 0 {
+		t.Errorf("log reader of snapshot publications: got %q, want none", got)
+	}
+	c.Publications[0].Type = nil
+	if got, want := NilProperties(c), []string{"publications[P].type", "publisher.log_reader_agent"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("log reader with a publication of unknown type: got %q, want %q", got, want)
+	}
 }
 
 func TestPathEscapesKeys(t *testing.T) {
