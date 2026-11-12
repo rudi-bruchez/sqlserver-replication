@@ -1,10 +1,11 @@
 // Command sqlrepl manages the configuration of SQL Server transactional
 // replication as a declarative file.
 //
-// Only the export is implemented: it reads a publication database, its
-// publications, articles, push and pull subscriptions and agents, and writes
-// them as YAML, and on request the observed runtime facts as JSON. It runs
-// SELECT statements only.
+// The export reads a publication database, its publications, articles, push
+// and pull subscriptions and agents, and writes them as YAML, and on request
+// the observed runtime facts as JSON. The plan compares a desired file with
+// what the servers hold and prints the procedure calls that would make them
+// match, with their costs. Both run SELECT statements only.
 package main
 
 import (
@@ -31,8 +32,9 @@ const usage = `sqlrepl manages SQL Server transactional replication as a declara
 
 Usage:
   sqlrepl export -publisher SERVER -database DB [options]
+  sqlrepl plan -f FILE [options]
 
-Run "sqlrepl export -h" for the export options.
+Run "sqlrepl export -h" or "sqlrepl plan -h" for the options.
 `
 
 func main() {
@@ -44,6 +46,8 @@ func main() {
 	switch os.Args[1] {
 	case "export":
 		err = runExport(os.Args[2:], os.Stdout)
+	case "plan":
+		err = runPlan(os.Args[2:], os.Stdout, os.Stderr)
 	case "-h", "-help", "--help", "help":
 		fmt.Print(usage)
 		return
@@ -54,6 +58,10 @@ func main() {
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return
+		}
+		if errors.Is(err, errRefused) {
+			// The refusals are printed already.
+			os.Exit(1)
 		}
 		fmt.Fprintln(os.Stderr, "sqlrepl:", err)
 		os.Exit(1)

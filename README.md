@@ -5,7 +5,7 @@ Improving and managing SQL Server replication
 
 - `stored-procedures/`: source of the SQL Server 2019 replication system procedures, for reference.
 - `docs/analysis/step-1-analysis.md`: where the replication configuration lives, how to decode it, and which changes invalidate the snapshot or reinitialize subscriptions.
-- `cmd/sqlrepl`: a tool that manages transactional replication as a declarative file. Only the export is implemented.
+- `cmd/sqlrepl`: a tool that manages transactional replication as a declarative file. The export and the plan are implemented; apply is not.
 
 ## sqlrepl export
 
@@ -62,6 +62,48 @@ The facts are read only with `-facts`: a plain export runs none of their queries
 ### Empty configuration
 
 Before reading anything, the export probes the publisher through its `master` database. A database with no distributor configured, or not enabled for transactional or snapshot publishing, exports as the empty configuration: the publisher section, no publication, and a `note` finding that says why. When a distributor is configured, the file also holds what already exists there, so that a later plan does not create it again: the `distributor` section and the user-defined agent profiles (`agent_profiles`, every one a normal export lists) and, with `-facts`, the profile uses. A database that is published for merge replication adds an `out_of_scope` finding, whether or not it also has transactional or snapshot publications. A database that is offline, restoring or in standby is an error, not an empty configuration.
+
+## sqlrepl plan
+
+Compares a desired file with what the servers hold and prints the procedure calls that would make them match, each with its costs (snapshot invalidation, reinitialization, data replaced at the subscriber). It changes nothing: like the export, it runs `SELECT` statements only. The file has the format of the export, and an exported file, unchanged, plans no change.
+
+```
+sqlrepl plan -f sales.yaml -user sqlrepl -server SUBSRV=subsrv.example.com,1433
+sqlrepl plan -f sales.yaml -sql
+sqlrepl plan -f sales.yaml -json > plan.json
+```
+
+Options:
+
+| Option | Meaning |
+|---|---|
+| `-f PATH` | the desired file, required |
+| `-server NAME=ADDRESS` | address of a server of the file by its name, in any case, repeatable; a server without one is reached at its name. An entry that names no server of the file is opened as a subscriber all the same, and prints `note: -server NAME names no server of the file` on standard error |
+| `-user` | SQL Server login, password in `SQLREPL_PASSWORD`; Windows authentication by default |
+| `-param key=value` | extra go-mssqldb connection parameter, repeatable |
+| `-env PATH` | the `.env` file to read before connecting, `./.env` by default (below) |
+| `-sql` | append the T-SQL of the plan to the summary |
+| `-json` | print the plan as JSON only, without the summary |
+| `-defer-full-snapshot` | when added articles would make the next snapshot a full generation, defer it: the plan turns `immediate_sync` off, generates and waits for the deliveries, then restores it |
+| `-wait DURATION` | how long the generate and wait step of `-defer-full-snapshot` waits, `30m` by default |
+| `-timeout DURATION` | overall timeout, `2m` by default |
+
+The plan reads the publisher (the publication database and `master`), the distributor named in the file, or the one registered at the publisher when the file names none, and the subscribers: those the file names, those of the current pull subscriptions (a pull subscription removed from the file is read and dropped at its subscriber) and every `-server` entry, each once whatever its case. The publisher and the distributor must be reached, or the command fails. A subscriber that cannot be reached does not stop the plan: its preconditions are `unchecked`, a push operation toward it stays planned with that precondition listed, and an operation that runs there (a pull subscription) is refused.
+
+Output. The summary starts with `Plan for SERVER.DATABASE:` and either `no changes.` or the count of operations and of costly ones, then one line per operation (sequence, action, kind, path, costs) with its warnings, the totals per cost, and the sections that are not empty: the secrets the calls pass and whether each is set, the preconditions (`ok`, `failed`, `unchecked`), the agents apply will start, the warnings and the notes. `-sql` appends the calls as T-SQL, one batch per operation, preceded by the server and the database it runs in; a secret appears as a variable with a comment that names it, never as a value. `-json` prints the plan as data: the operations with their calls, costs and affected objects, and every list of the summary.
+
+Refusals. A plan that would act on something it cannot do safely is refused: it prints the refusals, each with the path concerned and its reason, then `Plan refused.`, and has no operation at all. The command then exits 1; it exits 0 otherwise, an empty plan included. A plan is refused, among others, when:
+
+- the export reports an `out_of_scope` finding (merge publications, peer-to-peer, updatable subscriptions), or an `incomplete` state whose repair is not measured;
+- a change has no measured cost (`cost of ... change not measured`): the plan never guesses whether a change invalidates the snapshot or reinitializes a subscription;
+- a server answers with another name than the file's (`server X answers as Y: check -server`), or runs a version or edition the change needs;
+- a published table does not exist or has no primary key, a subscriber database does not exist, a profile exists neither in the file nor at the distributor, a job the plan updates does not exist: the plan does not create tables, databases or jobs;
+- an operation runs at a subscriber that cannot be reached;
+- `-defer-full-snapshot` is given with `-wait 0`, refused before any connection.
+
+Secrets and `.env`. The passwords the calls need are never in the file: each is a `password_secret` name, the environment variable that provides it at apply time. The plan does not read their values; it lists each secret and whether its variable is set, so that a missing one shows before apply. Before connecting, the plan loads the `.env` file of `-env` (`KEY=VALUE` lines, `#` comments, an optional `export` prefix, quotes removed): a key is set only when the environment does not already hold it, so a real environment variable always wins, and a missing file is no error. `SQLREPL_PASSWORD` is read after that load, so it can come from the file. Keep `.env` out of version control (the repository's `.gitignore` lists it; `.env.example` shows the keys).
+
+Required permissions: those of the export with its runtime facts (the plan always reads them), and at each subscriber of the file read access to `master` and to the subscriber databases.
 
 ## Tests
 
