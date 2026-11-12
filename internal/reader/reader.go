@@ -36,6 +36,9 @@ type Source struct {
 	// here is reported unreadable. Keys are matched case-insensitively
 	// (subscriberConn).
 	Subscribers map[string]*sql.DB
+	// Facts asks for the observed runtime facts (Result.Facts). Without it
+	// no facts query runs: no job state, no history, no profile uses.
+	Facts bool
 }
 
 // subscriberConn returns the connection of a subscriber, matching the name
@@ -109,7 +112,8 @@ func (p PublisherProbe) Start() (empty bool, findings []model.Finding, err error
 type Result struct {
 	Config *model.Config
 	// Facts are the observed runtime facts the planner needs beside the
-	// configuration; they are never part of the declarative file.
+	// configuration; they are never part of the declarative file. Nil
+	// unless Source.Facts is set.
 	Facts *state.Facts
 }
 
@@ -185,7 +189,9 @@ func subscriptionPath(pub, subscriber, database string) string {
 
 func (e *exporter) run() error {
 	e.cfg = &model.Config{Version: model.FormatVersion}
-	e.facts = newFacts()
+	if e.src.Facts {
+		e.facts = newFacts()
+	}
 	e.usedProfiles = map[int]bool{}
 	e.found = map[string]bool{}
 

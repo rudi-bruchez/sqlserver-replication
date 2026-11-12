@@ -46,9 +46,10 @@ func (e *exporter) readJobState(db *sql.DB, jobID string) (state.JobState, error
 	return jobState(true, enabled, start, stop), nil
 }
 
-// recordAgent records the facts of an agent with its job state.
+// recordAgent records the facts of an agent with its job state. Nothing is
+// recorded when the facts are not read.
 func (e *exporter) recordAgent(f *state.AgentFacts, job *state.JobState) {
-	if f == nil {
+	if f == nil || e.facts == nil {
 		return
 	}
 	f.Job = job
@@ -69,7 +70,7 @@ func (e *exporter) recordUnreadPull(f *state.AgentFacts, d *pullDistRow) {
 
 // readReadAt reads the time of the facts at the distributor.
 func (e *exporter) readReadAt() error {
-	if e.src.Distributor == nil {
+	if e.facts == nil || e.src.Distributor == nil {
 		return nil
 	}
 	return e.src.Distributor.QueryRowContext(e.ctx, qReadAt).Scan(&e.facts.ReadAt)
@@ -77,8 +78,11 @@ func (e *exporter) readReadAt() error {
 
 // readFacts reads the facts that are not read with the agents: the
 // publications' snapshot state, the subscription rows, the agents' history
-// and the profile uses.
+// and the profile uses. Nothing is read when the facts are not asked for.
 func (e *exporter) readFacts() error {
+	if e.facts == nil {
+		return nil
+	}
 	steps := []struct {
 		what string
 		fn   func() error
@@ -318,11 +322,13 @@ func (e *exporter) readProfileUses() error {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var i, agentType int
+		var i, agentType, virtual int
 		var u state.ProfileUse
-		if err := rows.Scan(&i, &u.Profile, &agentType, &u.PublisherDB, &u.Publication, &u.Subscriber, &u.Database); err != nil {
+		if err := rows.Scan(&i, &u.Profile, &agentType, &u.Publisher, &u.PublisherDB, &u.Publication,
+			&u.Subscriber, &u.Database, &virtual); err != nil {
 			return err
 		}
+		u.Virtual = virtual != 0
 		u.AgentType = decode.AgentType(agentType)
 		u.DistributionDB = dbs[i]
 		e.facts.ProfileUses = append(e.facts.ProfileUses, u)
@@ -333,12 +339,13 @@ func (e *exporter) readProfileUses() error {
 	sort.Slice(e.facts.ProfileUses, func(i, j int) bool {
 		a, b := e.facts.ProfileUses[i], e.facts.ProfileUses[j]
 		for _, c := range [][2]string{{a.Profile, b.Profile}, {a.AgentType, b.AgentType}, {a.DistributionDB, b.DistributionDB},
-			{a.PublisherDB, b.PublisherDB}, {a.Publication, b.Publication}, {a.Subscriber, b.Subscriber}, {a.Database, b.Database}} {
+			{a.Publisher, b.Publisher}, {a.PublisherDB, b.PublisherDB}, {a.Publication, b.Publication},
+			{a.Subscriber, b.Subscriber}, {a.Database, b.Database}} {
 			if c[0] != c[1] {
 				return c[0] < c[1]
 			}
 		}
-		return false
+		return !a.Virtual && b.Virtual
 	})
 	return nil
 }

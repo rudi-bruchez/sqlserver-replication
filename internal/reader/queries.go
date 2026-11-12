@@ -121,12 +121,14 @@ ORDER BY a.pubid, s.srvname, s.dest_db, a.name`
 SELECT p.name, CAST(ISNULL(p.immediate_sync_ready, 0) AS int)
 FROM dbo.syspublications AS p`
 
-	// Facts: bit 0x1 of sysarticles.status is set by the snapshot generation.
-	// Schema articles are listed inactive.
+	// Facts: bit 0x1 of the article status is set by the snapshot generation.
+	// A schema article has it too: 16 after sp_addarticle, 17 after the
+	// generation, 16 after sp_reinitsubscription, like a table article
+	// (measured by two reviewers, SQL Server 2022 CU27).
 	qArticleFacts = `
 SELECT a.pubid, a.name, a.status & 1 FROM dbo.sysarticles AS a
 UNION ALL
-SELECT a.pubid, a.name, 0 FROM dbo.sysschemaarticles AS a`
+SELECT a.pubid, a.name, a.status & 1 FROM dbo.sysschemaarticles AS a`
 
 	// Facts: the status of each article of each real subscription, at the
 	// publisher. Status 3 (active, the snapshot delivered) is only ever read
@@ -265,8 +267,15 @@ SELECT profile_id, parameter_name, ISNULL(value, N'')
 FROM msdb.dbo.MSagent_parameters
 ORDER BY profile_id, parameter_name`
 
+	// Facts: every time is written as 2006-01-02 15:04:05.000, through
+	// timeOpen + expression + timeClose. Style 126 drops the fraction of a
+	// datetime whose milliseconds are 0 and gives 7 digits for SYSDATETIME;
+	// style 121 on a datetime2(3) always gives three.
+	timeOpen  = `CONVERT(nvarchar(23), CAST(`
+	timeClose = ` AS datetime2(3)), 121)`
+
 	// Facts: the time the facts are read, at the distributor.
-	qReadAt = `SELECT CONVERT(nvarchar(33), SYSDATETIME(), 126)`
+	qReadAt = `SELECT ` + timeOpen + `SYSDATETIME()` + timeClose
 
 	// Facts: MSsubscriptions.status of the subscriptions' own rows. The
 	// virtual subscribers (subscriber_id -1 and -2) are left out: the window
@@ -285,22 +294,30 @@ JOIN {dist}.dbo.MSarticles AS msa
 JOIN {servers} AS rs ON rs.srvid = mss.subscriber_id
 WHERE mss.publisher_id = @p1 AND mss.publisher_db = @p2 AND mss.subscriber_id >= 0`
 
-	// Facts: the latest successful run (runstatus 2) of a snapshot agent.
+	// Facts: the end of the latest run of a snapshot agent that generated a
+	// snapshot. A run that finds no subscription to initialize ends with
+	// runstatus 2 too, "[0%] A snapshot was not generated because no
+	// subscriptions needed initialization.", and no column of its rows tells
+	// it from a generation: both write runstatus 1, 3 and 2, delivered
+	// counts, delivery_rate and error_id are 0 on both final rows, and the
+	// generation's delivered_commands is 0 for an empty table (measured on the
+	// lab, SQL Server 2022 CU27). The final row's text does; it assumes the
+	// agent writes its messages in English.
 	qLastGeneration = `
-SELECT TOP (1) CONVERT(nvarchar(33), h.time, 126)
+SELECT TOP (1) ` + timeOpen + `h.time` + timeClose + `
 FROM {dist}.dbo.MSsnapshot_history AS h
-WHERE h.agent_id = @p1 AND h.runstatus = 2
+WHERE h.agent_id = @p1 AND h.runstatus = 2 AND h.comments NOT LIKE N'%not generated%'
 ORDER BY h.time DESC, h.timestamp DESC`
 
 	// Facts: the latest history row of an agent, or with @p2 = 1 the latest
 	// failure (runstatus 6), with the first error of its error_id.
 	qHistorySelect = `
-SELECT TOP (1) CONVERT(nvarchar(33), h.time, 126), h.runstatus, ISNULL(h.comments, N''), ISNULL(e.error_text, N'')
+SELECT TOP (1) ` + timeOpen + `h.time` + timeClose + `, h.runstatus, ISNULL(h.comments, N''), ISNULL(e.error_text, N'')
 FROM {dist}.dbo.`
 	qHistoryRest = ` AS h
 OUTER APPLY (SELECT TOP (1) x.error_text FROM {dist}.dbo.MSrepl_errors AS x
              WHERE x.id = h.error_id AND h.error_id <> 0
-             ORDER BY x.time) AS e
+             ORDER BY x.time, x.id) AS e
 WHERE h.agent_id = @p1 AND (@p2 = 0 OR h.runstatus = 6)
 ORDER BY h.time DESC, h.timestamp DESC`
 	qLogReaderHistory    = qHistorySelect + "MSlogreader_history" + qHistoryRest
@@ -331,7 +348,9 @@ WHERE sj.job_id = CONVERT(uniqueidentifier, @p1)`
 // unused. Each branch joins its distribution agents to its own database's
 // MSreplservers (or, with useFallback, to fallbackServers), never to
 // {servers}, whose srvid values belong to one distribution database. The
-// first column is the index of the database in dbs. String columns are
+// agents of the virtual subscribers (subscriber_id < 0) are kept, flagged in
+// the last column: a profile bound to one still matters to a profile drop.
+// The first column is the index of the database in dbs. String columns are
 // brought to one collation: the databases may differ.
 func profileUsesQuery(dbs []string, useFallback bool) string {
 	const c = " COLLATE DATABASE_DEFAULT"
@@ -346,19 +365,27 @@ func profileUsesQuery(dbs []string, useFallback bool) string {
 			b.WriteString("\nUNION ALL")
 		}
 		fmt.Fprintf(&b, `
-SELECT %[1]d, mp.profile_name%[2]s, mp.agent_type, a.publisher_db%[2]s, N''%[2]s, N''%[2]s, N''%[2]s
+SELECT %[1]d, mp.profile_name%[2]s, mp.agent_type, ISNULL(ps.srvname, N'')%[2]s, a.publisher_db%[2]s,
+       N''%[2]s, N''%[2]s, N''%[2]s, 0
 FROM %[3]s.dbo.MSlogreader_agents AS a
 JOIN msdb.dbo.MSagent_profiles AS mp ON mp.profile_id = a.profile_id AND mp.type = 1
+LEFT JOIN %[4]s AS ps ON ps.srvid = a.publisher_id
 UNION ALL
-SELECT %[1]d, mp.profile_name%[2]s, mp.agent_type, a.publisher_db%[2]s, a.publication%[2]s, N''%[2]s, N''%[2]s
+SELECT %[1]d, mp.profile_name%[2]s, mp.agent_type, ISNULL(ps.srvname, N'')%[2]s, a.publisher_db%[2]s,
+       a.publication%[2]s, N''%[2]s, N''%[2]s, 0
 FROM %[3]s.dbo.MSsnapshot_agents AS a
 JOIN msdb.dbo.MSagent_profiles AS mp ON mp.profile_id = a.profile_id AND mp.type = 1
+LEFT JOIN %[4]s AS ps ON ps.srvid = a.publisher_id
 UNION ALL
-SELECT %[1]d, mp.profile_name%[2]s, mp.agent_type, a.publisher_db%[2]s, a.publication%[2]s,
-       ISNULL(rs.srvname, N'')%[2]s, ISNULL(a.subscriber_db, N'')%[2]s
+SELECT %[1]d, mp.profile_name%[2]s, mp.agent_type, ISNULL(ps.srvname, N'')%[2]s, a.publisher_db%[2]s,
+       a.publication%[2]s,
+       CASE WHEN a.subscriber_id < 0 THEN N'' ELSE ISNULL(rs.srvname, N'') END%[2]s,
+       ISNULL(a.subscriber_db, N'')%[2]s,
+       CASE WHEN a.subscriber_id < 0 THEN 1 ELSE 0 END
 FROM %[3]s.dbo.MSdistribution_agents AS a
 JOIN msdb.dbo.MSagent_profiles AS mp ON mp.profile_id = a.profile_id AND mp.type = 1
-LEFT JOIN %[4]s AS rs ON rs.srvid = a.subscriber_id`, i, c, d, servers)
+LEFT JOIN %[4]s AS ps ON ps.srvid = a.publisher_id
+LEFT JOIN %[4]s AS rs ON rs.srvid = a.subscriber_id AND a.subscriber_id >= 0`, i, c, d, servers)
 	}
 	return b.String()
 }

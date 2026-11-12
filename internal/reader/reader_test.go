@@ -594,3 +594,32 @@ func TestJobState(t *testing.T) {
 		}
 	}
 }
+
+// TestFactTimeFormat checks the time format of the facts on a live instance:
+// a datetime whose milliseconds are 0 keeps its three digits, and
+// SYSDATETIME is cut to three.
+func TestFactTimeFormat(t *testing.T) {
+	d := os.Getenv("SQLREPL_TEST_DSN")
+	if d == "" {
+		t.Skip("SQLREPL_TEST_DSN not set")
+	}
+	db, err := sql.Open("sqlserver", d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var got string
+	q := "SELECT " + timeOpen + "CAST('2026-11-12T00:00:05' AS datetime)" + timeClose
+	if err := db.QueryRow(q).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != "2026-11-12 00:00:05.000" {
+		t.Errorf("datetime with 0 ms = %q, want 2026-11-12 00:00:05.000", got)
+	}
+	if err := db.QueryRow(qReadAt).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$`).MatchString(got) {
+		t.Errorf("read_at = %q, want 2006-01-02 15:04:05.000", got)
+	}
+}

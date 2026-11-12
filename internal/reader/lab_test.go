@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode"
 
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
@@ -62,6 +63,17 @@ func labRead(t *testing.T) *Result {
 // labReadWith is labRead with connections to subscribers.
 func labReadWith(t *testing.T, subscribers map[string]*sql.DB) *Result {
 	t.Helper()
+	return labReadSource(t, subscribers, false)
+}
+
+// labReadFacts is labRead with the runtime facts.
+func labReadFacts(t *testing.T) *Result {
+	t.Helper()
+	return labReadSource(t, nil, true)
+}
+
+func labReadSource(t *testing.T, subscribers map[string]*sql.DB, facts bool) *Result {
+	t.Helper()
 	probe, err := Probe(context.Background(), labDB(t, "master"), "Sales")
 	if err != nil {
 		t.Fatal(err)
@@ -72,6 +84,7 @@ func labReadWith(t *testing.T, subscribers map[string]*sql.DB) *Result {
 		Database:    "Sales",
 		Probe:       probe,
 		Subscribers: subscribers,
+		Facts:       facts,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -742,13 +755,14 @@ func TestReadLabSharedPullAgentMissingRow(t *testing.T) {
 // lab/start.sh waits for: every subscription row delivered (status 2 at both
 // ends) and the agents running.
 func TestReadLabFacts(t *testing.T) {
-	res := labRead(t)
+	res := labReadFacts(t)
 	f := res.Facts
 	if f == nil {
 		t.Fatal("no facts")
 	}
-	if f.ReadAt == "" {
-		t.Error("read_at is empty")
+	timeFormat := regexp.MustCompile(`^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$`)
+	if !timeFormat.MatchString(f.ReadAt) {
+		t.Errorf("read_at = %q, want 2006-01-02 15:04:05.000", f.ReadAt)
 	}
 
 	// Articles per publication, schema-only ones included: SalesRef's
@@ -796,6 +810,29 @@ WHERE p.name IN (N'SalesPub', N'SalesRef') GROUP BY p.name`)
 	if !customer {
 		t.Error("SalesPub article Customer is not active")
 	}
+	// A schema article has the bit too: active is read from it, not assumed.
+	var schemaActive int
+	if err := labDB(t, "Sales").QueryRow(`
+SELECT a.status & 1 FROM dbo.sysschemaarticles AS a
+JOIN dbo.syspublications AS p ON p.pubid = a.pubid
+WHERE p.name = N'SalesRef' AND a.name = N'vCustomerFR'`).Scan(&schemaActive); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, a := range pubs["SalesRef"].Articles {
+		if a.Name == "vCustomerFR" {
+			found = true
+			if a.Active != (schemaActive != 0) {
+				t.Errorf("vCustomerFR active = %t, sysschemaarticles.status & 1 = %d", a.Active, schemaActive)
+			}
+		}
+	}
+	if !found {
+		t.Error("SalesRef article vCustomerFR not listed")
+	}
+	if p := pubs["SalesPub"]; !timeFormat.MatchString(p.LastGeneration) {
+		t.Errorf("SalesPub last_generation = %q, want 2006-01-02 15:04:05.000", p.LastGeneration)
+	}
 
 	seen := 0
 	for _, s := range f.Subscriptions {
@@ -824,6 +861,9 @@ WHERE p.name IN (N'SalesPub', N'SalesRef') GROUP BY p.name`)
 		if a.Job == nil || !a.Job.Exists || !a.Job.Enabled || !a.Job.Running {
 			t.Errorf("%s: job %+v, want exists, enabled and running", what, a.Job)
 		}
+		if h := a.LastHistory; h == nil || !timeFormat.MatchString(h.Time) {
+			t.Errorf("%s: last_history %+v, want a row with a 2006-01-02 15:04:05.000 time", what, h)
+		}
 	}
 	var logReader, salesPub, shared int
 	for _, a := range f.Agents {
@@ -842,8 +882,99 @@ WHERE p.name IN (N'SalesPub', N'SalesRef') GROUP BY p.name`)
 	if logReader != 1 || salesPub != 1 || shared != 1 {
 		t.Errorf("agents: %d log reader, %d SalesPub, %d shared distribution, want 1 each", logReader, salesPub, shared)
 	}
-	// lab-distrib is bound to no agent (Task 9).
-	if len(f.ProfileUses) != 0 {
-		t.Errorf("profile_uses = %+v, want empty", f.ProfileUses)
+	// lab-distrib is bound to no agent (Task 9). Only the uses of Sales are
+	// the lab's own.
+	for _, u := range f.ProfileUses {
+		if u.PublisherDB == "Sales" {
+			t.Errorf("profile use %+v, want none for Sales", u)
+		}
+	}
+}
+
+// TestReadLabNoFacts checks that a read without Source.Facts returns no facts.
+func TestReadLabNoFacts(t *testing.T) {
+	if res := labRead(t); res.Facts != nil {
+		t.Errorf("Facts = %+v, want nil without Source.Facts", res.Facts)
+	}
+}
+
+// TestReadLabLastGeneration runs the snapshot agent of its own publication
+// twice: the first run generates a snapshot for the new subscription, the
+// second finds nothing to initialize and ends with runstatus 2 too.
+// last_generation must be the end of the first.
+func TestReadLabLastGeneration(t *testing.T) {
+	ctx := context.Background()
+	labScripts(t, "gen")
+	sales := labDB(t, "Sales")
+	var agentID int
+	var jobID string
+	if err := labDB(t, "master").QueryRowContext(ctx, `
+SELECT a.id, CONVERT(nvarchar(36), CONVERT(uniqueidentifier, a.job_id))
+FROM distribution.dbo.MSsnapshot_agents AS a
+WHERE a.publisher_db = N'Sales' AND a.publication = N'm_gen'`).Scan(&agentID, &jobID); err != nil {
+		t.Fatal(err)
+	}
+	// run starts the snapshot agent and waits for its job to stop with n
+	// final rows (runstatus 2 or 6) in the history.
+	run := func(n int) {
+		t.Helper()
+		if _, err := sales.ExecContext(ctx, "EXEC sp_startpublication_snapshot @publication = N'm_gen'"); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(90 * time.Second)
+		for {
+			var finals, running int
+			if err := sales.QueryRowContext(ctx, `
+SELECT (SELECT COUNT(*) FROM distribution.dbo.MSsnapshot_history WHERE agent_id = @p1 AND runstatus IN (2, 6)),
+       (SELECT COUNT(*) FROM msdb.dbo.sysjobactivity AS ja
+        WHERE ja.job_id = CONVERT(uniqueidentifier, @p2)
+          AND ja.session_id = (SELECT TOP (1) session_id FROM msdb.dbo.syssessions ORDER BY agent_start_date DESC)
+          AND ja.start_execution_date IS NOT NULL AND ja.stop_execution_date IS NULL)`,
+				agentID, jobID).Scan(&finals, &running); err != nil {
+				t.Fatal(err)
+			}
+			if finals >= n && running == 0 {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("snapshot run %d: %d final rows, job running %d after 90 s", n, finals, running)
+			}
+			time.Sleep(time.Second)
+		}
+	}
+	run(1)
+	run(2)
+
+	// The setup is what the test claims: two final rows, the second a no-op.
+	rows, err := sales.QueryContext(ctx, `
+SELECT `+timeOpen+`time`+timeClose+`, comments FROM distribution.dbo.MSsnapshot_history
+WHERE agent_id = @p1 AND runstatus = 2 ORDER BY time, timestamp`, agentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var times, comments []string
+	for rows.Next() {
+		var tm, c string
+		if err := rows.Scan(&tm, &c); err != nil {
+			t.Fatal(err)
+		}
+		times, comments = append(times, tm), append(comments, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(times) != 2 || strings.Contains(comments[0], "not generated") || !strings.Contains(comments[1], "not generated") {
+		t.Fatalf("final rows %v %q, want a generation then a run that generated nothing", times, comments)
+	}
+
+	var got string
+	for _, p := range labReadFacts(t).Facts.Publications {
+		if p.Name == "m_gen" {
+			got = p.LastGeneration
+		}
+	}
+	if got != times[0] {
+		t.Errorf("last_generation = %q, want %q, the generation (the no-op run ended at %s)", got, times[0], times[1])
 	}
 }

@@ -34,7 +34,7 @@ func TestFactsJSONKeys(t *testing.T) {
 		Agents: []AgentFacts{{Kind: "distribution", Publication: "P", Subscriber: "S", Database: "D", AgentID: 3,
 			Job: &JobState{Exists: true, Enabled: true, Running: true}, LastHistory: hist, LastFailure: hist}},
 		ProfileUses: []ProfileUse{{Profile: "p", AgentType: "distribution", DistributionDB: "distribution",
-			PublisherDB: "Sales", Publication: "P", Subscriber: "S", Database: "D"}},
+			Publisher: "PUB", PublisherDB: "Sales", Publication: "P", Subscriber: "S", Database: "D", Virtual: true}},
 	}
 	b, err := json.Marshal(f)
 	if err != nil {
@@ -64,8 +64,8 @@ func TestFactsJSONKeys(t *testing.T) {
 		".agents[].last_failure.time", ".agents[].last_failure.runstatus", ".agents[].last_failure.comments",
 		".agents[].last_failure.error_text",
 		".profile_uses[].profile", ".profile_uses[].agent_type", ".profile_uses[].distribution_db",
-		".profile_uses[].publisher_db", ".profile_uses[].publication", ".profile_uses[].subscriber",
-		".profile_uses[].database",
+		".profile_uses[].publisher", ".profile_uses[].publisher_db", ".profile_uses[].publication", ".profile_uses[].subscriber",
+		".profile_uses[].database", ".profile_uses[].virtual",
 	}
 	wantSet := map[string]bool{}
 	for _, k := range want {

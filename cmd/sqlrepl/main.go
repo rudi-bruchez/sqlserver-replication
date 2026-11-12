@@ -154,6 +154,7 @@ func runExport(args []string, stdout io.Writer) error {
 		PublisherName: *publisherName,
 		Probe:         probe,
 		Subscribers:   subs,
+		Facts:         *factsPath != "",
 	})
 	if err != nil {
 		return err

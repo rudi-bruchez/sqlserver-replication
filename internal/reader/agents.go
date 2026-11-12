@@ -80,7 +80,7 @@ func (e *exporter) agent(path, label string, r agentRow, secretParts ...string) 
 	if err != nil {
 		return a, err
 	}
-	if r.fact != nil {
+	if r.fact != nil && e.facts != nil {
 		js, err := e.readJobState(jobs, r.jobID)
 		if err != nil {
 			return a, err

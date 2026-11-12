@@ -22,8 +22,9 @@ type PublicationFacts struct {
 	Name string `json:"name"`
 	// ImmediateSyncReady is syspublications.immediate_sync_ready.
 	ImmediateSyncReady bool `json:"immediate_sync_ready"`
-	// LastGeneration is the time of the latest successful run (runstatus 2)
-	// of the publication's snapshot agent; empty when there is none.
+	// LastGeneration is the end of the latest run of the publication's
+	// snapshot agent that generated a snapshot, not of a run that found
+	// nothing to do; empty when there is none.
 	LastGeneration string         `json:"last_generation,omitempty"`
 	Articles       []ArticleFacts `json:"articles"`
 }
@@ -31,9 +32,9 @@ type PublicationFacts struct {
 // ArticleFacts is the state of an article.
 type ArticleFacts struct {
 	Name string `json:"name"`
-	// Active is bit 0x1 of sysarticles.status, set by the snapshot
-	// generation; it is never a witness of a delivery. A schema-only
-	// article is listed with Active false.
+	// Active is bit 0x1 of the article status (sysarticles or
+	// sysschemaarticles), set by the snapshot generation; it is never a
+	// witness of a delivery.
 	Active bool `json:"active"`
 }
 
@@ -91,8 +92,13 @@ type ProfileUse struct {
 	Profile        string `json:"profile"`
 	AgentType      string `json:"agent_type"`
 	DistributionDB string `json:"distribution_db"`
+	Publisher      string `json:"publisher"`
 	PublisherDB    string `json:"publisher_db"`
 	Publication    string `json:"publication,omitempty"`
 	Subscriber     string `json:"subscriber,omitempty"`
 	Database       string `json:"database,omitempty"`
+	// Virtual is set for the distribution agent of a virtual subscriber
+	// (subscriber_id < 0), whose Subscriber is empty: a profile bound to it
+	// may still block a profile drop.
+	Virtual bool `json:"virtual,omitempty"`
 }

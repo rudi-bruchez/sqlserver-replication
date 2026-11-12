@@ -46,12 +46,14 @@ Passwords are never exported. Where an agent uses SQL Server authentication, the
 `-facts PATH` writes, beside the YAML, what the export observed of the replication at run time, as indented JSON. The file is not configuration: it is never compared, never part of the YAML, and it changes with every run. It is the input the planner needs to decide whether a change invalidates the snapshot or reinitializes a subscription:
 
 - `read_at`: the distributor's `SYSDATETIME()` when the facts were read.
-- `publications`: per publication, `immediate_sync_ready`, `last_generation` (the latest successful run of its snapshot agent) and per article `active` (bit `0x1` of `sysarticles.status`, set by the snapshot generation; schema-only articles are listed inactive).
+- `publications`: per publication, `immediate_sync_ready`, `last_generation` and per article `active` (bit `0x1` of the article status in `sysarticles` or `sysschemaarticles`, set by the snapshot generation). `last_generation` is the end of the latest snapshot agent run that generated a snapshot. A run that finds no subscription to initialize also ends successfully, and nothing but its final message tells it apart ("A snapshot was not generated because no subscriptions needed initialization."): the export leaves out the runs whose final message contains `not generated`, which assumes the agent writes its messages in English.
 - `subscriptions`: per subscription, one row per subscribed article with its status at the publisher (`syssubscriptions`) and at the distributor (`MSsubscriptions`, the subscription's own row; `null` when there is none).
 - `agents`: per log reader, snapshot, distribution and pull agent, its id at the distributor, whether its job exists, is enabled and is running (`job` is `null` for a pull agent whose subscriber is not given with `-server`), and its last history row and last failure.
-- `profile_uses`: the agents of every distribution database of the distributor that use a user-defined profile.
+- `profile_uses`: the agents of every distribution database of the distributor that use a user-defined profile, with their `publisher`. The distribution agents of the virtual subscribers are listed too, with `virtual: true` and no `subscriber`: a profile bound to one still matters before it is dropped.
 
-Reading the facts needs, besides the permissions above, read access to `msdb.dbo.sysjobactivity` and `syssessions` and to every distribution database of the distributor.
+Every time is written as `2006-01-02 15:04:05.000`, in the distributor's local time.
+
+The facts are read only with `-facts`: a plain export runs none of their queries. Reading them needs, besides the permissions above, read access to `msdb.dbo.sysjobactivity` and `syssessions` and to every distribution database of the distributor.
 
 ### Empty configuration
 
