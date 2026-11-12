@@ -343,7 +343,7 @@ func (b *builder) sharedPushExists(s *model.Subscription) bool {
 func (b *builder) pubIdentity(pub string) []Param {
 	return []Param{
 		{Name: "@publisher", Value: literal(b.des.Publisher.Server)},
-		{Name: "@publisher_db", Value: literal(b.des.Publisher.Database)},
+		{Name: "@publisher_db", Value: literal(b.pubDB())},
 		{Name: "@publication", Value: literal(pub)},
 	}
 }

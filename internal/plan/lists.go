@@ -246,6 +246,14 @@ func (b *builder) deliveryAgent(pub string, sub *SubState) AgentRef {
 		return r
 	}
 	r.Subscriber, r.Database = s.Subscriber, s.Database
+	if c := pubNamed(b.cur, pub); c != nil {
+		for i := range c.Subscriptions {
+			if cs := &c.Subscriptions[i]; subKey(cs.Key()) == subKey(sub.Key) {
+				// The names as stored, for the job lookup (minor 10).
+				r.Subscriber, r.Database = cs.Subscriber, cs.Database
+			}
+		}
+	}
 	if stringOr(s.Type, "push") == "pull" {
 		r.Kind = "pull_distribution"
 	}

@@ -52,7 +52,7 @@ func agentsStrategy(b *builder) {
 func (b *builder) publicationDatabase() {
 	if len(b.cur.Publications) == 0 && len(b.des.Publications) > 0 {
 		op := b.newOp(3, "dboption", "publication_db", "change", "publisher", Call{Procedure: "sp_replicationdboption", Params: []Param{
-			{Name: "@dbname", Value: literal(b.des.Publisher.Database)},
+			{Name: "@dbname", Value: literal(b.pubDB())},
 			{Name: "@optname", Value: literal("publish")},
 			{Name: "@value", Value: literal("true")},
 		}})
@@ -255,6 +255,10 @@ func (b *builder) publicationSlots(pd, pc *model.Publication, ppath string) []ag
 			return // a type change is refused (R21)
 		}
 		s := agentSlot{pub: pd.Name, pubType: pubType, subscriber: d.Subscriber, database: d.Database, sub: d, agentType: "distribution"}
+		if c != nil {
+			// The names as stored, for the job lookups (minor 10).
+			s.subscriber, s.database = c.Subscriber, c.Database
+		}
 		switch stringOr(d.Type, "push") {
 		case "push":
 			if d.DistributionAgent == nil {
@@ -518,7 +522,7 @@ func (b *builder) binding(s agentSlot) {
 	from, where := b.agentRow(s, dist)
 	pro := "DECLARE @agent_id int, @profile_id int;\n" +
 		"SELECT @agent_id = a.id " + from + " WHERE " + where + ";\n" +
-		profileLookup(want, code) +
+		profileLookup(b.storedProfileName(want, s.agentType), code) +
 		"IF @agent_id IS NULL OR @profile_id IS NULL THROW 50000, " +
 		literal(fmt.Sprintf("the agent %s or the profile %s (%s) does not exist", s.path, profileLabel(want, s.agentType), s.agentType)) + ", 1;"
 	op := b.distOp(10, s.path+sep+"1", "agent_binding", "change", s.path, Call{Procedure: "sp_update_agent_profile", Prologue: pro, Params: []Param{
@@ -546,6 +550,18 @@ func profileLookup(want string, code int) string {
 	}
 	return "SELECT @profile_id = profile_id FROM msdb.dbo.MSagent_profiles WHERE profile_name = " + literal(want) +
 		" AND agent_type = " + strconv.Itoa(code) + ";\n"
+}
+
+// storedProfileName is the name of the current user profile of the type
+// that matches name without regard to case (R7), as stored; name otherwise
+// (minor 10 of the final review).
+func (b *builder) storedProfileName(name, agentType string) string {
+	for _, p := range b.cur.AgentProfiles {
+		if p.AgentType == agentType && strings.EqualFold(p.Name, name) {
+			return p.Name
+		}
+	}
+	return name
 }
 
 // profileLabel writes a profile name, templateProfile as words.
@@ -583,7 +599,7 @@ func (b *builder) agentRow(s agentSlot, dist string) (from, where string) {
 	servers := dist + ".dbo.MSreplservers"
 	cond := []string{
 		"UPPER(ps.srvname) = UPPER(" + literal(b.des.Publisher.Server) + ")",
-		"a.publisher_db = " + literal(b.des.Publisher.Database),
+		"a.publisher_db = " + literal(b.pubDB()),
 	}
 	switch s.kind {
 	case agentLogReader:
@@ -658,7 +674,7 @@ func (b *builder) jobLookup(s agentSlot) string {
 			"SELECT @job_id = sj.job_id FROM " + quoteName(s.database) + ".dbo.MSreplication_subscriptions AS rs" +
 			" JOIN msdb.dbo.sysjobs AS sj ON sj.job_id = CONVERT(uniqueidentifier, rs.agent_id)" +
 			" WHERE UPPER(rs.publisher) = UPPER(" + literal(b.des.Publisher.Server) + ") AND rs.publisher_db = " +
-			literal(b.des.Publisher.Database) + " AND rs.publication = " + literal(s.pub) + " AND rs.subscription_type = 1;\n" +
+			literal(b.pubDB()) + " AND rs.publication = " + literal(s.pub) + " AND rs.subscription_type = 1;\n" +
 			"IF @job_id IS NULL THROW 50000, " + missing + ", 1;"
 	}
 	from, where := b.agentRow(s, quoteName(b.distributionDB()))

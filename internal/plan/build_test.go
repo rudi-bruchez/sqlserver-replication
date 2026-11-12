@@ -434,3 +434,42 @@ func withJobs(t *testing.T, p *Plan) []Operation {
 	}
 	return p.Operations
 }
+
+// The file writes the names of the publication database, a subscription's
+// database and a profile in another case than SQL Server stores them: the
+// T-SQL names them as stored, in its USE and its prologues (minor 10 of the
+// final review); the distribution and msdb tables compare them under their
+// own collation.
+func TestStoredCaseInTSQL(t *testing.T) {
+	p := buildLab(t, nil, func(des, _ *model.Config) {
+		des.Publisher.Database = "sales"
+		addTo(t, des, "SalesRef", newTable("m_t9"))
+		s := subOf(t, des, "SalesPub", "SalesSub")
+		s.Database = "salessub"
+		s.DistributionAgent.JobEnabled = model.Ptr(false)
+		s.DistributionAgent.Profile = str("LAB-DISTRIB")            // its binding
+		subOf(t, des, "SalesRef", "SalesSub").Database = "salessub" // its job_start, after the extension
+		pr := &des.AgentProfiles[0]
+		pr.Name = "LAB-DISTRIB"
+		pr.Parameters["-CommitBatchSize"] = "300"
+	})
+	sql := p.SQL()
+	for _, want := range []string{
+		"USE [Sales];",
+		"a.publisher_db = N'Sales'",
+		"a.subscriber_db = N'SalesSub'",
+		"profile_name = N'lab-distrib'",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("the T-SQL lacks %s", want)
+		}
+	}
+	for _, bad := range []string{"[sales]", "N'sales'", "N'salessub'", "N'LAB-DISTRIB'"} {
+		if strings.Contains(sql, bad) {
+			t.Errorf("the T-SQL names %s, the file's case", bad)
+		}
+	}
+	if t.Failed() {
+		t.Logf("plan:\n%s%s", p.Summary(), sql)
+	}
+}

@@ -51,12 +51,24 @@ func publicationsStrategy(b *builder) {
 	}
 }
 
+// pubDB is the publication database's name as SQL Server stores it (the
+// current side, read from sys.databases) when it matches the file's, which
+// can differ in case; the file's otherwise. The T-SQL names it so in its USE,
+// its prologues and the calls that record it (minor 10 of the final review):
+// the distribution tables compare it under their own collation.
+func (b *builder) pubDB() string {
+	if c := b.cur.Publisher.Database; c != "" && strings.EqualFold(c, b.des.Publisher.Database) {
+		return c
+	}
+	return b.des.Publisher.Database
+}
+
 // newOp is an operation of the publication database at the publisher, with
 // the sources of its procedure's context.
 func (b *builder) newOp(step int, order, kind, action, path string, call Call) Operation {
 	op := Operation{
 		Step: step, Order: order, Kind: kind, Action: action, Path: path,
-		Server: b.des.Publisher.Server, Database: b.des.Publisher.Database, Call: call,
+		Server: b.des.Publisher.Server, Database: b.pubDB(), Call: call,
 	}
 	if ctx, ok := procContexts[call.Procedure]; ok {
 		op.Sources = append(op.Sources, strings.Split(ctx.Source, ", ")...)

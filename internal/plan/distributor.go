@@ -407,7 +407,7 @@ func (b *builder) addProfile(p *model.AgentProfile) {
 	b.add(op)
 	// Parameters omitted: the template's set, which sp_add_agent_profile
 	// has just copied, so no parameter call (final review item 5).
-	b.profileParameters(p, path, tpl, true)
+	b.profileParameters(p, p, path, tpl, true)
 }
 
 // changeProfile changes an existing profile: its description, and its
@@ -426,7 +426,7 @@ func (b *builder) changeProfile(pp pair[model.AgentProfile]) {
 		}
 	}
 	if !b.skip(path + ".parameters") {
-		b.profileParameters(pp.Des, path, pp.Cur.Parameters, false)
+		b.profileParameters(pp.Des, pp.Cur, path, pp.Cur.Parameters, false)
 	}
 }
 
@@ -478,8 +478,10 @@ func (b *builder) profileDescription(d, c *model.AgentProfile, ch Change) {
 // PF.drop_parameter is measured (R6). A copied name is never added (20067),
 // and a name the profile lacks never changed (it returns 0 and changes
 // nothing, PF.change_missing_parameter). created tells a profile this plan
-// creates, whose parameter calls are online only.
-func (b *builder) profileParameters(p *model.AgentProfile, path string, have map[string]string, created bool) {
+// creates, whose parameter calls are online only. The prologue finds the
+// profile by stored's name: the current profile's for an existing one (minor
+// 10 of the final review).
+func (b *builder) profileParameters(p, stored *model.AgentProfile, path string, have map[string]string, created bool) {
 	e, ok := cost.Lookup("agent_profiles[*].parameters", "", "transactional")
 	if !ok {
 		b.refuse(path+".parameters", "cost of agent_profiles[*].parameters change not measured")
@@ -489,7 +491,7 @@ func (b *builder) profileParameters(p *model.AgentProfile, path string, have map
 	if !ok {
 		return
 	}
-	pro, err := profilePrologue(p)
+	pro, err := profilePrologue(stored)
 	if err != nil {
 		b.refuse(path, "%v", err)
 		return
