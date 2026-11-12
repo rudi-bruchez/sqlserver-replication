@@ -61,6 +61,10 @@ type builder struct {
 	// rebound is the profile each agent this plan binds is bound to, by
 	// agentKey (agents.go): the profile drop of step 11 reads it.
 	rebound map[string]string
+	// deferStarts is the agents to start of a deferred publication, by ref,
+	// to the publication (agentsToStart): their job_start goes after its
+	// generate_and_wait (addJobOps).
+	deferStarts map[AgentRef]string
 }
 
 func (b *builder) refuse(path, format string, args ...any) {

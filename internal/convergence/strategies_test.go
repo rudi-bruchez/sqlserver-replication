@@ -219,7 +219,9 @@ func TestLabDeferFullSnapshot(t *testing.T) {
 		t.Fatalf("%v\n%s", err, p.Summary())
 	}
 	jobsAroundAll(t, p, true)
-	wantAgents(t, p, nil)
+	// The distribution agent delivers m_t2 between the generate_and_wait
+	// and the restore of immediate_sync (final review item 3).
+	wantAgents(t, p, []plan.AgentRef{e.pushRef("m_pi")})
 	if want := []string{"the full generation is deferred to the next run of the snapshot agent of m_pi"}; !reflect.DeepEqual(p.Notes, want) {
 		t.Errorf("notes of the deferral plan %q, want %q", p.Notes, want)
 	}

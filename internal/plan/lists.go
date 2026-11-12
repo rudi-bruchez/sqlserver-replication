@@ -121,6 +121,12 @@ func (b *builder) lists(p *Plan, before *State) {
 // generation sets (at 1, or of an inactive article without immediate_sync),
 // or rows at 2 that no generation precedes (SubState.StartAgent). A shared
 // pull agent is not listed, with a warning: its job lookup is not measured.
+//
+// A publication the plan defers (defer.go) lists the distribution agent of
+// every subscription: its generate_and_wait sets the rows of the added
+// articles to 2 before the end, so owes no longer sees them, and the agent
+// must deliver them before immediate_sync is restored (final review item
+// 3). Their job_start goes between the two (b.deferStarts, addJobOps).
 func (b *builder) agentsToStart(before *State) []AgentRef {
 	var refs []AgentRef
 	seen := map[AgentRef]bool{}
@@ -145,8 +151,9 @@ func (b *builder) agentsToStart(before *State) []AgentRef {
 		if !ps.Exists {
 			continue
 		}
+		deferred := b.deferred(name)
 		for _, sub := range sortedSubs(ps) {
-			if !sub.StartAgent && !owes(ps, sub) {
+			if !sub.StartAgent && !owes(ps, sub) && !deferred {
 				continue
 			}
 			r := b.deliveryAgent(name, sub)
@@ -157,6 +164,12 @@ func (b *builder) agentsToStart(before *State) []AgentRef {
 					b.warnings = append(b.warnings, w)
 				}
 				continue
+			}
+			if deferred {
+				if b.deferStarts == nil {
+					b.deferStarts = map[AgentRef]string{}
+				}
+				b.deferStarts[r] = name
 			}
 			add(r)
 		}
@@ -266,7 +279,8 @@ func pubNamed(c *model.Config, name string) *model.Publication {
 // creates the agent (before that call MSsnapshot_agents has a row with
 // local_job 0 and a job_id of no job, 14262); a job_restore in step 12 for
 // each job disabled and not dropped, with the file's job_enabled (R23); then
-// a job_start per agent to start.
+// a job_start per agent to start, in step 12, or for an agent of a deferral
+// between its generate_and_wait and the restore of immediate_sync.
 func (b *builder) addJobOps(ops []Operation, refs []AgentRef) []Operation {
 	operated := map[string]bool{}
 	created := map[string]string{} // the Order of its sp_addpublication_snapshot
@@ -358,6 +372,12 @@ func (b *builder) addJobOps(ops []Operation, refs []AgentRef) []Operation {
 		}
 		if !isNew && b.jobMissing(factKind, r.Publication, r.Subscriber, r.Database) {
 			b.refuse(slot.path, r24NoJob, slot.path)
+			continue
+		}
+		if pub, ok := b.deferStarts[r]; ok {
+			op := b.jobOp(9, endOfStep+pub+sep+"1"+sep+"job"+order, "job_start", cost.OpJobStart, slot, "")
+			op.Reason = "-defer-full-snapshot: the agent delivers the added articles that generate_and_wait generated, before immediate_sync is restored"
+			jobs = append(jobs, op)
 			continue
 		}
 		jobs = append(jobs, b.jobOp(12, order, "job_start", cost.OpJobStart, slot, ""))

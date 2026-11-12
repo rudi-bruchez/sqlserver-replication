@@ -23,7 +23,9 @@ const (
 // The Order keys of the deferral's operations at the end of step 9: a
 // leading 0xff byte, which no UTF-8 publication name starts with, sorts
 // them after every other step 9 operation; then the publication, and 1 for
-// generate_and_wait, 2 for immediate_sync true, 3 for allow_anonymous true.
+// generate_and_wait, then 1\x00job for the job_start of the agents that
+// deliver the added articles (addJobOps), 2 for immediate_sync true, 3 for
+// allow_anonymous true.
 const endOfStep = "\xff"
 
 // deferred tells a publication the -defer-full-snapshot sequence applies

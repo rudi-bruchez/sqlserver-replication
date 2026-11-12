@@ -423,6 +423,38 @@ func TestDeferSequence(t *testing.T) {
 	}
 }
 
+// The deferral starts the distribution agent of every subscription of the
+// publication: its generate_and_wait sets the added article's rows to 2, so
+// no row at 1 is left for the agent list to see, and the delivery must come
+// before immediate_sync is restored (final review item 3). Its job_start
+// sorts between the two.
+func TestDeferStartsDeliveryAgent(t *testing.T) {
+	p := buildLabWith(t, deferOpt, func(des, cur *model.Config) { deferPub(t, des, cur, "native") })
+	planned(t, p)
+	want := []AgentRef{{Kind: "distribution", Publication: "SalesPub", Subscriber: "REPLLAB", Database: "SalesSub", Reason: "delivery"}}
+	if !reflect.DeepEqual(p.AgentsToStart, want) {
+		t.Errorf("AgentsToStart %+v, want %+v", p.AgentsToStart, want)
+	}
+	gen, start, restore := -1, -1, -1
+	for i, op := range p.Operations {
+		switch {
+		case op.Kind == "generate_and_wait":
+			gen = i
+		case op.Kind == "job_start":
+			start = i
+		case op.Kind == "publication_property" && propertyOf(op) == "immediate_sync=true":
+			restore = i
+		}
+	}
+	if gen < 0 || start < 0 || restore < 0 || !(gen < start && start < restore) {
+		t.Fatalf("generate_and_wait at %d, job_start at %d, immediate_sync restore at %d: want them in this order\n%s",
+			gen, start, restore, opsString(p.Operations))
+	}
+	if op := p.Operations[start]; op.Step != 9 || !strings.Contains(op.Call.Prologue, "N'SalesPub'") {
+		t.Errorf("job_start in step %d, prologue %q: want step 9 and the agent of SalesPub", op.Step, op.Call.Prologue)
+	}
+}
+
 // A deferral on a publication whose immediate_sync snapshot is already
 // invalid notes the deferral once: planNotes leaves the "full generation
 // deferred" note to the deferral's own (Task 20 fix round 2, N21).
