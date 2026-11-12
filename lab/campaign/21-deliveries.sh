@@ -18,9 +18,11 @@
 # mark MAX([timestamp]) of MSdistribution_history; a history row is (agent_id, timestamp).
 # An agent row is found as R50 says: MSdistribution_agents by publisher (MSreplservers),
 # publisher_db, subscriber (MSreplservers), subscriber_db, publication or N'ALL',
-# subscriber_id >= 0. A publication's folder is the level 0 directory of the listing of
-# <working_directory>/unc whose name ends with _<database>_<publication>, any case; its run
-# folders are the directories whose parent_directory is that folder's path.
+# subscriber_id >= 0. A publication's folder is the directory of the listing of
+# <working_directory>/unc whose parent_directory is <working_directory>/unc/ and whose name
+# ends with _<database>_<publication>, any case; its run folders are the directories whose
+# parent_directory is that folder's full_filesystem_path plus '/'. No rule uses `level`,
+# which counts from the children of the folder listed.
 #
 # Rows:
 #   DL.pull.delivered_line  m_dl_pp: subscription at the publisher, pull subscription and
@@ -32,7 +34,9 @@
 #       generation, subscriber_rows=<n> read in m_dl_sub1.
 #   DL.listing  after m_dl_pp's generation: result parent_in_name=yes|no (a level 1 name
 #       holds its parent path); detail: columns=<names> (sys.dm_exec_describe_first_result_set),
-#       levels=<level:kind,...> (what each level of the unc listing holds), the three path
+#       levels=<level:kind,...> (what each level of the unc listing holds), the levels of
+#       unc, of m_dl_pp's folder and of its run folder in a listing of <working_directory>
+#       (root_listing=, the argument R50 passes), the three path
 #       columns of m_dl_pp's folder and of its run folder as read, whether parent_directory
 #       ends with a slash, whether the run folder's parent_directory equals the folder's
 #       full_filesystem_path plus '/', whether the argument with a trailing slash lists the
@@ -52,10 +56,18 @@
 #       mark names m_dl_pn's folder, no otherwise. Detail: the shared agent's id and job
 #       before the drop, after the drop and after the re-add, the line, whether its run was
 #       absent at T, the rows at the subscriber.
+#   DL.shared_readd_kept  m_dl_pk (m_t1, no independent_agent) pushed to m_dl_sub2 beside
+#       m_dl_pn, so the shared agent keeps m_dl_pn's subscription across the drop: added
+#       with sp_addsubscription alone (the agent exists, and sp_addpushsubscription_agent
+#       would re-create its job), generated and delivered, dropped, the mark, T and the
+#       listing taken, re-added the same way, generated. Result yes when a "Delivered
+#       snapshot" line of the shared agent above the mark names m_dl_pk's folder, no
+#       otherwise. Detail: the agent id and job before the drop, after it and after the
+#       re-add, the line, whether its run was absent at T, the rows at the subscriber.
 # A distribution agent job found idle after a generation is started once by the script, as
 # R51 has apply do; each row's detail says whether that happened (started=yes|no).
 #
-# Asserted (exit 1, rows on stderr): 4 rows; each publication's folder identified exactly
+# Asserted (exit 1, rows on stderr): 5 rows; each publication's folder identified exactly
 # once; the first delivery of m_dl_pn happened (else DL.shared_readd measures nothing);
 # MSreplservers has the same rows before and after; after the cleanup no m_dl agent row,
 # job or folder is left (the shared agent included).
@@ -134,7 +146,9 @@ srv=$(sql_value "SELECT CONVERT(nvarchar(128), @@SERVERNAME)")
 need replservers_before srv
 
 # ---- helpers ---------------------------------------------------------------------------
-dnow() { sql_value "SELECT CONVERT(varchar(23), GETDATE(), 121)"; }
+# Times are written and read in style 126 (ISO 8601 with T), which does not depend on the
+# session's DATEFORMAT.
+dnow() { sql_value "SELECT CONVERT(varchar(23), GETDATE(), 126)"; }
 hmark() { sql_value "SELECT CONVERT(varchar(20), CONVERT(binary(8), ISNULL(MAX([timestamp]), 0x00)), 1) FROM $dist.dbo.MSdistribution_history"; }
 # agent_id PUB SUBDB: the id of the subscription's distribution agent row (PUB or ALL).
 agent_id() {
@@ -152,7 +166,7 @@ delivered() {
     local out
     out=$(sql -b -h -1 -Q "SET NOCOUNT ON; SELECT CONVERT(nvarchar(4000), CONCAT(CONVERT(varchar(23), h.[time], 121), N'~', h.comments))
 FROM $dist.dbo.MSdistribution_history AS h
-WHERE h.agent_id = $1 AND h.[timestamp] > $2 AND h.[time] >= '$3' AND h.comments LIKE N'Delivered snapshot%'
+WHERE h.agent_id = $1 AND h.[timestamp] > $2 AND h.[time] >= CONVERT(datetime, '$3', 126) AND h.comments LIKE N'Delivered snapshot%'
 ORDER BY h.[timestamp]" </dev/null 2>&1) || { printf '21-deliveries: delivered: %s\n' "$out" >&2; return 1; }
     printf '%s\n' "$out" | sed -e 's/[[:space:]]*$//' | grep -v '^$' || true
 }
@@ -173,12 +187,12 @@ parse_line() {
     return 0
 }
 fsq="SELECT * FROM sys.dm_os_enumerate_filesystem(N'$unc', N'*')"
-# pubfolders PUB: the level 0 directories of the listing whose name ends with _<db>_<PUB>,
-# any case, comma separated.
+# pubfolders PUB: the directories whose parent is <unc>/ and whose name ends with
+# _<db>_<PUB>, any case, comma separated.
 pubfolders() {
     sql_value "WITH fs AS ($fsq)
 SELECT ISNULL(CONVERT(nvarchar(4000), STRING_AGG(CONVERT(nvarchar(4000), file_or_directory_name), N',')), N'') + N'#'
-FROM fs WHERE level = 0 AND is_directory = 1
+FROM fs WHERE parent_directory = N'$unc/' AND is_directory = 1
   AND UPPER(RIGHT(file_or_directory_name, LEN(N'_${db}_$1'))) = UPPER(N'_${db}_$1')" | sed 's/#$//'
 }
 # runs FOLDER: the run folders of FOLDER (directories whose parent is its path), sorted.
@@ -186,7 +200,7 @@ runs() {
     sql_value "WITH fs AS ($fsq)
 SELECT ISNULL(CONVERT(nvarchar(4000), STRING_AGG(CONVERT(nvarchar(4000), r.file_or_directory_name), N',') WITHIN GROUP (ORDER BY r.file_or_directory_name)), N'') + N'#'
 FROM fs AS p JOIN fs AS r ON r.parent_directory = p.full_filesystem_path + N'/'
-WHERE p.level = 0 AND p.is_directory = 1 AND p.file_or_directory_name = N'$1' AND r.is_directory = 1" | sed 's/#$//'
+WHERE p.parent_directory = N'$unc/' AND p.is_directory = 1 AND p.file_or_directory_name = N'$1' AND r.is_directory = 1" | sed 's/#$//'
 }
 inlist() { [[ ",$2," == *",$1,"* ]]; }
 # The snapshot agent of PUB.
@@ -203,7 +217,7 @@ generate() {
     wait_idle "$job" 120
     t=$(dnow)
     sql -b -Q "SET NOCOUNT ON; USE $db; EXEC sp_startpublication_snapshot @publication = N'$1';" </dev/null >&2
-    wait_until 240 "SELECT CASE WHEN EXISTS (SELECT 1 FROM $dist.dbo.MSsnapshot_history WHERE agent_id = $agent AND [time] >= '$t' AND runstatus = 2) THEN 1 ELSE 0 END" \
+    wait_until 240 "SELECT CASE WHEN EXISTS (SELECT 1 FROM $dist.dbo.MSsnapshot_history WHERE agent_id = $agent AND [time] >= CONVERT(datetime, '$t', 126) AND runstatus = 2) THEN 1 ELSE 0 END" \
         || fail "$1: the snapshot run did not end within 240 s"
     sleep 1
     wait_idle "$job" 120
@@ -246,6 +260,11 @@ EXEC sp_addpublication @publication = N'm_dl_pn', @status = N'active', @allow_pu
 EXEC sp_addpublication_snapshot @publication = N'm_dl_pn', @frequency_type = 1, @active_start_date = 99991231,
      @job_login = NULL, @job_password = NULL, @publisher_security_mode = 1;
 EXEC sp_addarticle @publication = N'm_dl_pn', @article = N'm_t3', @source_owner = N'dbo', @source_object = N'm_t3';
+EXEC sp_addpublication @publication = N'm_dl_pk', @status = N'active', @allow_push = N'true',
+     @independent_agent = N'false', @immediate_sync = N'false', @repl_freq = N'continuous', @sync_method = N'native';
+EXEC sp_addpublication_snapshot @publication = N'm_dl_pk', @frequency_type = 1, @active_start_date = 99991231,
+     @job_login = NULL, @job_password = NULL, @publisher_security_mode = 1;
+EXEC sp_addarticle @publication = N'm_dl_pk', @article = N'm_t1', @source_owner = N'dbo', @source_object = N'm_t1';
 SQL
 
 # ---- DL.pull.delivered_line and DL.listing ---------------------------------------------
@@ -287,12 +306,12 @@ SELECT CONCAT(N'level1_parent_in_name=', CASE WHEN EXISTS (SELECT 1 FROM fs WHER
   N' level1_rows=', (SELECT COUNT(*) FROM fs WHERE level = 1))")
 folder_cols=$(sql_value "WITH fs AS ($fsq)
 SELECT CONVERT(nvarchar(4000), CONCAT(N'folder=[level=', level, N' full=', full_filesystem_path, N' parent=', parent_directory, N' name=', file_or_directory_name, N']'))
-FROM fs WHERE level = 0 AND file_or_directory_name = N'$pp_folders'")
+FROM fs WHERE parent_directory = N'$unc/' AND file_or_directory_name = N'$pp_folders'")
 run_cols=$(sql_value "WITH fs AS ($fsq)
 SELECT CONVERT(nvarchar(4000), CONCAT(N'run=[level=', r.level, N' full=', r.full_filesystem_path, N' parent=', r.parent_directory, N' name=', r.file_or_directory_name,
   N'] run_parent_is_folder_full_plus_slash=', CASE WHEN r.parent_directory = p.full_filesystem_path + N'/' THEN N'yes' ELSE N'no' END))
 FROM fs AS p JOIN fs AS r ON r.file_or_directory_name = N'$pp_runs' AND r.is_directory = 1 AND r.full_filesystem_path = p.full_filesystem_path + N'/' + r.file_or_directory_name
-WHERE p.level = 0 AND p.file_or_directory_name = N'$pp_folders'")
+WHERE p.parent_directory = N'$unc/' AND p.file_or_directory_name = N'$pp_folders'")
 slash=$(sql_value "WITH fs AS ($fsq)
 SELECT CONCAT(N'parent_ends_with_slash=', CASE WHEN NOT EXISTS (SELECT 1 FROM fs WHERE RIGHT(parent_directory, 1) <> N'/') THEN N'all' WHEN NOT EXISTS (SELECT 1 FROM fs WHERE RIGHT(parent_directory, 1) = N'/') THEN N'none' ELSE N'some' END,
   N' arg_trailing_slash_same_rows=', CASE WHEN (SELECT COUNT(*) FROM (SELECT full_filesystem_path FROM fs EXCEPT SELECT full_filesystem_path FROM sys.dm_os_enumerate_filesystem(N'$unc/', N'*')) a) = 0
@@ -301,9 +320,16 @@ missing=$(sql_value "DECLARE @r nvarchar(4000);
 BEGIN TRY SELECT @r = CONCAT(N'missing_rows=', COUNT(*), N' missing_error=none') FROM sys.dm_os_enumerate_filesystem(N'$unc/m_dl_absent', N'*'); END TRY
 BEGIN CATCH SET @r = CONCAT(N'missing_rows=error missing_error=', ERROR_NUMBER(), N' ', LEFT(ERROR_MESSAGE(), 120)); END CATCH;
 SELECT REPLACE(@r, N'|', N'/')")
-need cols levels pinname folder_cols run_cols slash missing
+rootq="SELECT * FROM sys.dm_os_enumerate_filesystem(N'${unc%/unc}', N'*')"
+root_levels=$(sql_value "WITH fs AS ($rootq)
+SELECT CONVERT(nvarchar(4000), CONCAT(N'root_listing=[root=${unc%/unc}',
+  N' unc_level=', ISNULL(CONVERT(varchar(5), (SELECT level FROM fs WHERE full_filesystem_path = N'$unc')), 'none'),
+  N' folder_level=', ISNULL(CONVERT(varchar(5), (SELECT level FROM fs WHERE full_filesystem_path = N'$unc/$pp_folders')), 'none'),
+  N' run_level=', ISNULL(CONVERT(varchar(5), (SELECT level FROM fs WHERE full_filesystem_path = N'$unc/$pp_folders/$pp_runs')), 'none'),
+  N' folder_parent=', ISNULL((SELECT parent_directory FROM fs WHERE full_filesystem_path = N'$unc/$pp_folders'), N'none'), N']'))")
+need cols levels pinname folder_cols run_cols slash missing root_levels
 pin=no; [[ $pinname == level1_parent_in_name=yes* ]] && pin=yes
-r DL.listing "parent_in_name=$pin" "columns=[$cols] levels=[$levels] $pinname $slash $folder_cols $run_cols $missing"
+r DL.listing "parent_in_name=$pin" "columns=[$cols] levels=[$levels] $pinname $slash $folder_cols $run_cols $root_levels $missing"
 
 # DL.pull.delivered_line: the pull agent's job started at the subscriber after the run ended.
 pp_t=$(dnow); pp_mark=$(hmark); need pp_t pp_mark
@@ -421,16 +447,71 @@ else
     r DL.shared_readd no "$agents T=$pn_t within=180s folder=$pn_folders listed_at_T=[$pn_list] subscriber_rows=$pn_rows"
 fi
 
+# ---- DL.shared_readd_kept -------------------------------------------------------------
+add_pk() {
+    sql -b -Q "SET NOCOUNT ON; USE $db;
+DECLARE @srv sysname = @@SERVERNAME;
+EXEC sp_addsubscription @publication = N'm_dl_pk', @subscriber = @srv, @destination_db = N'$sub2',
+     @subscription_type = N'Push', @sync_type = N'automatic', @article = N'all';" </dev/null >&2
+}
+# wait_named SECONDS AGENT MARK T FOLDER: the first line after MARK and T naming FOLDER.
+wait_named() {
+    local start=$SECONDS l
+    while :; do
+        l=$(delivered "$2" "$3" "$4" | grep -F "'unc\\$5\\" | head -n 1 || true)
+        [ -n "$l" ] && { printf '%s\n' "$l"; return 0; }
+        (( SECONDS - start >= $1 )) && return 0
+        sleep 2
+    done
+}
+pk_agent1=$(agent_id ALL "$sub2"); need pk_agent1
+[ "$pk_agent1" != none ] || fail "m_dl_pk: no shared agent before the add (m_dl_pn's should exist)"
+pk_t0=$(dnow); pk_mark0=$(hmark)
+add_pk
+pk_agent_add=$(agent_id ALL "$sub2")
+pk_job1=$(agent_job "$pk_agent_add")
+generate m_dl_pk >/dev/null
+pk_folders=$(pubfolders m_dl_pk)
+[[ -n $pk_folders && $pk_folders != *,* ]] || fail "m_dl_pk: folder not identified: [$pk_folders]"
+pk_started1=$(start_if_idle "$pk_job1")
+pk_line1=$(wait_named 180 "$pk_agent_add" "$pk_mark0" "$pk_t0" "$pk_folders")
+[ -n "$pk_line1" ] || fail "m_dl_pk: the first delivery by the shared agent did not happen within 180 s"
+
+sql -b -Q "SET NOCOUNT ON; USE $db; EXEC sp_dropsubscription @publication = N'm_dl_pk', @article = N'all', @subscriber = @@SERVERNAME, @destination_db = N'$sub2';" </dev/null >&2
+pk_agent_drop=$(agent_id ALL "$sub2")
+pk_job_drop=none; [ "$pk_agent_drop" != none ] && pk_job_drop=$(agent_job "$pk_agent_drop")
+pk_t=$(dnow); pk_mark=$(hmark); pk_list=$(runs "$pk_folders"); need pk_t pk_mark pk_list
+add_pk
+pk_agent2=$(agent_id ALL "$sub2"); need pk_agent2
+[ "$pk_agent2" != none ] || fail "m_dl_pk: no shared agent row after the re-add"
+pk_job2=$(agent_job "$pk_agent2")
+pk_status=$(sql_value "SELECT CONVERT(nvarchar(100), ISNULL(STRING_AGG(CONVERT(nvarchar(10), s.status), N','), N'none')) FROM $db.dbo.syssubscriptions AS s JOIN $db.dbo.sysarticles AS a ON a.artid = s.artid JOIN $db.dbo.syspublications AS p ON p.pubid = a.pubid WHERE p.name = N'm_dl_pk' AND s.srvid >= 0")
+generate m_dl_pk >/dev/null
+pk_started2=$(start_if_idle "$pk_job2")
+pk_line=$(wait_named 180 "$pk_agent2" "$pk_mark" "$pk_t" "$pk_folders")
+pk_rows=$(subrows "$sub2" m_t1)
+k_same_agent=no; [ "$pk_agent2" = "$pk_agent1" ] && [ "$pk_agent_drop" = "$pk_agent1" ] && k_same_agent=yes
+k_same_job=no; [ "$pk_job2" = "$pk_job1" ] && [ "$pk_job_drop" = "$pk_job1" ] && k_same_job=yes
+kagents="agent_before_add=$pk_agent1 agent_before_drop=$pk_agent_add agent_after_drop=$pk_agent_drop agent_after_readd=$pk_agent2 same_agent=$k_same_agent same_job=$k_same_job status_after_readd=$pk_status first_line_at=${pk_line1%%~*} started=$pk_started1/$pk_started2"
+if [ -n "$pk_line" ]; then
+    read -r kf krun <<<"$(parse_line "$pk_line")" || true
+    absent=yes; inlist "$krun" "$pk_list" && absent=no
+    r DL.shared_readd_kept yes "$kagents T=$pk_t line=[${pk_line#*~}] at=${pk_line%%~*} folder=$pk_folders run_absent_at_T=$absent listed_at_T=[$pk_list] subscriber_rows=$pk_rows"
+else
+    other=$(delivered "$pk_agent2" "$pk_mark" "$pk_t" | sed 's/^[^~]*~//' | tr '|' '/' | paste -sd '~' - || true)
+    r DL.shared_readd_kept no "$kagents T=$pk_t within=180s folder=$pk_folders listed_at_T=[$pk_list] lines_above_mark=[$other] subscriber_rows=$pk_rows"
+fi
+
 # ---- controls --------------------------------------------------------------------------
 cleanup
 bad=0
 control() { echo "21-deliveries: control failed: $*" >&2; bad=1; }
-[ "${#rows[@]}" = 4 ] || control "${#rows[@]} rows, expected 4"
+[ "${#rows[@]}" = 5 ] || control "${#rows[@]} rows, expected 5"
 after=$(replservers)
 [ "$after" = "$replservers_before" ] || control "MSreplservers changed: before [$replservers_before] after [$after]"
 leftover=$(sql_value "SELECT (SELECT COUNT(*) FROM $dist.dbo.MSdistribution_agents WHERE publisher_db = N'$db' OR subscriber_db IN (N'$sub1', N'$sub2'))
  + (SELECT COUNT(*) FROM msdb.dbo.sysjobs WHERE name LIKE N'%-m\_dl\_%' ESCAPE N'\')
- + (SELECT COUNT(*) FROM msdb.dbo.sysjobs WHERE CONVERT(varchar(36), job_id) IN ('$pn_job1', '$pn_job2', '$pull_job'))")
+ + (SELECT COUNT(*) FROM msdb.dbo.sysjobs WHERE CONVERT(varchar(36), job_id) IN ('$pn_job1', '$pn_job2', '$pk_job2', '$pull_job'))")
 [ "$leftover" = 0 ] || control "$leftover m_dl agent rows or jobs left after the cleanup"
 lf=$(podman exec repllab find "$unc" -mindepth 1 -maxdepth 1 -iname '*_m_dl_*')
 [ -z "$lf" ] || control "folders left: $lf"
