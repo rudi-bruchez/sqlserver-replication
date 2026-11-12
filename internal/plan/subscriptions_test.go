@@ -698,3 +698,30 @@ func TestDiffPullEmptySchedules(t *testing.T) {
 		t.Errorf("refusals %v, want the snapshot agent's [] alone", rs)
 	}
 }
+
+func TestSharedPushAgentAfterLastDrop(t *testing.T) {
+	// SalesRef's subscription to SalesSub is the only one its shared agent
+	// serves: dropping it drops the agent (measured by the Task 12 review),
+	// so a new subscription of m_p2 to SalesSub in the same plan creates it
+	// again.
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		pubOf(t, des, "SalesRef").Subscriptions = nil
+		des.Publications = append(des.Publications, model.Publication{Name: "m_p2", Type: str("transactional"), Status: str("active"),
+			SyncMethod: str("native"), IndependentAgent: model.Ptr(false), Articles: []model.Article{newTable("m_t9")},
+			Subscriptions: []model.Subscription{newSub("SalesSub", "push", "snapshot")}})
+	}))
+	drop := one(t, ops, "sp_dropsubscription")
+	agent := one(t, ops, "sp_addpushsubscription_agent")
+	if first(agent.Affects.Publications) != "m_p2" || agent.Seq <= drop.Seq {
+		t.Errorf("agent of %s at seq %d, drop at seq %d", first(agent.Affects.Publications), agent.Seq, drop.Seq)
+	}
+	// Kept: SalesRef keeps its subscription, the agent is not re-created.
+	ops = plannedAlone(t, buildLab(t, nil, func(des, _ *model.Config) {
+		des.Publications = append(des.Publications, model.Publication{Name: "m_p2", Type: str("transactional"), Status: str("active"),
+			SyncMethod: str("native"), IndependentAgent: model.Ptr(false), Articles: []model.Article{newTable("m_t9")},
+			Subscriptions: []model.Subscription{newSub("SalesSub", "push", "snapshot")}})
+	}))
+	if n := len(opsCalling(ops, "sp_addpushsubscription_agent")); n != 0 {
+		t.Errorf("%d agent calls while SalesRef keeps the shared agent:\n%s", n, opsString(ops))
+	}
+}

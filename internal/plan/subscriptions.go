@@ -228,13 +228,8 @@ func (b *builder) pushAgent(pd *model.Publication, s *model.Subscription, path, 
 		// agent exists or this plan creates it earlier; its property changes
 		// are the agents strategy's (Task 14).
 		k := subKey(s.Key())
-		if b.sharedPush[k] {
+		if b.sharedPushExists(s) {
 			return true
-		}
-		for _, a := range b.cur.Publisher.SharedDistributionAgents {
-			if strings.EqualFold(a.Subscriber, s.Subscriber) && strings.EqualFold(a.Database, s.Database) {
-				return true
-			}
 		}
 		if b.sharedPush == nil {
 			b.sharedPush = map[string]bool{}
@@ -265,6 +260,45 @@ func (b *builder) pushAgent(pd *model.Publication, s *model.Subscription, path, 
 	op.Sources = append(op.Sources, "spec Strategies (Subscriptions)", "note O13")
 	b.add(op)
 	return true
+}
+
+// sharedPushExists tells whether the shared distribution agent of s's
+// subscriber database exists at this point of the plan: created by an
+// earlier addition of the plan, or current and still serving a current
+// subscription the plan does not drop. Measured by the Task 12 review:
+// dropping the last push subscription of a shared distribution agent drops
+// the agent's row and its job (a shared pull agent stays). Every whole drop
+// goes through dropSubscription, which records it, so a strategy that drops
+// and re-adds (Task 13) must drop before it adds.
+func (b *builder) sharedPushExists(s *model.Subscription) bool {
+	if b.sharedPush[subKey(s.Key())] {
+		return true
+	}
+	exists := false
+	for _, a := range b.cur.Publisher.SharedDistributionAgents {
+		exists = exists || strings.EqualFold(a.Subscriber, s.Subscriber) && strings.EqualFold(a.Database, s.Database)
+	}
+	if !exists {
+		return false
+	}
+	served := false
+	for _, p := range b.cur.Publications {
+		if boolOf(p.IndependentAgent) {
+			continue
+		}
+		for _, o := range p.Subscriptions {
+			if stringOr(o.Type, "push") != "push" || !strings.EqualFold(o.Subscriber, s.Subscriber) || !strings.EqualFold(o.Database, s.Database) {
+				continue
+			}
+			served = true
+			if !b.dropped[p.Name+sep+subKey(o.Key())] {
+				return true // a subscription keeps the agent
+			}
+		}
+	}
+	// A current shared agent that serves no current subscription (an
+	// orphan the export shows) is taken as existing: no row measured it.
+	return !served
 }
 
 // pubIdentity names the publication in the procedures that run at the
@@ -356,6 +390,10 @@ func (b *builder) dropSubscription(pc *model.Publication, s *model.Subscription,
 	op.Affects = affects
 	op.Costs = []Cost{CostSubscriberObjectLeft}
 	op.Reason = reason
+	if b.dropped == nil {
+		b.dropped = map[string]bool{}
+	}
+	b.dropped[pc.Name+sep+subKey(s.Key())] = true
 	op.Sources = append(op.Sources, "spec Strategies (Subscriptions: @article = N'all')")
 	b.add(op)
 	return true

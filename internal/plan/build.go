@@ -38,6 +38,10 @@ type builder struct {
 	// creates (subscriptions.go): a later subscription to the same subscriber
 	// database emits none.
 	sharedPush map[string]bool
+	// dropped is the current subscriptions this plan drops whole, by
+	// "<pub>\x00<lower-cased key>" (dropSubscription): sharedPushExists
+	// reads it.
+	dropped map[string]bool
 }
 
 func (b *builder) refuse(path, format string, args ...any) {
