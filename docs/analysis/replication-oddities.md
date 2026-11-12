@@ -14,6 +14,7 @@ Each entry gives what one would expect, what the server does, and where it was s
 - `<file>:<line>`: a comment in the code that records a trap, usually in `internal/reader/`.
 - The ledgers and reports of the plan executions, git-ignored session state under `.superpowers/sdd/`: `ledger 1`, `ledger 2`, `ledger 3` are the `progress.md` of plans 1, 2 and 3; `p1 task-N-report`, `p2 task-N-report`, `p2 final-fix-report` are the reports beside them; `p2 triage` and `p3 triage` the `panel-triage.md` files.
 - The review panels on plans 2 and 3, whose seats ran scenarios on the lab: `panel 2 <seat>` is `docs/analysis/panel-reports/plan2/review-<seat>-b56f9b8e62c4.md`, `panel 3 <seat>` is `docs/analysis/panel-reports/plan3/review-<seat>-b32d486df297.md`, copied into the repository from the session where they were written. Seats: Claude (Opus or Fable), codex directive, codex neutral, GLM, Mistral.
+- `plan3-fold-review mN`: the scripts `m1.sql` to `m5.sql` and the outputs `m3.out` to `m5.out` in `docs/analysis/panel-reports/plan3-fold-review/`, run on the lab (2022 CU27) while plan 3 was folded after its panel. `m1` and `m2` have no output file in the folder.
 - `[R]`: the 2019 sources of the system procedures in `stored-procedures/`.
 
 Every entry says how it is known. "Measured" means somebody ran it and read the result. "By reading" means it was concluded from a procedure definition, the 2019 sources, or field experience, and was not run; those entries are marked as such. One entry (the error stack of `MSrepl_errors`) was read on the lab, read-only, while this document was written.
@@ -73,8 +74,8 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 ### The log reader of a database dropped with its last publication
 
 - Expected: the log reader agent belongs to the database and stays until the database is unpublished.
-- Observed: dropping the last publication of a database also drops its log reader agent, its job and its `MSpublisher_databases` row. Whether a later `sp_addpublication` recreates a log reader implicitly is not measured.
-- Source: measured, `13-transient T02`, `T04`, `T06`, `T08`, `T10` (`logreader_after_drop=dropped`).
+- Observed: dropping the last publication of a database also drops its log reader agent, its job and its `MSpublisher_databases` row. Whether a later `sp_addpublication` recreates a log reader implicitly is not measured after such a drop. On a database published for the first time, `sp_addpublication` creates and starts one by itself: it prints "Job 'REPLLAB-rv_fxk3q1_p-14' started successfully" and "The logreader agent job has been implicitly created and will run under the SQL Server Agent Service Account", and `MSlogreader_agents` then has one row for the database. As with the distribution agent job, it runs under the Agent service account until changed.
+- Source: measured, `13-transient T02`, `T04`, `T06`, `T08`, `T10` (`logreader_after_drop=dropped`); `plan3-fold-review m3` (the warning and `logreader|1`), `m5` (the same warning).
 
 ### A database published for merge only
 
@@ -228,8 +229,20 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 ### A replication support only subscription
 
 - Expected: status 1 until its agent runs.
-- Observed: every row is at status 2, `sync_type` 2, at once, on a publication without `immediate_sync`.
-- Source: measured, panel 3 Fable, verified item 4.
+- Observed: every row is at status 2, `sync_type` 2, at once, on a publication without `immediate_sync`. On an `immediate_sync` publication whose snapshot has not run, the rows are the same (status 2, `sync_type` 2) beside a push subscription at status 1.
+- Source: measured, panel 3 Fable, verified item 4; `plan3-fold-review m3` (`rows_initial`).
+
+### sp_addarticle with a replication support only subscription
+
+- Expected: `sp_addarticle` on an `immediate_sync` publication subscribes the new article for every subscription, and the next snapshot delivers it.
+- Observed: the new article gets a row for the replication support only subscription at status 2, `sync_type` 2, like the others, and for the push subscription a row at status 1, `sync_type` 1. A replication support only subscriber receives no snapshot, so the new article is never sent to it and its table must already exist there. The output shows only the `syssubscriptions` rows; it does not show a subscriber table, so "never sent" follows from the `sync_type` and from what the entry on that subscription type measured, not from a delivery test.
+- Source: measured, `plan3-fold-review m3` (`rows_after_add_t3`).
+
+### sp_reinitsubscription after an article was dropped from a subscription
+
+- Expected: `sp_reinitsubscription @article = N'all'` re-marks every article of the publication and so brings back an article dropped from the subscription.
+- Observed: with a subscription to `t1` and `t2` (push, `@article = N'all'`), `sp_dropsubscription @article = N't2'` left the rows of `t1` only, and `sp_reinitsubscription @article = N'all'` raised no error and left the rows unchanged: `t1` alone, still at status 1. `t2` came back only later, with the next `sp_addarticle` (`t3`) on that `immediate_sync` publication, which re-subscribed the missing `t2` together with the new `t3`: the subscription then had `t1`, `t2` and `t3`, all at status 1, `sync_type` 1 (no snapshot had run on that publication). To complete a subscription by hand, `sp_addsubscription @article = N'all'` is the measured way (entry above).
+- Source: measured, `plan3-fold-review m3` (`rows_after_drop_t2`, `rows_after_reinit`, `rows_after_add_t3`).
 
 ### Operations that drop a ready snapshot without asking a flag
 
@@ -272,6 +285,8 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected: `sp_addsubscription @article` on an existing subscription extends that subscription as it is.
 - Observed: without `@subscription_type` and `@sync_type`, extending a pull subscription creates a push row (`subscription_type` 0) and a second distribution agent with a running push job beside the pull one, and extending a replication support only subscription adds a `sync_type` 1 row at status 1 beside the `sync_type` 2 rows. With both parameters passed, the extension is a pull row at status 1 with no second agent, or a `sync_type` 2 row at status 2.
 - Source: measured, panel 3 Fable, verified item 1; measured again with both parameters during the fold of plan 3 (rule R36).
+- Observed again, with the output kept: a pull subscription to `t1` added with `@subscription_type = N'pull'`, then `sp_addsubscription @article = N't2'` with `@subscription_type = N'pull'` and `@sync_type = N'automatic'`. `MSdistribution_agents` had one row for the database pair before and after, and `syssubscriptions` had `t1` and `t2` both at status 1, `subscription_type` 1, `sync_type` 1. The call works only when it passes the subscription's own two parameters; without them (above) it creates a push row and a second agent. `m5` measured the passing case only; the case without the parameters is the earlier measurement.
+- Source of this paragraph: measured, `plan3-fold-review m5` (`agents_after_pull_add`, `agents_after_extend`, `rows`).
 
 ## Snapshot runs and their history
 
@@ -612,8 +627,8 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 ### A snapshot agent never added
 
 - Expected: no `MSsnapshot_agents` row until `sp_addpublication_snapshot`.
-- Observed: `sp_addpublication` alone registers a row with `local_job = 0` and the `job_id` of a job that does not exist.
-- Source: measured, `01-articles A1`; `internal/reader/queries.go:226-228`.
+- Observed: `sp_addpublication` alone registers a row with `local_job = 0` and the `job_id` of a job that does not exist (`msdb.dbo.sysjobs` has no such row). `sp_update_job` on that id fails with 14262 ("The specified @job_id ... does not exist"); the measured call used a random `binary(16)` that names no job, which is the same case as the stored id, not the stored id itself. After `sp_addpublication_snapshot` the same row (still one row for the database) has `local_job = 1` and a new `job_id` that names an existing job, and `sp_update_job @enabled = 0` then `1` on that `binary(16)` value passes (return code 0, `enabled` 0 then 1).
+- Source: measured, `01-articles A1`; `internal/reader/queries.go:226-228`; `plan3-fold-review m3` (`snapagent_before`), `m4` (`snapagent_after`, `update_job_binary`, `update_job_restore`, `update_dead_err`).
 
 ### job_id of a deleted job
 
@@ -677,7 +692,19 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: `sp_add_agent_profile` creates an empty profile, filled with `sp_add_agent_parameter`.
 - Observed: it copies the 12 parameters of the default profile of its type (`-CommitBatchSize` 100, `-QueryTimeout` 1800...), so `sp_add_agent_parameter` on any of them is refused with 20067 ("already exists for the specified profile"); `sp_change_agent_parameter` is the call.
-- Source: measured by all six seats, panel 3 Opus, Fable, codex directive (verified item 2 each); `lab/setup.sql:96`.
+- Source: measured by all six seats, panel 3 Opus, Fable, codex directive (verified item 2 each); `lab/setup.sql:96`. See the next entry for which profile it copies.
+
+### The profile a new profile copies
+
+- Expected: the parameters come from the current default profile of the type.
+- Observed: `sp_add_agent_profile` copies from the first system profile of the type (`MIN(profile_id) WHERE agent_type = @t AND type = 0`, `stored-procedures/sp_add_agent_profile.sql`), not from the current default. In the test a user profile of the Distribution Agent type (`agent_type` 3) with `-CommitBatchSize` changed to 500 and `-PacketSize` 8192 added was made the default (`@default = 1`); a profile created next got the 12 system parameters with the system values, so neither the 500 nor the `-PacketSize` appeared. This rests on the procedure source and on the result as recorded when the test was run: `m1.sql` has no output file in the folder, so the values cannot be re-read from it.
+- Source: by reading `stored-procedures/sp_add_agent_profile.sql`; measured, `plan3-fold-review m1` (script only, no output file).
+
+### sp_change_agent_parameter on a missing parameter
+
+- Expected: an error, as `sp_add_agent_parameter` raises 20067 for a parameter that exists.
+- Observed: `sp_change_agent_parameter` on a parameter name the profile does not have returns 0 and changes nothing, with no error, so a typo in a parameter name is silent. The test changed `-OledbStreamThreshold` (and, in `m2`, `-PacketSize`) on a fresh profile, then counted the rows of that name: none were added. The output files are not in the folder (`m1.sql` and `m2.sql` only), so the return code and the count are as recorded when the test was run.
+- Source: measured, `plan3-fold-review m1`, `m2` (scripts only, no output file).
 
 ### The default profile of a type
 
@@ -704,6 +731,12 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected: the values passed.
 - Observed: `sp_addpublication_snapshot` and `sp_changepublication_snapshot` store `active_end_date` 99991231, `active_end_time` 235959 and `enabled` 1 whatever is passed, zeros included; no replication procedure stores `enabled = 0`. `active_start_date` defaults to the day of the call, so an exported schedule changes at every rebuild of the lab.
 - Source: measured, panel 3 Opus, verified item 3 (table of three calls); `11-defaults D.sp_addpublication_snapshot.transactional.@active_*`; panel 3 Fable item 3.
+
+### The start date of sp_changepublication_snapshot
+
+- Expected: a call that omits `@active_start_date` resets the start date to the day of the call, as the creation does.
+- Observed: the start date is kept. A schedule created by `sp_addpublication_snapshot @frequency_type = 1, @active_start_date = 99991231` stored start date 99991231, start time 0, end date 99991231, end time 235959 (the end values were not passed). A later `sp_changepublication_snapshot` with a daily type, interval 1, `@frequency_subday = 4`, `@frequency_subday_interval = 10` and the end date and time passed explicitly, but no start date, left the start date at 99991231. The test used a far-future start date, so it shows that the stored value is kept, not what the default would have been on a schedule created with today's date.
+- Source: measured, `plan3-fold-review m4` (`sched_created`, `sched_changed_nostart`).
 
 ### Changing a schedule's type
 
@@ -1035,6 +1068,7 @@ The numbers met, with their meaning in this context. The agent messages met in t
 | 14122 | `sp_addsubscription` | a named article on an `immediate_sync` publication under `native` or `character` |
 | 14124 | `sp_addsubscription` | refused (no article); leaves the subscriber registered |
 | 14151 | distribution agent | "agent ... failed", the wrapper of an agent failure |
+| 14262 | `msdb.dbo.sp_update_job` | the `@job_id` names no job (a snapshot agent never added) |
 | 14278 | `sp_changepublication_snapshot` | `frequency_type` without the interval it needs |
 | 14288 | `sp_changepublication_snapshot` | end date before start date |
 | 14529 | `job_login` changes | not a valid Windows account |

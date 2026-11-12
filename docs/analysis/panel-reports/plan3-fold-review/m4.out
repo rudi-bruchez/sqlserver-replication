@@ -1,0 +1,23 @@
+Changed database context to 'rv_fxk3q1_p'.
+WARNING: The database 'distribution' does not contain database master key. Create database master key and update replication secrets in this database. For more information, see https://go.microsoft.com/fwlink/?linkid=2323726.
+k|local_job|job|job_exists|rows_for_db
+-|---------|---|----------|-----------
+snapagent_after|1|AD225845-8374-4129-93CB-AF242EF914F9|1|1
+k|enabled|freq_type|freq_interval|active_start_date|active_start_time|active_end_date|active_end_time
+-|-------|---------|-------------|-----------------|-----------------|---------------|---------------
+sched_created|1|1|0|99991231|0|99991231|235959
+k|enabled|freq_type|freq_interval|freq_subday_type|freq_subday_interval|active_start_date|active_start_time|active_end_date|active_end_time
+-|-------|---------|-------------|----------------|--------------------|-----------------|-----------------|---------------|---------------
+sched_changed_nostart|1|4|1|4|10|99991231|0|99991231|235959
+k|rc|enabled_now
+-|--|-----------
+update_job_binary|0|0
+k|rc|enabled_now
+-|--|-----------
+update_job_restore|0|1
+k|n|m
+-|-|-
+update_dead_err|14262|The specified @job_id ('9645D4FC-7187-419C-B588-90258C3F4670') does not exist.
+k|tc
+-|--
+trancount|0

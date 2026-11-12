@@ -1,0 +1,68 @@
+Changed database context to 'master'.
+Changed database context to 'rv_fxk3q1_p'.
+Changed database context to 'master'.
+Changed database context to 'rv_fxk3q1_p'.
+Job 'REPLLAB-rv_fxk3q1_p-14' started successfully.
+Warning: The logreader agent job has been implicitly created and will run under the SQL Server Agent Service Account.
+k|local_job|job|job_exists
+-|---------|---|----------
+snapagent_before|0|D06BA52A-8901-42DA-8E59-F56E35A28E70|0
+k|n
+-|-
+logreader|1
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+WARNING: The database 'distribution' does not contain database master key. Create database master key and update replication secrets in this database. For more information, see https://go.microsoft.com/fwlink/?linkid=2323726.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+WARNING: The database 'distribution' does not contain database master key. Create database master key and update replication secrets in this database. For more information, see https://go.microsoft.com/fwlink/?linkid=2323726.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+Job 'repllab-rv_fxk3q1_p-rv_fxk3q1_pi-repllab-2066' started successfully.
+Warning: The distribution agent job has been implicitly created and will run under the SQL Server Agent Service Account.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+Job 'repllab-rv_fxk3q1_p-rv_fxk3q1_pi-repllab-2067' started successfully.
+Warning: The distribution agent job has been implicitly created and will run under the SQL Server Agent Service Account.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+k|dest_db|name|status|sync_type
+-|-------|----|------|---------
+rows_initial|rv_fxk3q1_s|t1|1|1
+rows_initial|rv_fxk3q1_s|t2|1|1
+rows_initial|rv_fxk3q1_s2|t1|2|2
+rows_initial|rv_fxk3q1_s2|t2|2|2
+k|dest_db|name|status
+-|-------|----|------
+rows_after_drop_t2|rv_fxk3q1_s|t1|1
+k|dest_db|name|status
+-|-------|----|------
+rows_after_reinit|rv_fxk3q1_s|t1|1
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+DBCC execution completed. If DBCC printed error messages, contact your system administrator.
+k|dest_db|name|status|sync_type
+-|-------|----|------|---------
+rows_after_add_t3|rv_fxk3q1_s|t1|1|1
+rows_after_add_t3|rv_fxk3q1_s|t2|1|1
+rows_after_add_t3|rv_fxk3q1_s|t3|1|1
+rows_after_add_t3|rv_fxk3q1_s2|t1|2|2
+rows_after_add_t3|rv_fxk3q1_s2|t2|2|2
+rows_after_add_t3|rv_fxk3q1_s2|t3|2|2
+k|tc
+-|--
+trancount|0
