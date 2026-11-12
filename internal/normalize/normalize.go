@@ -34,7 +34,7 @@ func Normalize(desired, current *model.Config) (*model.Config, []Refusal) {
 func normalize(table []Default, desired, current *model.Config) (*model.Config, []Refusal) {
 	out := clone(desired)
 	out.Findings = nil
-	n := &normalizer{current: current, table: table}
+	n := &normalizer{current: current, table: table, syncDep: syncDependent(table)}
 	n.enumerations(out)
 	unread := n.refusedPublications(out)
 	n.required(out)
@@ -73,6 +73,7 @@ func normalize(table []Default, desired, current *model.Config) (*model.Config, 
 type normalizer struct {
 	current  *model.Config
 	table    []Default
+	syncDep  map[string]bool // syncDependent(table)
 	refusals []Refusal
 }
 
@@ -845,10 +846,12 @@ func (n *normalizer) fillOwn(sv reflect.Value, path string, parents []model.Step
 		}
 		p := model.Join(path, key)
 		pattern := model.Pattern(p)
-		ff := n.creationFrame(f, pattern)
-		d, ok := n.lookup(ff, pattern)
+		if n.keepArticleValue(fv, f, pattern) {
+			return
+		}
+		d, ok := n.lookup(f, pattern)
 		if !ok {
-			n.refuse(p, "%s", ff.notMeasured(pattern))
+			n.refuse(p, "%s", f.notMeasured(pattern))
 			return
 		}
 		value := d.Value
@@ -866,38 +869,117 @@ func (n *normalizer) fillOwn(sv reflect.Value, path string, parents []model.Step
 	})
 }
 
-// destinationSchema is the pattern of an article's destination schema.
-const destinationSchema = "publications[*].articles[*].destination.schema"
+// articleBase is the pattern of an article; the article defaults' paths
+// are relative to it.
+const articleBase = "publications[*].articles[*]."
 
-// creationFrame is the frame whose context gives the default of pattern.
-// An existing article's omitted destination.schema takes its creation
-// default in the current publication's context, its current sync_method
-// (controller's ruling, Task 20 fix round 1): the article was created under
-// it, and a sync_method change does not rewrite destination_owner, whose
-// default differs by method (O16: the source schema under native, NULL
-// under character and concurrent_c). Measured by the Task 20 convergence
-// test: with the desired context, native to character refused every
-// article whose destination the file omits. A new article keeps the
-// desired context.
-func (n *normalizer) creationFrame(f frame, pattern string) frame {
-	if pattern != destinationSchema || f.pub == nil || f.art == nil || n.current == nil {
-		return f
-	}
-	for i := range n.current.Publications {
-		cp := &n.current.Publications[i]
-		if cp.Name != f.pub.Name {
+// syncDependent lists the article properties whose creation default
+// depends on sync_method: those of the table whose values differ between
+// two sync methods of the same publication type and article kind
+// (destination.schema, under O16, and the commands among them).
+func syncDependent(table []Default) map[string]bool {
+	type group struct{ pubType, kind, path string }
+	values := map[group]map[string]string{} // sync method -> value
+	out := map[string]bool{}
+	for _, d := range table {
+		if d.Context.Object != "article" || d.Context.SyncMethod == "" {
 			continue
 		}
-		for j := range cp.Articles {
-			if cp.Articles[j].Name == f.art.Name {
-				pub := *f.pub
-				pub.SyncMethod = cp.SyncMethod
-				f.pub = &pub
-				return f
+		g := group{d.Context.PubType, d.Context.ArticleKind, d.Path}
+		if values[g] == nil {
+			values[g] = map[string]string{}
+		}
+		for m, v := range values[g] {
+			if m != d.Context.SyncMethod && v != d.Value {
+				out[d.Path] = true
 			}
 		}
+		values[g][d.Context.SyncMethod] = d.Value
 	}
-	return f
+	return out
+}
+
+// keepArticleValue keeps, on an article that exists and is not replaced
+// (R20), the current value of an omitted property whose creation default
+// depends on sync_method (controller's ruling, Task 20 fix round 2), and
+// tells whether it did. sp_changepublication sync_method rewrites neither
+// dest_owner, schema_option nor the commands (measured by the Task 20
+// review), so the default of either sync method would plan a change nobody
+// asked for: the desired one rewrote the commands, the current one, once
+// the change is applied, refused the next plan. A command keeps its mode
+// only, its generated procedure not compared (rule 6). A current value
+// that is nil leaves the property nil, not compared. A new or replaced
+// article takes the desired context's defaults.
+func (n *normalizer) keepArticleValue(fv reflect.Value, f frame, pattern string) bool {
+	rel, ok := strings.CutPrefix(pattern, articleBase)
+	if !ok || f.pub == nil || f.art == nil || !n.syncDep[rel] {
+		return false
+	}
+	ca := n.currentArticle(f.pub.Name, f.art.Name)
+	if ca == nil || replacedArticle(f.art, ca) {
+		return false
+	}
+	cv := reflect.ValueOf(ca).Elem()
+	for _, key := range strings.Split(rel, ".") {
+		var next reflect.Value
+		fields(cv, func(k string, v reflect.Value) {
+			if k == key {
+				next = v
+			}
+		})
+		for next.IsValid() && next.Kind() == reflect.Pointer && next.Type().Elem().Kind() == reflect.Struct && next.Type() != reflect.PointerTo(commandType) {
+			if next.IsNil() {
+				return true
+			}
+			next = next.Elem()
+		}
+		if !next.IsValid() {
+			return true
+		}
+		cv = next
+	}
+	if cv.Kind() != reflect.Pointer || cv.IsNil() {
+		return true
+	}
+	if c, ok := cv.Interface().(*model.Command); ok {
+		fv.Set(reflect.ValueOf(&model.Command{Mode: c.Mode}))
+		return true
+	}
+	nv := reflect.New(cv.Type().Elem())
+	nv.Elem().Set(cv.Elem())
+	fv.Set(nv)
+	return true
+}
+
+// replacedArticle is the planner's R20 rule (internal/plan replaced): the
+// type family or the source changes, or the type of an article that is not
+// a table.
+func replacedArticle(d, c *model.Article) bool {
+	family := func(t *string) string {
+		s := deref(t)
+		if s == "" {
+			s = "logbased"
+		}
+		switch {
+		case strings.HasPrefix(s, "logbased"):
+			return "table"
+		case strings.HasSuffix(s, "proc_exec"):
+			return "proc_exec"
+		case strings.HasSuffix(s, "_schema_only"):
+			return "schema_only"
+		}
+		return s
+	}
+	typ := func(t *string) string {
+		if deref(t) == "" {
+			return "logbased"
+		}
+		return deref(t)
+	}
+	if family(d.Type) != family(c.Type) || (family(d.Type) != "table" && typ(d.Type) != typ(c.Type)) {
+		return true
+	}
+	return !strings.EqualFold(d.Source.Schema, c.Source.Schema) || !strings.EqualFold(d.Source.Name, c.Source.Name)
 }
 
 // fillNested allocates each omitted nested object that applies and fills
