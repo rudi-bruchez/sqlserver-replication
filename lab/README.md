@@ -237,6 +237,29 @@ What surprised was the setup, not the rows: on Linux the distribution agent cann
 - `PF.copy_after_user_default`: with that user profile the default and its `-CommitBatchSize` at 300, a profile created next still copies the template (`-CommitBatchSize` 100), not the default;
 - `PF.change_default`: `sp_change_agent_profile @property = 'default'` is refused with 21183.
 
+## Convergence tests
+
+`internal/convergence` holds the lab tests of the planner (plan 3, Tasks 19 and 20): each plans a desired file of `internal/convergence/testdata/`, runs the plan's statements on the lab, waits for the deliveries it expects, checks the data at the subscriber, then plans the same file again and expects no change. They run only through `lab/gotest.sh`, with the rest of the lab tests:
+
+```
+set -a; . <harness>/.env; set +a; lab/gotest.sh '^TestLab' -timeout 60m ./internal/convergence
+```
+
+`SQLREPL_TEST_LAB` set without `SQLREPL_TEST_DSN` is a failure, not a skip. The 14 tests take about eight minutes on 2022 CU27. Run with other packages, pass `-p 1` (`lab/gotest.sh '.' -p 1 -timeout 60m ./...`): `TestLabSalesPlanEmpty` plans the whole of `Sales`, and the reader tests publish in `Sales` and drop concurrently.
+
+- `TestLabSalesPlanEmpty`: the lab fixture `internal/testdata/lab/sales.yaml` planned against the live `Sales` gives no change. It is read-only and needs the lab's first snapshot run to have ended (`SalesPub` ready).
+- `TestLabCreatePublication`, `TestLabAddArticle`, `TestLabFilterChange`, `TestLabDropArticle`: a publication created from nothing with its push subscription, then an article added, a filter changed, an article dropped.
+- `TestLabImmediateSync`, `TestLabDeferFullSnapshot`: the `immediate_sync` strategies and `-defer-full-snapshot` with its `generate_and_wait`.
+- `TestLabPullSubscription`, `TestLabPullExtension`: a pull subscription created, then extended (R36: no second agent, no push row).
+- `TestLabProfileConverges`: a profile `m_prof_profile` created, changed parameter by parameter and bound.
+- `TestLabPropertiesAndSchedule`: publication properties and the snapshot agent's schedule, then the drop of the publication (`drop-publication.yaml`).
+- `TestLabUnmeasuredRefused`: a file whose changes have no measured cost is refused, every refusal listed.
+- `TestLabSyncMethodCharacter`, `TestLabDriftCorrected`: a `sync_method` change that keeps the articles' omitted destination and commands, and an omitted property that corrects a hand change.
+
+Every test but the first works on databases of its own, never on `Sales` (R33): `setup.sql` creates the publication database `m_pdb_<test>` with the tables `dbo.m_t1` to `dbo.m_t3` (20 rows each) and the empty subscriber database `m_sdb_<test>`; the plans create everything else. The file of a test is the whole truth for its database, and the harness copies the lab's `agent_profiles` into it so that `lab-distrib` is never dropped. `teardown.sql` runs before the setup and again at the end: it drops the pull subscriptions at the subscriber first, the subscriptions, the publications, the profile `m_prof_<test>`, the publish option and the two databases. A residue check follows, by exact names (the two databases, a publication of the database at the distributor, a subscription to either, a job whose name holds either database between hyphens, the profile); a drop that meets 18752 is retried up to three times, and anything left fails the test. The tests leave nothing on the lab.
+
+The harness's `run` is a minimal executor, not `apply`: one connection per server, a `USE` of each statement's database, the secrets bound as named parameters, a rollback when a refused call leaves a transaction open. It replaces `job_start` with its own start and wait: `sp_startpublication_snapshot`, retried on 22022 while a previous run of the job is active, and for a pull agent `sp_start_job` repeated every 3 seconds until the deliveries arrive (22022 there means the job runs). It tolerates 18752 from `sp_droppublication` and from `sp_replicationdboption @value = N'false'` when `@@TRANCOUNT` is 0: the drop completes, and the plan that follows proves it.
+
 ## Observed outside the campaign
 
 Read on the lab on 2026-11-11 at 14:32 UTC, by read-only queries during the folding of the results into the design, not a campaign row. `SalesPub` (`immediate_sync`, snapshot agent every 5 minutes) had generated the folders `20261111142005`, `20261111142504` and `20261111143004` in the last 15 minutes, while its subscription, active with nothing awaited, last logged "Delivered snapshot from the 'unc\REPLLAB_SALES_SALESPUB\20261111101123\' sub-folder". On an `immediate_sync` publication, the latest generation folder and the last delivered folder therefore differ for a subscription that awaits nothing: the comparison of the two folders cannot by itself tell a pending delivery. In the same reading, the latest snapshot commands of `SalesPub`'s two articles in `distribution.dbo.MSrepl_commands` (`xact_seqno` `0x000000ED00007B580071`) were below the last `xact_seqno` of its distribution agent's history (`0x000000ED00007B70000B`): a comparison of sequence numbers gives the right answer for this delivered subscription. The task 12 review then read the same tables between two scheduled runs: new snapshot commands written at 14:45:09 stayed beyond the agent's history `xact_seqno` until its next history write, so that comparison reports a delivered subscription as awaiting while the agent has not written, and, by inference, for as long as the agent is stopped.

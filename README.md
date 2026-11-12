@@ -92,6 +92,25 @@ The plan reads the publisher (the publication database and `master`), the distri
 
 Output. The summary starts with `Plan for SERVER.DATABASE:` and either `no changes.` or the count of operations and of costly ones, then one line per operation (sequence, action, kind, path, costs) with its warnings, the totals per cost, and the sections that are not empty: the secrets the calls pass and whether each is set, the preconditions (`ok`, `failed`, `unchecked`; a subscriber database is written `SERVER/DATABASE`), the agents apply will start, the warnings and the notes. `-sql` appends the calls as T-SQL, one batch per operation, preceded by the server and the database it runs in; a secret appears as a variable with a comment that names it, never as a value. `-json` prints the plan as data: the operations with their calls, costs and affected objects, and every list of the summary.
 
+Costs. Each operation lists one or more of these costs, by name; an operation is costly when it has a cost other than `online` and `shared_object_changed`, and the summary's count of costly operations is the one `apply` will repeat in its confirmation:
+
+| Cost | Meaning |
+|---|---|
+| `online` | nothing is invalidated, reinitialized or replaced |
+| `pending_snapshot_start` | the subscriptions of the article already await a snapshot: the change waits for that snapshot to start |
+| `new_snapshot` | the snapshot agent must generate a snapshot that the subscriptions then receive (an added article, a new subscription, an extension) |
+| `full_generation_deferred` | the ready snapshot is invalidated and nothing is marked: the next run of the snapshot agent regenerates every article |
+| `ready_snapshot_dropped` | the ready snapshot is dropped (`immediate_sync` false), and a subscription added later waits for a generation of its own |
+| `reinitialization` | the named subscriptions are reinitialized |
+| `drop_and_readd` | the named subscriptions are dropped and added back |
+| `subscriber_data_replaced` | the snapshot replaces the data of a subscriber table |
+| `subscriber_object_left` | a drop leaves the table or object at the subscriber |
+| `shared_object_changed` | a distributor object that other publisher databases use changes; the operation lists those databases |
+
+The costs are taken from the measured cost table (`internal/cost`, each entry citing its rows in `lab/results/2022/`), never from the documentation. The flags follow from the predicted state: `@force_invalidate_snapshot = 1` exactly when the snapshot is predicted ready and the change touches it, `@force_reinit_subscription = 1` exactly when it needs a reinitialization and a subscription row of the operated article is at status 2.
+
+Job operations. Around the calls, the plan lists the job operations `apply` will run: `job_disable` of the snapshot agent of each publication it operates on (first), `job_restore` of the value found (last), and `job_start` of each agent it lists under "Agents apply will start". `-defer-full-snapshot` adds a `generate_and_wait` operation, a snapshot run whose deliveries `apply` waits for.
+
 Agent profiles. An omitted `agent_profiles` key means the file does not manage the profiles: the plan creates, changes and drops none. An explicit `agent_profiles: []` manages them and drops every user profile that no agent uses. An export whose distributor was read writes the key even when it holds no user profile (`agent_profiles: []`), so the exported file manages the profiles; an export that could not read the distributor leaves it out.
 
 Refusals. A plan that would act on something it cannot do safely is refused: it prints the refusals, each with the path concerned and its reason, then `Plan refused.`, and has no operation at all. The command then exits 1; it exits 0 otherwise, an empty plan included. A plan is refused, among others, when:
