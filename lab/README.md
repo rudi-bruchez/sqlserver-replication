@@ -63,6 +63,7 @@ The plan of the campaign announced a total for some scripts. Where the measured 
 | `14-filter-view` | 8 | 28 | the cases measured on an unsubscribed (`F*`), an active (`F*s`) and an undelivered (`F*u`) subscription, plus `F2b` and `F6r` |
 | `17-parameters` | 316 | 316 | the parameters counted on 2026-11-11 for the plan; the script lists them (2019 CU32: 307, 2025 CU10: 319, "Procedure parameters") |
 | `18-reverse` | 45 | 45 | the reverse direction of each property `02-matrix` and `05-snapshot-flag` measured away from its default, in three states (`I` 20, `N` 19, `P` 3, and a state row each) |
+| `19-profiles` | 11 | 11 | the profile procedures Ruling R6 of plan 3 rests on |
 
 The others match the plan: `01` 8, `02` 67, `03` 3, `04` 1, `06` 20, `13` 10, and the scripts whose plan said "the count" (`07` 75, `08` 42, `11` 1781 (554 before plan 3 Task 2 added the contexts below), `12` 70, `distributor-defaults` 39, `15` 158, `16` 27).
 
@@ -223,6 +224,18 @@ On SQL Server 2025 CU10 (17.0.5035.5) it lists 319: the 316 of 2022 and three pa
 Results. No reverse change asks for `@force_reinit_subscription`. On `I`, the properties of the snapshot's location and scripts ask for `@force_invalidate_snapshot` in this direction too (`alt_snapshot_folder`, `pre_snapshot_script`, `post_snapshot_script` set to NULL or empty, `snapshot_in_defaultfolder` true, and the article's `creation_script` NULL or empty: `f00=20607,f10=ok,f01=20607,f11=ok`); every other case, and every case on `N` and `P`, is `ok` in all four cells: `replicate_ddl` 1, `allow_pull`, `allow_initialize_from_backup`, `allow_subscription_copy`, `replicate_partition_switch` and `allow_drop` set to false, `replicate_partition_switch` false then true, `allow_partition_switch` false after `replicate_partition_switch` false, the article's `fire_triggers_on_snapshot` false and `status` `no column names` or `parameters`, and on `P` `status` active and `allow_push` true, then false again (`RV.P.allow_push_false`, the change with no push subscription).
 
 What surprised was the setup, not the rows: on Linux the distribution agent cannot apply a snapshot that has a pre- or post-snapshot script. It fails with "Failed to obtain the SQL Server utilities installation path from the registry" (it runs the scripts through the command-line utilities it looks up in the Windows registry), retries, and the snapshot is never delivered. The script therefore creates `m_rv_i` and `m_rv_n` without the two snapshot scripts and the creation script, delivers, sets the three with `@force_invalidate_snapshot = 1` (which leaves the subscriptions at status 2), and generates `m_rv_i`'s snapshot again so that it is ready. A publication with a pre- or post-snapshot script cannot initialize a subscription on a Linux distributor.
+
+## Agent profile changes
+
+`lab/campaign/19-profiles.sql` (results `19-profiles.txt`, rows `PF.<case>`) runs from `master`; each case creates the distribution profile `m_prof` (`sp_add_agent_profile @agent_type = 3, @profile_type = 1`) in its own transaction, makes its call, reads back `msdb.dbo.MSagent_profiles` and `MSagent_parameters`, and rolls back (`PF.create_default` and `PF.copy_after_user_default` share one transaction). Every result is the one Ruling R6 of plan 3 expects:
+
+- `PF.copied_parameters`: the new profile gets the 12 parameters of the template, `MIN(profile_id)` of the system distribution profiles (`Default agent profile` on the lab, which is also the default), names and values equal;
+- `PF.change_missing_parameter`: `sp_change_agent_parameter` of `-PacketSize`, which the copy lacks, returns 0 and adds no row: a misspelt name is silent;
+- `PF.change_description`, `PF.change_parameter` (`-CommitBatchSize` 200), `PF.add_parameter` (`-PacketSize` 8192, a name only `Distribution Profile for OLEDB streaming` has), `PF.drop_parameter` (`-QueryTimeout`, 11 parameters left) and `PF.drop_unused` are accepted and change exactly that row;
+- `PF.add_copied_parameter`: `sp_add_agent_parameter` of a copied name is refused with 20067;
+- `PF.create_default`: `sp_add_agent_profile @default = 1` makes the new profile the only default of the type and clears `def_profile` of the previous one;
+- `PF.copy_after_user_default`: with that user profile the default and its `-CommitBatchSize` at 300, a profile created next still copies the template (`-CommitBatchSize` 100), not the default;
+- `PF.change_default`: `sp_change_agent_profile @property = 'default'` is refused with 21183.
 
 ## Observed outside the campaign
 

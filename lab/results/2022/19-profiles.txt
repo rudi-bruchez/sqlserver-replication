@@ -1,0 +1,13 @@
+# Microsoft SQL Server 2022 (RTM-CU27-GDR) (KB5126934) - 16.0.4305.5 (X64)
+R|PF.copied_parameters|ok|m_prof n=12 type=1 def_profile=0; template Default agent profile (MIN(profile_id) agent_type 3 type 0, also the def_profile) n=12; same names=yes same values=yes; -BcpBatchSize=0 -CommitBatchSize=100 -CommitBatchThreshold=1000 -HistoryVerboseLevel=1 -KeepAliveMessageInterval=300 -LoginTimeout=15 -MaxBcpThreads=1 -MaxDeliveredTransactions=0 -PollingInterval=5 -QueryTimeout=1800 -SkipErrors= -TransactionsPerHistory=100
+R|PF.change_missing_parameter|ok|sp_change_agent_parameter -PacketSize = 8192 on m_prof: return code=0 -PacketSize rows=0 parameters=12
+R|PF.change_description|ok|sp_change_agent_profile description = m_changed on m_prof: MSagent_profiles.description=m_changed
+R|PF.change_parameter|ok|sp_change_agent_parameter -CommitBatchSize = 200 on m_prof: MSagent_parameters.value=200 parameters=12
+R|PF.add_parameter|ok|sp_add_agent_parameter -PacketSize = 8192 on m_prof: MSagent_parameters.value=8192 parameters=13; in the template: 0, in system distribution profiles: 1
+R|PF.add_copied_parameter|20067|at sp_add_agent_parameter -CommitBatchSize: The parameter name '-CommitBatchSize' already exists for the specified profile.
+R|PF.drop_parameter|ok|sp_drop_agent_parameter -QueryTimeout on m_prof: -QueryTimeout rows=0 parameters=11
+R|PF.create_default|ok|sp_add_agent_profile m_prof_def @default = 1: m_prof_def def_profile=1, Default agent profile (the default before) def_profile=0, profiles with def_profile = 1 for agent_type 3: 1, m_prof_def parameters=12
+R|PF.copy_after_user_default|ok|sp_add_agent_profile m_prof3 with m_prof_def the default (-CommitBatchSize=300): m_prof3 n=12 -CommitBatchSize=100; equal to the template=yes equal to m_prof_def=no
+R|PF.change_default|21183|at sp_change_agent_profile default: Invalid property name 'default'.
+R|PF.drop_unused|ok|sp_drop_agent_profile m_prof: MSagent_profiles rows=0 MSagent_parameters rows=0
+R|TOTAL|11
