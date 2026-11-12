@@ -494,3 +494,38 @@ func TestLabSyncMethodCharacter(t *testing.T) {
 	e.run(t, p)
 	e.converged(t, des)
 }
+
+// An omitted destination.schema corrects drift (Task 20 fix round 3, spec
+// "Omitted properties"): archive is no sync method's default for m_t2, so
+// the plan of create.yaml sets dbo back, with the reinit flag, since the
+// subscription is at status 2. The drift is written into sysarticles, as a
+// hand change that marks no subscription; the subscriber's m_t2 is emptied
+// so that the reinitialization's delivery shows.
+func TestLabDriftCorrected(t *testing.T) {
+	e := labEnv(t, "drift")
+	createAndDeliver(t, e)
+	for _, q := range []string{
+		"UPDATE {db}.dbo.sysarticles SET dest_owner = N'archive' WHERE name = N'm_t2'",
+		"DELETE {sub}.dbo.m_t2",
+	} {
+		if _, err := e.master.Exec(e.replace(q)); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+
+	des := e.desired(t, "create.yaml")
+	p := e.plan(t, des, plan.Options{})
+	refusedFatal(t, p, "create.yaml")
+	chg, err := find(p, "sp_changearticle", map[string]string{"@article": "N'm_t2'",
+		"@property": "N'destination_owner'", "@value": "N'dbo'", "@force_reinit_subscription": "1"})
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, p.Summary(), p.SQL())
+	}
+	wantCosts(t, chg, plan.CostReinitialization, plan.CostNewSnapshot, plan.CostSubscriberDataReplaced)
+	jobsAround(t, p)
+	wantAgents(t, p, e.snapshotAndPush())
+	e.run(t, p)
+	e.deliveries = []delivery{{"m_t2", 20}}
+	e.startAndWait(t, p)
+	e.converged(t, des)
+}

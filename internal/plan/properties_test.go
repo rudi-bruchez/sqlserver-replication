@@ -313,6 +313,55 @@ func TestSyncMethodKeepsArticleValues(t *testing.T) {
 	})
 }
 
+// The keep rule of TestSyncMethodKeepsArticleValues keeps only a current
+// value that is some sync method's creation default (Task 20 fix round 3):
+// any other is drift, which an omitted property corrects (spec "Omitted
+// properties"). SalesRef is native; Product's destination and commands are
+// omitted on the desired side.
+func TestOmittedArticleDrift(t *testing.T) {
+	omit := func(t *testing.T, des *model.Config) *model.Article {
+		a := &pubOf(t, des, "SalesRef").Articles[0]
+		a.Destination.Schema, a.Commands = nil, nil
+		return a
+	}
+	t.Run("destination archive", func(t *testing.T) {
+		ops := plannedAlone(t, buildLab(t, nil, func(des, cur *model.Config) {
+			omit(t, des)
+			pubOf(t, cur, "SalesRef").Articles[0].Destination.Schema = str("archive")
+		}))
+		op := oneAlone(t, ops, "sp_changearticle")
+		wantParam(t, op, "@property", "N'destination_owner'")
+		wantParam(t, op, "@value", "N'dbo'")
+		wantParam(t, op, "@force_reinit_subscription", "1")
+		wantOpCosts(t, op, CostReinitialization, CostNewSnapshot, CostSubscriberDataReplaced)
+	})
+	t.Run("ins_cmd SQL kept", func(t *testing.T) {
+		// SQL is character's default: kept, the accepted ambiguity.
+		ops := plannedAlone(t, buildLab(t, nil, func(des, cur *model.Config) {
+			omit(t, des)
+			pubOf(t, cur, "SalesRef").Articles[0].Commands.Insert = &model.Command{Mode: "SQL"}
+		}))
+		if len(ops) != 0 {
+			t.Fatalf("%d operations, want none:\n%s", len(ops), opsString(ops))
+		}
+	})
+	t.Run("XCALL refused", func(t *testing.T) {
+		p := buildLab(t, nil, func(des, cur *model.Config) {
+			omit(t, des)
+			pubOf(t, cur, "SalesRef").Articles[0].Commands.Update = &model.Command{Mode: "XCALL",
+				Procedure: &model.ObjectName{Schema: "dbo", Name: "m_upd"}}
+		})
+		path := pubPathOf("SalesRef") + ".articles[Product].commands.update"
+		found := false
+		for _, r := range p.Refusals {
+			found = found || r.Path == path
+		}
+		if !found {
+			t.Fatalf("no refusal at %s; refusals %v\n%s", path, p.Refusals, opsString(p.Operations))
+		}
+	})
+}
+
 func TestSyncMethodUnmeasuredRefused(t *testing.T) {
 	p := buildLab(t, nil, func(des, _ *model.Config) {
 		pubOf(t, des, "SalesRef").SyncMethod = str("concurrent_c")
