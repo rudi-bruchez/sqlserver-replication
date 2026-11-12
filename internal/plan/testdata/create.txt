@@ -1,0 +1,35 @@
+Plan for repllab.Sales: 17 operations, 3 costly.
+  1  disable job_disable publications[SalesRef].snapshot_agent: online
+  2  add profile agent_profiles[distribution/m_prof]: online
+  3  drop subscription publications[SalesRef].subscriptions[REPLLAB/SalesSub]: online, subscriber_object_left
+  4  drop publication publications[SalesRef]: online, subscriber_object_left
+  5  add publication publications[m_p]: online
+  6  add snapshot_agent publications[m_p].snapshot_agent: online
+  7  disable job_disable publications[m_p].snapshot_agent: online
+  8  add article publications[m_p].articles[m_t1]: online
+  9  add article_filter publications[m_p].articles[m_t1].filter: online
+  10  add article_view publications[m_p].articles[m_t1].sync_object: online
+  11  add article publications[m_p].articles[m_t2]: online
+  12  add subscription publications[m_p].subscriptions[REPLLAB/m_sdb]: new_snapshot
+  13  add push_agent publications[m_p].subscriptions[REPLLAB/m_sdb].distribution_agent: online
+  14  change agent_binding publications[m_p].subscriptions[REPLLAB/m_sdb].distribution_agent: online
+  15  restore job_restore publications[m_p].snapshot_agent: online
+  16  start job_start publications[m_p].snapshot_agent: online
+  17  start job_start publications[m_p].subscriptions[REPLLAB/m_sdb].distribution_agent: online
+Totals: online 16, new_snapshot 1, subscriber_object_left 2
+Preconditions:
+  unchecked server version repllab
+  unchecked published table dbo.Customer
+  unchecked published table dbo.Orders
+  unchecked published table dbo.m_t1
+  unchecked published table dbo.m_t2
+  unchecked subscriber database SalesSub
+  unchecked subscriber database m_sdb
+  unchecked snapshot folder /var/opt/mssql/data/ReplData
+  unchecked msdb job permission sysadmin, or SQLAgentOperatorRole owning the jobs: checked by apply
+Agents apply will start:
+  snapshot m_p: pending
+  distribution m_p REPLLAB/m_sdb: delivery
+Warnings:
+  publication SalesPub generates every article at every run of its snapshot agent (daily, every 5 minutes)
+  publication m_p uses native, which locks the published tables for most of each generation; moving to concurrent costs no flag and no reinitialization (no subscription row is delivered); concurrent and concurrent_c still lock the tables briefly near the start and the end of each run; the cost of a move to database snapshot is not measured
