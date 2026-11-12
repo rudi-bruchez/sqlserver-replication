@@ -1018,6 +1018,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected: a server name is stored as `@@SERVERNAME` gives it.
 - Observed: `syssubscriptions.srvname` is upper case (`REPLLAB`), `@@SERVERNAME` and `MSreplication_subscriptions.publisher` lower case (`repllab`), and `MSsubscriber_info.publisher` and `subscriber` differ in case from the server names.
 - Also observed: `MSsubscriber_info` stores the publisher in upper case (plan 3 task 5 review, measured).
+- Also observed: on the lab `@@SERVERNAME`, `SERVERPROPERTY('ServerName')`, `MachineName` and `HOST_NAME()` all return `repllab`, while the `datasource` of `repl_distributor` in `sys.servers` is `REPLLAB`. A tool that compares server names must ignore case. Source: Task 17 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 - Source: measured, lab README "Articles and the first measurements"; p2 task-10-report; `internal/reader/queries.go:198-199`.
 
 ### MSreplservers and sys.servers
@@ -1030,6 +1031,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: `OBJECT_ID(N'dbo.MSreplservers') IS NULL` tells a missing table.
 - Observed: `OBJECT_ID` also returns NULL for a table the login cannot see (measured with `DENY SELECT` on `MSreplservers` and `MSpub_identity_range`); a `SELECT` then gives 229 for a denied table and 208 for a missing one, which is the only reliable probe.
+- Also observed: `HAS_PERMS_BY_NAME(NULL, 'DATABASE', 'VIEW DEFINITION')` stays 1 under a `DENY VIEW DEFINITION` on the schema or on the object, so a database-level permission check does not tell a missing table from a hidden one. `SELECT TOP (0) 1 FROM` the table does: 208 if it is missing (also for a schema that does not exist), 229 if it exists but `SELECT` is denied. With `GRANT SELECT` and `DENY VIEW DEFINITION` on the object, `OBJECT_ID` is NULL and the `SELECT` succeeds. 208 is a compile error that `TRY...CATCH` does not catch in the same scope, so the probe must be a batch of its own. Source: Task 17 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 - Source: measured, p2 final-fix-report "Measurements made"; `internal/reader/queries.go:98-103`, `:188-192`.
 
 ### MSpub_identity_range
@@ -1042,6 +1044,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: `DB_ID(N'x')` is NULL only for a missing database.
 - Observed: for a login denied `VIEW ANY DATABASE`, `DB_ID`, `HAS_DBACCESS` and the `sys.databases` row are NULL or absent for an existing database too.
+- Also observed: `HAS_DBACCESS` returns NULL for a database that does not exist, 0 for a database in which the login has no user, and 0 for an OFFLINE or RESTORING database even as `sa` (`DB_ID` is not NULL). 0 therefore cannot be read as "missing". Source: Task 17 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 - Source: measured with a temporary login, p2 task-10-report item C; `internal/reader/queries.go:413-419`.
 
 ### Filter procedure and source names under db_datareader
@@ -1049,6 +1052,18 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected: `OBJECT_NAME(sysarticles.filter)` names the filter procedure for any reader of `sysarticles`.
 - Observed: under `db_datareader` it is NULL while `filter` holds the id (1893581784 for `SalesPub.Customer`). The source object of a schema-only article is hidden the same way. `VIEW DEFINITION` on the publication database is enough to see the filter procedure and the synchronization view definition.
 - Source: measured, p2 final-fix-report items 4 and 12 and the residual docs note; `internal/reader/publisher.go:233-235`.
+
+### A SELECT on a synonym or a view whose base is gone
+
+- Expected: a `SELECT` on a dangling synonym or view gives 208, like a missing table.
+- Observed: a `SELECT` on a synonym to a missing object gives 5313. On a view whose base table was dropped it gives 208 followed by 4413. go-mssqldb reports the number of the last error, 4413, so a probe that tests for 208 does not see it.
+- Source: Task 17 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
+
+### Column-level SELECT and the catalog views
+
+- Expected: a column-level `GRANT SELECT` shows only the granted columns in the catalog views.
+- Observed: `GRANT SELECT` on two columns of a table exposes all the columns of the table, and its primary key, in the catalog views.
+- Source: Task 17 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 
 ### The distribution database files
 
@@ -1066,6 +1081,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: `file_exists` 1 for an existing folder.
 - Observed: `file_exists 0, file_is_a_directory 1` for the snapshot working directory.
+- Also observed: `sys.dm_os_file_exists` needs no server permission (a login with only `CONNECT` can call it). On Linux it ignores case in the path, and a path with a trailing slash still reads as a directory. A file under a directory the `mssql` account cannot traverse reads `file_exists 0` (`/root/.bashrc`, `/root` being mode 700). Source: Task 17 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 - Source: measured, panel 3 Opus, "Not a problem".
 
 ## Permissions
@@ -1248,7 +1264,7 @@ The numbers met, with their meaning in this context. The agent messages met in t
 |---|---|---|
 | 134 | a batch of several replication calls | `DECLARE` of the same variable twice in one batch; nothing executes |
 | 201 | `sp_addpullsubscription_agent` | a required parameter (`@publisher_db`, `@publication`) not passed |
-| 208 | a `SELECT`, `sp_articlefilter` in `master` | the table does not exist (the reliable absence probe); `syspublications` not found outside a publication database |
+| 208 | a `SELECT`, `sp_articlefilter` in `master` | the table does not exist, or its schema (the reliable absence probe, a compile error to run as its own batch); `syspublications` not found outside a publication database |
 | 229 | a `SELECT` | the login is denied the table, which `OBJECT_ID` hides as NULL |
 | 245 | `sp_changepublication replicate_ddl` | `N'false'` converted to int; leaves the transaction open |
 | 300 | `sys.dm_os_waiting_tasks` | `VIEW SERVER PERFORMANCE STATE` missing |
@@ -1259,7 +1275,9 @@ The numbers met, with their meaning in this context. The agent messages met in t
 | 3217 | `sp_change_subscription_properties` | invalid property (`publisher_*`, `subscriber_*`, `dynamic_snapshot_location`, an unknown name) |
 | 3624 | `sp_changearticle filter` | engine assertion, severity 20, connection ended |
 | 4406 | `sp_articlecolumn` in `distribution` | update of the Oracle view `sysarticlecolumns` |
+| 4413 | a `SELECT` on a view | the base table was dropped; follows 208, and is the number a client library reports |
 | 5001 | `sp_adddistributor` | must run in `master` |
+| 5313 | a `SELECT` on a synonym | the object it names does not exist |
 | 8114 | `sp_addpublication @replicate_ddl = N'false'` | conversion of nvarchar to int, client-side; the parameter is int at creation |
 | 14005 | `sp_droppublication` | subscriptions remain |
 | 14013 | publication procedures | the current database is not enabled for publication |
