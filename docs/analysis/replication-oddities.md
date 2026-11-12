@@ -612,6 +612,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected: `sp_dropsubscriber` undoes the registration `sp_addsubscription` made.
 - Observed: `sp_addsubscription` to an unregistered server registers it (`MSsubscriber_info.type` 0) and adds a `sys.servers` row. `sp_dropsubscriber` ("The Subscriber was dropped.") leaves the `sys.servers` row, which only `sp_dropserver` removes. A refused `sp_addsubscription` (14124, no article) also leaves the `sys.servers` and `MSsubscriber_info` rows.
 - Also observed: `sp_addsubscription` of a pull subscription for an unknown server adds `sys.servers` and `MSreplservers` rows. `sp_dropsubscriber` only clears `is_subscriber`. The `MSreplservers` rows survive everything: no procedure deletes them, and the lab keeps `RV_T4F0D5_GHOST`, `RV_COPUSK7Q2_FRESH` and `M_FRESHSUB` as residue, harmless.
+- Also observed: `sp_addsubscription` of a pull subscription accepts a subscriber name that resolves to no host. It adds that name to `sys.servers`, `distribution.dbo.MSreplservers`, `MSsubscriber_info` and `MSsubscriber_schedule`. Removing it leaves rows behind: `sp_dropsubscriber` removes the `sys.servers`, `MSsubscriber_info` and `MSsubscriber_schedule` rows but leaves the `MSreplservers` row, and `sp_dropsubscription` of that subscriber's last subscription prints "The Subscriber was dropped." yet leaves both the `MSreplservers` row and the `sys.servers` row (`is_subscriber` 0). No procedure deletes the `MSreplservers` row. Source: Task 18 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 - Source: measured, panel 3 Opus, verified item 5; plan 3 task 4 review, measured.
 
 ### sp_addsubscription without @subscriber
@@ -656,6 +657,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: `sp_addpullsubscription` without `@subscription_type` creates a named pull subscription, the publisher already knowing it as pull.
 - Observed: on 2022 the subscriber records an anonymous subscription (type 2) while the publisher and the distributor have a named pull, and the agent fails with 21084 ("does not allow anonymous subscriptions"). The 2019 source raises 20016 instead (by reading).
+- Also observed: the type 2 row is written to `MSreplication_subscriptions`, and the same call also leaves `immediate_sync` at 1 whatever the publication says (see "independent_agent and immediate_sync at the subscriber"). Source: Task 18 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 - Source: measured, `08-pull P1.omitted`; `[R] sp_addpullsubscription.sql:151`.
 
 ### An anonymous row beside the named one
@@ -668,6 +670,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: the values `sp_addpullsubscription` stores are copies of the publication's.
 - Observed: they are parameters that default to 1. On a publication with `immediate_sync = 0`, an omitted `@immediate_sync` stores 1 at the subscriber.
+- Also observed: `sp_addpullsubscription` without `@subscription_type` stores `immediate_sync` 1 together with `subscription_type` 2, on a publication where `immediate_sync` is 0. Source: Task 18 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 - Source: measured, panel 2 Claude, codex directive, GLM, Mistral (each verified item 1); `11-defaults D.sp_addpullsubscription.pull.@immediate_sync`; `internal/reader/agents.go:756-758`.
 
 ### Required parameters of the pull procedures
@@ -1153,6 +1156,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Observed: the drop of the last publication of a database, which drops its log reader, can print Msg 18752 ("only one Log Reader Agent or log-related procedure") once or twice from `sys.sp_replcmds` while the log reader runs, and still complete: return code 0, `@@TRANCOUNT` 0, publication and log reader gone. Of eight publications of one database dropped in turn, only the last raised it. Under load it came with the log reader blocked for over 200 s. Ten idle create and drop cycles of `13-transient` saw none. It was also seen during `sp_replicationdboption @value = N'false'`. Dropping the last publication with no subscription left prints no 18752 in one attempt (`06-structural C5`). On 2019 and 2025 not measured.
 - Also observed: `sp_droppublication` of a database's last publication printed two Msg 18752 from `sys.sp_replcmds` and completed. `sp_articlefilter` with `@force_reinit_subscription = 1` printed it from `sys.sp_repldone` in two of five tries, with the log reader running, and completed (see "sp_articlefilter with a new clause"). Source: plan 3 task 9 review, measured (2026-11-12).
 - Also observed: the same `sp_droppublication` of a database's last publication while its log reader runs, already recorded as `O14`, aborts the rest of a script under `sqlcmd -b`. Source: Task 14 review of plan 3, measured on 2022 CU27 (2026-11-12).
+- Also observed: `sp_droppublication` with the log reader running printed Msg 18752 twice, and the publication and its jobs were dropped all the same. Source: Task 18 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 - Also observed: `sp_replicationdboption @optname = N'publish', @value = N'false'` right after `sp_droppublication` of the database's last publication returned 18752 (the log reader's session still connected); it succeeded on a retry a few seconds later, or dropping the database cleared it. Source: Task 16 review of plan 3, measured on 2022 CU27 (2026-11-12).
 - Source: measured, `O14` (Claude, controller, fix review), `O21`, panel 3 Opus; `13-transient T01` to `T10`; `06-structural C5.*`.
 
@@ -1173,6 +1177,13 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected: each refusal has its own error number.
 - Observed: some refusals come as error 50000 (`@job_login must be a non-null/non-empty value`), some from an inner procedure (14043 from `sp_MSrepl_addsubscriber`, 20026 from `sys.sp_MSreinit_article` after 14027), and the agents' failures as 14151, "agent ... failed", whose cause is elsewhere (see "The error of a history row").
 - Source: measured, `07-changes AGT.*.job_password`; panel 2 Claude item 7; panel 3 GLM item 1; `10-init-modes I2.backup.gap-original`.
+
+### The go-mssqldb driver
+
+- Expected: `PingContext` returns when its context ends, and a "connection timeout" key is read however it is written.
+- Observed: when the server has accepted TCP and never answers the prelogin, `PingContext` is not aborted by the end of its context; the call returns only when the peer closes. The "connection timeout" parameter does bound that wait (error "i/o timeout"). A "connection timeout" key written with spaces around it is ignored, so the wait is not bounded.
+- Also observed: the driver reports the number of the last error of a batch, so 208 followed by 4413 reads as 4413 (see "A SELECT on a synonym or a view whose base is gone").
+- Source: Task 18 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 
 ## Where Microsoft Learn disagrees with the lab
 
