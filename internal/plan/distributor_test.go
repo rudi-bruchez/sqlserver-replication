@@ -451,3 +451,33 @@ func TestProfileCreatedParametersOnline(t *testing.T) {
 		t.Errorf("%d parameter calls of the created profile and %d of the existing one, want 1 and 1:\n%s", created, existing, opsString(ops))
 	}
 }
+
+// TestProfileCreatedOnlineUnlessDefault: sp_add_agent_profile of a new
+// profile costs online, except with @default = 1, which changes the profile
+// every later agent of the type takes (Task 16 round 2).
+func TestProfileCreatedOnlineUnlessDefault(t *testing.T) {
+	for _, def := range []bool{false, true} {
+		ops := planned(t, buildLabFacts(t, func(f *state.Facts) {
+			f.PublisherDatabases = []state.PublisherDatabase{
+				{DistributionDB: "distribution", Publisher: "repllab", Database: "Sales"},
+				{DistributionDB: "distribution", Publisher: "repllab", Database: "Other"},
+			}
+		}, func(des, _ *model.Config) {
+			if def {
+				for i := range des.AgentProfiles {
+					if des.AgentProfiles[i].AgentType == "distribution" {
+						des.AgentProfiles[i].Default = model.Ptr(false)
+					}
+				}
+			}
+			des.AgentProfiles = append(des.AgentProfiles, model.AgentProfile{Name: "m_prof", AgentType: "distribution",
+				Default: model.Ptr(def), Parameters: labTemplate(t, "distribution")})
+		}))
+		add := one(t, ops, "sp_add_agent_profile")
+		if def {
+			wantOpCosts(t, add, CostOnline, CostSharedObjectChanged)
+		} else {
+			wantOpCosts(t, add, CostOnline)
+		}
+	}
+}

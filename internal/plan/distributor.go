@@ -394,7 +394,11 @@ func (b *builder) addProfile(p *model.AgentProfile) {
 	}
 	op.Reason = "the file declares a profile that does not exist; it starts with the parameters of its type's template"
 	op.Sources = append(op.Sources, "R6", "spec Order step 2")
-	b.markShared(&op)
+	if p.Default != nil && *p.Default {
+		// @default = 1 changes the profile every later agent of the type
+		// takes (Task 14); any other new profile is used by nothing yet.
+		b.markShared(&op)
+	}
 	b.add(op)
 	b.profileParameters(p, path, tpl, true)
 }
