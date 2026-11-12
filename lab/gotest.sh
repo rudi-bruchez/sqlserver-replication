@@ -18,7 +18,9 @@ export SQLREPL_ENC="$enc"
 export SQLREPL_TEST_DSN="sqlserver://sa:${enc}@127.0.0.1:11980?encrypt=disable"
 export SQLREPL_TEST_LAB=1
 rc=0
-out=$(go test -count=1 -v -run "$filter" "$@" 2>&1) || rc=$?
+# -p 1: the lab tests of several packages share the lab and Sales; run in parallel
+# packages they deadlock on each other's drops and plan each other's objects.
+out=$(go test -count=1 -p 1 -v -run "$filter" "$@" 2>&1) || rc=$?
 # Redact the DSN, the encoded password and the password, reading them from the
 # environment: the output is shown in full otherwise.
 printf '%s\n' "$out" | python3 -I -c '

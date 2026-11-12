@@ -31,7 +31,7 @@ SQLREPL_TEST_DSN='sqlserver://sa:<url-encoded password>@127.0.0.1:11980?encrypt=
 
 The lab tests (`TestReadLab*`) need the lab replication and run through `lab/gotest.sh FILTER PACKAGE...`, which builds the DSN from `MSSQL_SA_PASSWORD`, sets `SQLREPL_TEST_LAB=1` and redacts the password from the output. Load the password in the same shell command: `set -a; . <harness>/.env; set +a; lab/gotest.sh '^TestReadLabSales$' ./internal/reader`. It exits 3 when the filter matches no test.
 
-The whole suite, lab tests included (about nine minutes): `lab/gotest.sh '.' -p 1 -timeout 60m ./...`, in the same shell as the password load. `-p 1` is required: the lab tests of `cmd/sqlrepl`, `internal/reader` and `internal/convergence` share the lab, and run in parallel packages they deadlock on each other's drops and plan each other's objects in `Sales`; a failed reader test leaves its publication in `Sales` until its next run.
+The whole suite, lab tests included (about nine minutes): `lab/gotest.sh '.' -timeout 60m ./...`, in the same shell as the password load. The script passes `-p 1`, which is required: the lab tests of `cmd/sqlrepl`, `internal/reader` and `internal/convergence` share the lab, and run in parallel packages they deadlock on each other's drops and plan each other's objects in `Sales`; a failed reader test leaves its publication in `Sales` until its next run.
 
 Running the export and the plan:
 

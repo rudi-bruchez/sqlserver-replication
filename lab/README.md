@@ -245,7 +245,7 @@ What surprised was the setup, not the rows: on Linux the distribution agent cann
 set -a; . <harness>/.env; set +a; lab/gotest.sh '^TestLab' -timeout 60m ./internal/convergence
 ```
 
-`SQLREPL_TEST_LAB` set without `SQLREPL_TEST_DSN` is a failure, not a skip. The 14 tests take about eight minutes on 2022 CU27. Run with other packages, pass `-p 1` (`lab/gotest.sh '.' -p 1 -timeout 60m ./...`): `TestLabSalesPlanEmpty` plans the whole of `Sales`, and the reader tests publish in `Sales` and drop concurrently.
+`SQLREPL_TEST_LAB` set without `SQLREPL_TEST_DSN` is a failure, not a skip. The 14 tests take about eight minutes on 2022 CU27. Run with other packages, they need `-p 1`, which `lab/gotest.sh` passes (`lab/gotest.sh '.' -timeout 60m ./...`): `TestLabSalesPlanEmpty` plans the whole of `Sales`, and the reader tests publish in `Sales` and drop concurrently.
 
 - `TestLabSalesPlanEmpty`: the lab fixture `internal/testdata/lab/sales.yaml` planned against the live `Sales` gives no change. It is read-only and needs the lab's first snapshot run to have ended (`SalesPub` ready).
 - `TestLabCreatePublication`, `TestLabAddArticle`, `TestLabFilterChange`, `TestLabDropArticle`: a publication created from nothing with its push subscription, then an article added, a filter changed, an article dropped.
