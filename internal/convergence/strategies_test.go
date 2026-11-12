@@ -1,6 +1,7 @@
 package convergence
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -219,6 +220,9 @@ func TestLabDeferFullSnapshot(t *testing.T) {
 	}
 	jobsAroundAll(t, p, true)
 	wantAgents(t, p, nil)
+	if want := []string{"the full generation is deferred to the next run of the snapshot agent of m_pi"}; !reflect.DeepEqual(p.Notes, want) {
+		t.Errorf("notes of the deferral plan %q, want %q", p.Notes, want)
+	}
 
 	e.deliveries = []delivery{{"m_t2", 20}}
 	e.run(t, p) // its generate_and_wait waits for m_t2
@@ -456,4 +460,37 @@ func TestLabUnmeasuredRefused(t *testing.T) {
 	if !strings.Contains(joined, ".sync_method") || !strings.Contains(joined, ".distribution_agent.schedules") {
 		t.Errorf("refusal paths:\n%s\nwant one at sync_method and one at the distribution agent's schedules", joined)
 	}
+}
+
+// The reviewer's scenario of Task 20 (fix round 2): create.yaml, then the
+// same file with sync_method character. sp_changepublication sync_method
+// rewrites neither dest_owner nor the commands, so the plan is that call
+// alone between R24's job operations, and the next plan is empty.
+func TestLabSyncMethodCharacter(t *testing.T) {
+	e := labEnv(t, "character")
+	createAndDeliver(t, e)
+
+	des := e.desired(t, "create.yaml")
+	des.Publications[0].SyncMethod = model.Ptr("character")
+	p := e.plan(t, des, plan.Options{})
+	refusedFatal(t, p, "create.yaml with sync_method character")
+	var got []string
+	for _, op := range p.Operations {
+		got = append(got, op.Kind+" "+procedure(op))
+	}
+	want := []string{"job_disable sp_update_job", "publication_property sp_changepublication", "job_restore sp_update_job"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("operations %q, want %q\n%s%s", got, want, p.Summary(), p.SQL())
+	}
+	chg := p.Operations[1]
+	if v, _ := param(chg, "@property"); v != "N'sync_method'" {
+		t.Errorf("@property %s, want N'sync_method'", v)
+	}
+	if v, _ := param(chg, "@value"); v != "N'character'" {
+		t.Errorf("@value %s, want N'character'", v)
+	}
+	wantCosts(t, chg, plan.CostOnline)
+	wantAgents(t, p, nil)
+	e.run(t, p)
+	e.converged(t, des)
 }

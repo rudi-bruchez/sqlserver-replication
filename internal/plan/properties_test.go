@@ -2,6 +2,7 @@ package plan
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -233,23 +234,83 @@ func TestSyncMethodCosts(t *testing.T) {
 	})
 }
 
-// An existing article's omitted destination.schema takes its creation
-// default in the current publication's context (Task 20 fix round 1): the
-// article was created under the current sync_method, and the change does
-// not rewrite destination_owner (O16: the default is the source schema
-// under native, NULL under character).
-func TestSyncMethodOmittedDestination(t *testing.T) {
-	ops := plannedAlone(t, buildLab(t, nil, func(des, _ *model.Config) {
-		p := pubOf(t, des, "SalesRef")
-		for i := range p.Articles {
-			p.Articles[i].Destination = model.Destination{}
+// characterRef changes SalesRef to character on the desired side, every
+// article's destination and commands omitted.
+func characterRef(t *testing.T, des *model.Config) {
+	p := pubOf(t, des, "SalesRef")
+	for i := range p.Articles {
+		p.Articles[i].Destination = model.Destination{}
+		p.Articles[i].Commands = nil
+	}
+	p.SyncMethod = str("character")
+}
+
+// An existing article keeps the current value of an omitted property whose
+// creation default depends on sync_method: destination.schema and the three
+// commands (Task 20 fix round 2). sp_changepublication sync_method rewrites
+// neither dest_owner nor the commands (measured by the Task 20 review), so
+// both plans, before and after the change, must leave them alone.
+func TestSyncMethodKeepsArticleValues(t *testing.T) {
+	t.Run("first plan", func(t *testing.T) {
+		ops := plannedAlone(t, buildLab(t, nil, func(des, _ *model.Config) { characterRef(t, des) }))
+		if len(ops) != 1 {
+			t.Fatalf("%d operations, want only sp_changepublication sync_method:\n%s", len(ops), opsString(ops))
 		}
-		p.SyncMethod = str("character")
-	}))
-	op := oneAlone(t, ops, "sp_changepublication")
-	wantParam(t, op, "@property", "N'sync_method'")
-	wantParam(t, op, "@value", "N'character'")
-	wantOpCosts(t, op, CostOnline)
+		op := oneAlone(t, ops, "sp_changepublication")
+		wantParam(t, op, "@property", "N'sync_method'")
+		wantParam(t, op, "@value", "N'character'")
+		wantOpCosts(t, op, CostOnline)
+	})
+	t.Run("after the change", func(t *testing.T) {
+		// The state the first plan leaves: character, dest_owner dbo, the
+		// CALL and SCALL commands of the fixture.
+		ops := plannedAlone(t, buildLab(t, nil, func(des, cur *model.Config) {
+			characterRef(t, des)
+			pubOf(t, cur, "SalesRef").SyncMethod = str("character")
+		}))
+		if len(ops) != 0 {
+			t.Fatalf("%d operations after the change, want none:\n%s", len(ops), opsString(ops))
+		}
+	})
+	t.Run("new article", func(t *testing.T) {
+		// A new article takes the desired context: under character the
+		// default destination owner is NULL and the commands SQL, which
+		// sp_addarticle is not passed (R15).
+		ops := plannedAlone(t, buildLab(t, nil, func(des, _ *model.Config) {
+			characterRef(t, des)
+			addTo(t, des, "SalesRef", newTable("m_t1"))
+		}))
+		op := oneAlone(t, ops, "sp_addarticle")
+		wantParam(t, op, "@article", "N'm_t1'")
+		for _, name := range []string{"@destination_owner", "@ins_cmd", "@upd_cmd", "@del_cmd"} {
+			noParam(t, op, name)
+		}
+	})
+	t.Run("replaced article", func(t *testing.T) {
+		// R20: a new source replaces Product, whose add takes the desired
+		// context too, not the dropped article's values.
+		ops := plannedAlone(t, buildLab(t, nil, func(des, _ *model.Config) {
+			characterRef(t, des)
+			a := &pubOf(t, des, "SalesRef").Articles[0]
+			a.Source.Name, a.Destination.Name = "Product2", str("Product")
+		}))
+		op := oneAlone(t, ops, "sp_addarticle")
+		wantParam(t, op, "@article", "N'Product'")
+		for _, name := range []string{"@destination_owner", "@ins_cmd", "@upd_cmd", "@del_cmd"} {
+			noParam(t, op, name)
+		}
+	})
+	t.Run("other properties", func(t *testing.T) {
+		// The rule covers only the sync_method-dependent properties: an
+		// omitted fire_triggers_on_snapshot of an existing article still
+		// takes its default, false, a change from the current true.
+		ops := plannedAlone(t, buildLab(t, nil, func(des, cur *model.Config) {
+			pubOf(t, cur, "SalesRef").Articles[0].FireTriggersOnSnapshot = model.Ptr(true)
+			pubOf(t, des, "SalesRef").Articles[0].FireTriggersOnSnapshot = nil
+		}))
+		op := oneAlone(t, ops, "sp_changearticle")
+		wantParam(t, op, "@property", "N'fire_triggers_on_snapshot'")
+	})
 }
 
 func TestSyncMethodUnmeasuredRefused(t *testing.T) {
@@ -310,6 +371,26 @@ func TestDeferSequence(t *testing.T) {
 	note := "the full generation is deferred to the next run of the snapshot agent of SalesPub"
 	if len(p.Notes) != 1 || p.Notes[0] != note {
 		t.Errorf("notes %q, want %q", p.Notes, note)
+	}
+}
+
+// A deferral on a publication whose immediate_sync snapshot is already
+// invalid notes the deferral once: planNotes leaves the "full generation
+// deferred" note to the deferral's own (Task 20 fix round 2, N21).
+func TestDeferNoteAlone(t *testing.T) {
+	des, facts := loadLab(t)
+	cur, _ := loadLab(t)
+	for i := range facts.Publications {
+		if facts.Publications[i].Name == "SalesPub" {
+			facts.Publications[i].ImmediateSyncReady = false
+		}
+	}
+	deferPub(t, des, cur, "native")
+	p := Build(Inputs{Desired: des, Current: cur, Facts: facts}, deferOpt)
+	planned(t, p)
+	want := []string{"the full generation is deferred to the next run of the snapshot agent of SalesPub"}
+	if !reflect.DeepEqual(p.Notes, want) {
+		t.Errorf("notes %q, want %q", p.Notes, want)
 	}
 }
 
