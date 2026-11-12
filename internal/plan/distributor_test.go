@@ -416,3 +416,38 @@ func TestLogReaderCreatedForNewDatabase(t *testing.T) {
 	wantParam(t, opt, "@optname", "N'publish'")
 	wantParam(t, opt, "@value", "N'true'")
 }
+
+// TestProfileCreatedParametersOnline: the parameter calls of a profile the
+// plan creates cost online only, nothing using it yet; those of an existing
+// profile change a shared object (Task 16 review).
+func TestProfileCreatedParametersOnline(t *testing.T) {
+	ops := planned(t, buildLabFacts(t, func(f *state.Facts) {
+		f.PublisherDatabases = []state.PublisherDatabase{
+			{DistributionDB: "distribution", Publisher: "repllab", Database: "Sales"},
+			{DistributionDB: "distribution", Publisher: "repllab", Database: "Other"},
+		}
+	}, func(des, _ *model.Config) {
+		params := labTemplate(t, "distribution")
+		params["-PollingInterval"] = "7"
+		des.AgentProfiles = append(des.AgentProfiles, model.AgentProfile{Name: "m_prof", AgentType: "distribution",
+			Parameters: params})
+		des.AgentProfiles[0].Parameters["-PollingInterval"] = "9"
+	}))
+	var created, existing int
+	for _, op := range ops {
+		if op.Kind != "profile_property" {
+			continue
+		}
+		switch op.Path {
+		case "agent_profiles[distribution/m_prof]":
+			created++
+			wantOpCosts(t, op, CostOnline)
+		default:
+			existing++
+			wantOpCosts(t, op, CostOnline, CostSharedObjectChanged)
+		}
+	}
+	if created != 1 || existing != 1 {
+		t.Errorf("%d parameter calls of the created profile and %d of the existing one, want 1 and 1:\n%s", created, existing, opsString(ops))
+	}
+}

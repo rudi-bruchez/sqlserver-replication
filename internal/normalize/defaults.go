@@ -105,9 +105,15 @@ func lookup(table []Default, ctx Context, path string) (Default, bool) {
 // 10-digit number, and a 60-character schema with a 110-character table
 // drops the schema). Normalize therefore keeps a generated procedure nil
 // (rule 6, compared on its mode only) and never relies on a filled name.
+//
+// {schema} and {table} only occur inside a bracketed procedure name, so a
+// ']' in them is doubled, as the server does (measured: table
+// dbo.[rv_t16 x]]y] stored CALL [dbo].[sp_MSins_dborv_t16 x]]y]); the
+// {source_*} templates are plain values and are not.
 func Fill(value, schema, name string) string {
+	bracketed := func(s string) string { return strings.ReplaceAll(s, "]", "]]") }
 	return strings.NewReplacer("{source_schema}", schema, "{source_name}", name,
-		"{schema}", schema, "{table}", name).Replace(value)
+		"{schema}", bracketed(schema), "{table}", bracketed(name)).Replace(value)
 }
 
 // formatList writes a list value: [a, b], [] for an empty one.

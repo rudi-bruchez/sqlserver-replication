@@ -396,7 +396,7 @@ func (b *builder) addProfile(p *model.AgentProfile) {
 	op.Sources = append(op.Sources, "R6", "spec Order step 2")
 	b.markShared(&op)
 	b.add(op)
-	b.profileParameters(p, path, tpl)
+	b.profileParameters(p, path, tpl, true)
 }
 
 // changeProfile changes an existing profile: its description, and its
@@ -415,7 +415,7 @@ func (b *builder) changeProfile(pp pair[model.AgentProfile]) {
 		}
 	}
 	if !b.skip(path + ".parameters") {
-		b.profileParameters(pp.Des, path, pp.Cur.Parameters)
+		b.profileParameters(pp.Des, path, pp.Cur.Parameters, false)
 	}
 }
 
@@ -450,8 +450,9 @@ func (b *builder) profileDescription(d, c *model.AgentProfile, ch Change) {
 // per name have lacks, sp_drop_agent_parameter per name the file omits when
 // PF.drop_parameter is measured (R6). A copied name is never added (20067),
 // and a name the profile lacks never changed (it returns 0 and changes
-// nothing, PF.change_missing_parameter).
-func (b *builder) profileParameters(p *model.AgentProfile, path string, have map[string]string) {
+// nothing, PF.change_missing_parameter). created tells a profile this plan
+// creates, whose parameter calls are online only.
+func (b *builder) profileParameters(p *model.AgentProfile, path string, have map[string]string, created bool) {
 	e, ok := cost.Lookup("agent_profiles[*].parameters", "", "transactional")
 	if !ok {
 		b.refuse(path+".parameters", "cost of agent_profiles[*].parameters change not measured")
@@ -501,7 +502,11 @@ func (b *builder) profileParameters(p *model.AgentProfile, path string, have map
 		op.Changes = []PropertyChange{{Path: cp, Before: c.before, After: c.after}}
 		op.Reason = fmt.Sprintf("the profile's parameter %s changes (R6)", c.name)
 		op.Sources = append(op.Sources, "R6")
-		b.markShared(&op)
+		if !created {
+			// A profile the plan creates is used by nothing yet: its
+			// parameters change no shared object (Task 16 review).
+			b.markShared(&op)
+		}
 		b.add(op)
 	}
 }

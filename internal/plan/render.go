@@ -15,31 +15,45 @@ import (
 type Statement struct {
 	Seq              int
 	Server, Database string
-	Text             string   // the batch: Prologue, then the EXEC; secrets as @secret_<n>
-	Secrets          []string // the secret names, @secret_1 first
+	Text             string            // the batch: Prologue, then the EXEC; secrets as @secret_<n>
+	Secrets          []StatementSecret // each @secret_<n> the batch uses, in order of first use in it
 }
 
+// StatementSecret binds a variable of a statement to the secret it holds.
+type StatementSecret struct {
+	Var  string // @secret_<n>, numbered once per plan
+	Name string // the secret's name, the environment variable apply reads
+}
+
+// sqlHeader is the first line of SQL(): the batches declare the same
+// variables (@job_id, @profile_id), so run as one batch they fail at
+// compile with Msg 134 (measured by the Task 16 review).
+const sqlHeader = "-- each operation below is a batch of its own: run them one at a time (sqlrepl apply does); the file does not run as one batch"
+
 // Statements is one statement per operation, in Seq order. A secret
-// parameter is rendered @<param> = @secret_<n> (R16), numbered within the
-// statement in the order of its parameters, a name passed twice keeping
-// its number, so that Secrets[n-1] is the secret apply binds to
-// @secret_<n> of that statement. The value is never read here.
+// parameter is rendered @<param> = @secret_<n> (R16), numbered once per
+// plan in Seq order of first use (then parameter order), a name keeping its
+// number everywhere it is passed. The value is never read here.
 func (p *Plan) Statements() []Statement {
+	number := map[string]int{}
 	out := make([]Statement, 0, len(p.Operations))
 	for _, op := range p.Operations {
 		st := Statement{Seq: op.Seq, Server: op.Server, Database: op.Database}
-		number := map[string]int{}
+		inStatement := map[string]bool{}
 		args := make([]string, 0, len(op.Call.Params))
 		for _, prm := range op.Call.Params {
 			v := prm.Value
 			if prm.Secret != "" {
 				n, ok := number[prm.Secret]
 				if !ok {
-					st.Secrets = append(st.Secrets, prm.Secret)
-					n = len(st.Secrets)
+					n = len(number) + 1
 					number[prm.Secret] = n
 				}
 				v = secretParam(n)
+				if !inStatement[prm.Secret] {
+					inStatement[prm.Secret] = true
+					st.Secrets = append(st.Secrets, StatementSecret{Var: v, Name: prm.Secret})
+				}
 			}
 			args = append(args, prm.Name+" = "+v)
 		}
@@ -61,9 +75,10 @@ func (p *Plan) Statements() []Statement {
 
 func secretParam(n int) string { return "@secret_" + strconv.Itoa(n) }
 
-// comment makes s safe on a -- line: a name or a text with a line break
-// would otherwise end the comment and put the rest into the batch.
-func comment(s string) string {
+// oneLine flattens the line breaks of s: on a -- line, a name or a text
+// with a line break would end the comment and put the rest into the batch;
+// in the summary, it would break the one-line-per-item layout.
+func oneLine(s string) string {
 	return strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(s)
 }
 
@@ -75,34 +90,38 @@ func costList(cs []Cost) string {
 	return strings.Join(xs, ", ")
 }
 
-// SQL is the statements laid out for -sql: a "-- server" header whenever
-// the server changes, a USE whenever the server or the database changes,
-// and for each operation its header comment, its warnings, its secret
-// comments (R16), then its batch. GO is never written: each operation is
-// one batch for apply, and the text is the executed text.
+// SQL is the statements laid out for -sql: sqlHeader, then a "-- server"
+// header whenever the server changes, a USE whenever the server or the
+// database changes (both compared without regard to case, R7), and for
+// each operation its header comment, its warnings, its secret comments
+// (R16), then its batch. GO is never written: each operation is one batch
+// for apply, and the text is the executed text. A plan without operation
+// (empty or refused) renders as the empty string.
 func (p *Plan) SQL() string {
+	if len(p.Operations) == 0 {
+		return ""
+	}
 	var b strings.Builder
+	b.WriteString(sqlHeader + "\n")
 	stmts := p.Statements()
 	server, database := "", ""
 	for i, op := range p.Operations {
 		st := stmts[i]
-		if i > 0 {
-			b.WriteString("\n")
-		}
+		b.WriteString("\n")
 		newServer := i == 0 || !strings.EqualFold(op.Server, server)
 		if newServer {
-			fmt.Fprintf(&b, "-- server %s\n", comment(op.Server))
+			fmt.Fprintf(&b, "-- server %s\n", oneLine(op.Server))
 		}
 		if newServer || !strings.EqualFold(op.Database, database) {
 			fmt.Fprintf(&b, "USE %s;\n", quoteName(op.Database))
 		}
 		server, database = op.Server, op.Database
-		fmt.Fprintf(&b, "-- %d %s %s %s: %s\n", op.Seq, op.Action, op.Kind, comment(op.Path), costList(op.Costs))
+		fmt.Fprintf(&b, "-- %d %s %s %s: %s\n", op.Seq, op.Action, op.Kind, oneLine(op.Path), costList(op.Costs))
 		for _, w := range op.Warnings {
-			fmt.Fprintf(&b, "-- warning: %s\n", comment(w))
+			fmt.Fprintf(&b, "-- warning: %s\n", oneLine(w))
 		}
-		for n, name := range st.Secrets {
-			fmt.Fprintf(&b, "-- %s: secret %s\n", secretParam(n+1), comment(name))
+		for _, s := range st.Secrets {
+			fmt.Fprintf(&b, "-- %s: secret %s\n", s.Var, oneLine(s.Name))
 		}
 		b.WriteString(st.Text)
 		b.WriteString("\n")
@@ -116,26 +135,35 @@ var costOrder = []Cost{
 	CostReinitialization, CostDropAndReadd, CostSubscriberDataReplaced, CostSubscriberObjectLeft, CostSharedObjectChanged,
 }
 
-// Summary is the human summary (R28). A refused plan prints its refusals
-// and "Plan refused." only; an empty section is not printed.
+// Summary is the human summary (R28), every interpolated text on one line
+// (oneLine). A refused plan prints its refusals and "Plan refused." only;
+// an empty section is not printed.
 func (p *Plan) Summary() string {
 	var b strings.Builder
-	if len(p.Refusals) > 0 {
-		b.WriteString("Refused:\n")
-		for _, r := range p.Refusals {
-			fmt.Fprintf(&b, "  %s: %s\n", r.Path, r.Reason)
+	line := func(format string, args ...any) {
+		for i, a := range args {
+			if s, ok := a.(string); ok {
+				args[i] = oneLine(s)
+			}
 		}
-		b.WriteString("Plan refused.\n")
+		fmt.Fprintf(&b, format+"\n", args...)
+	}
+	if len(p.Refusals) > 0 {
+		line("Refused:")
+		for _, r := range p.Refusals {
+			line("  %s: %s", r.Path, r.Reason)
+		}
+		line("Plan refused.")
 		return b.String()
 	}
 	if len(p.Operations) == 0 {
-		fmt.Fprintf(&b, "Plan for %s.%s: no changes.\n", p.Publisher, p.Database)
+		line("Plan for %s.%s: no changes.", p.Publisher, p.Database)
 	} else {
-		fmt.Fprintf(&b, "Plan for %s.%s: %d operations, %d costly.\n", p.Publisher, p.Database, p.Totals.Operations, p.Totals.Costly)
+		line("Plan for %s.%s: %d operations, %d costly.", p.Publisher, p.Database, p.Totals.Operations, p.Totals.Costly)
 		for _, op := range p.Operations {
-			fmt.Fprintf(&b, "  %d  %s %s %s: %s\n", op.Seq, op.Action, op.Kind, op.Path, costList(op.Costs))
+			line("  %d  %s %s %s: %s", op.Seq, op.Action, op.Kind, op.Path, costList(op.Costs))
 			for _, w := range op.Warnings {
-				fmt.Fprintf(&b, "      warning: %s\n", w)
+				line("      warning: %s", w)
 			}
 		}
 		var totals []string
@@ -145,16 +173,16 @@ func (p *Plan) Summary() string {
 			}
 		}
 		if len(totals) > 0 {
-			fmt.Fprintf(&b, "Totals: %s\n", strings.Join(totals, ", "))
+			line("Totals: %s", strings.Join(totals, ", "))
 		}
 	}
 	section := func(title string, lines []string) {
 		if len(lines) == 0 {
 			return
 		}
-		b.WriteString(title + ":\n")
+		line("%s:", title)
 		for _, l := range lines {
-			b.WriteString("  " + l + "\n")
+			line("  %s", l)
 		}
 	}
 	var lines []string

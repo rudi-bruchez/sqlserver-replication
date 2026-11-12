@@ -91,16 +91,18 @@ func TestRenderSecretsNeverValues(t *testing.T) {
 
 func TestRenderQuotesNames(t *testing.T) {
 	p := buildFull(t, nil, nil, func(des, _ *model.Config) {
-		// The article is named x]y, its table is not: the default commands
-		// are named after the table (normalize, sp_MSins_{schema}{table}).
-		pub := testPub("a'b", testTable("x]y", "dbo", "m_t"))
+		// The server refuses [ and ] in publication and article names
+		// (15006, normalize refuses them), not in a subscription database
+		// name. The second article's table has a ] in its name, which the
+		// default commands double (normalize.Fill).
+		pub := testPub("a'b é", testTable("x y'é", "dbo", "m_t"), testTable("m_a", "dbo", "x]y"))
 		pub.IndependentAgent = model.Ptr(true) // a pull subscription needs it (R21)
 		pub.Subscriptions = []model.Subscription{newSub("m sub]1", "pull", "snapshot")}
 		des.Publications = append(des.Publications, pub)
 	})
 	withJobs(t, p)
 	sql := p.SQL()
-	for _, want := range []string{"N'a''b'", "N'x]y'", "USE [m sub]]1];"} {
+	for _, want := range []string{"@publication = N'a''b é'", "@article = N'x y''é'", "@source_object = N'x]y'", "USE [m sub]]1];"} {
 		if !strings.Contains(sql, want) {
 			t.Errorf("SQL() lacks %s:\n%s", want, sql)
 		}
@@ -179,5 +181,109 @@ func TestRenderUseOnlyWhenDatabaseChanges(t *testing.T) {
 	}
 	if n := strings.Count(sql, "-- server "); n != 1 {
 		t.Errorf("%d server headers, want 1:\n%s", n, sql)
+	}
+}
+
+// formsPlan is a hand-built plan for the rules of the layouts the plan of
+// TestBuildOrderSteps does not exercise: a server change and back, server
+// and database names compared without regard to case, a USE when only the
+// server changes, an operation warning, line breaks in texts, secrets
+// numbered once per plan (one passed twice in one call, one set and one
+// not), a trimmed prologue, the order of the totals, and the notes.
+func formsPlan() *Plan {
+	op := func(seq int, server, db, path string, costs []Cost, params ...Param) Operation {
+		return Operation{Seq: seq, Kind: "publication_property", Action: "change", Path: path, Server: server, Database: db,
+			Call: Call{Procedure: "sp_changepublication", Params: params}, Costs: costs}
+	}
+	ops := []Operation{
+		op(1, "srvA", "Sales", "publications[P]", []Cost{CostDropAndReadd, CostReinitialization},
+			Param{Name: "@publication", Value: "N'P'"}, Param{Name: "@password", Secret: "A"}, Param{Name: "@other", Secret: "A"}),
+		op(2, "SRVA", "sales", "publications[P]", []Cost{CostOnline}, Param{Name: "@password", Secret: "B"}),
+		op(3, "srvB", "sales", "publications[a\nb]", []Cost{CostOnline}, Param{Name: "@publication", Value: "N'x'"}),
+		op(4, "srva", "Sales", "publications[P]", []Cost{CostOnline}, Param{Name: "@b", Secret: "B"}, Param{Name: "@a", Secret: "A"}),
+	}
+	ops[0].Warnings = []string{"line one\nline two"}
+	ops[0].Call.Prologue = "DECLARE @x int;\n\n"
+	return &Plan{Publisher: "srvA", Database: "Sales", Operations: ops, Totals: totals(ops),
+		Secrets:  []SecretUse{{Name: "A", Set: true, Operations: []int{1, 4}}, {Name: "B", Operations: []int{2, 4}}},
+		Warnings: []string{"plan\nwarning"}, Notes: []string{"note one"}}
+}
+
+func TestRenderForms(t *testing.T) {
+	p := formsPlan()
+	wantSQL := sqlHeader + `
+
+-- server srvA
+USE [Sales];
+-- 1 change publication_property publications[P]: drop_and_readd, reinitialization
+-- warning: line one line two
+-- @secret_1: secret A
+DECLARE @x int;
+EXEC sp_changepublication @publication = N'P', @password = @secret_1, @other = @secret_1;
+
+-- 2 change publication_property publications[P]: online
+-- @secret_2: secret B
+EXEC sp_changepublication @password = @secret_2;
+
+-- server srvB
+USE [sales];
+-- 3 change publication_property publications[a b]: online
+EXEC sp_changepublication @publication = N'x';
+
+-- server srva
+USE [Sales];
+-- 4 change publication_property publications[P]: online
+-- @secret_2: secret B
+-- @secret_1: secret A
+EXEC sp_changepublication @b = @secret_2, @a = @secret_1;
+`
+	if got := p.SQL(); got != wantSQL {
+		t.Errorf("SQL():\n%s\nwant:\n%s", got, wantSQL)
+	}
+	wantSummary := `Plan for srvA.Sales: 4 operations, 1 costly.
+  1  change publication_property publications[P]: drop_and_readd, reinitialization
+      warning: line one line two
+  2  change publication_property publications[P]: online
+  3  change publication_property publications[a b]: online
+  4  change publication_property publications[P]: online
+Totals: online 3, reinitialization 1, drop_and_readd 1
+Secrets:
+  A set
+  B not set
+Warnings:
+  plan warning
+Notes:
+  note one
+`
+	if got := p.Summary(); got != wantSummary {
+		t.Errorf("Summary():\n%s\nwant:\n%s", got, wantSummary)
+	}
+	st := p.Statements()
+	want := []StatementSecret{{Var: "@secret_2", Name: "B"}, {Var: "@secret_1", Name: "A"}}
+	if !reflect.DeepEqual(st[3].Secrets, want) || len(st[0].Secrets) != 1 || len(st[2].Secrets) != 0 {
+		t.Errorf("statement secrets %+v, %+v, %+v; want one, none, %+v", st[0].Secrets, st[2].Secrets, st[3].Secrets, want)
+	}
+}
+
+func TestRenderRefusedForm(t *testing.T) {
+	p := &Plan{Publisher: "srvA", Database: "Sales", Refusals: []Refusal{{Path: "publications[P]", Reason: "bad\nreason"},
+		{Path: "publications[Q]", Reason: "other"}}, Warnings: []string{"w"}, Notes: []string{"n"}}
+	want := "Refused:\n  publications[P]: bad reason\n  publications[Q]: other\nPlan refused.\n"
+	if got := p.Summary(); got != want {
+		t.Errorf("Summary() %q, want %q", got, want)
+	}
+	if got := p.SQL(); got != "" {
+		t.Errorf("SQL() of a refused plan %q, want empty", got)
+	}
+}
+
+func TestRenderEmptyForm(t *testing.T) {
+	p := &Plan{Publisher: "srvA", Database: "Sales", Notes: []string{"n"}}
+	want := "Plan for srvA.Sales: no changes.\nNotes:\n  n\n"
+	if got := p.Summary(); got != want {
+		t.Errorf("Summary() %q, want %q", got, want)
+	}
+	if got := p.SQL(); got != "" {
+		t.Errorf("SQL() of an empty plan %q, want empty", got)
 	}
 }

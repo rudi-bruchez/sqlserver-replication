@@ -907,3 +907,29 @@ func TestNormalizeFoldedKeys(t *testing.T) {
 	_, rs = Normalize(loadFixture(t), fx)
 	noRefusal(t, "fixture", rs)
 }
+
+// TestFillDoublesBrackets: a ] in the table of a generated command is
+// doubled inside the bracketed name, as the server stores it (measured by
+// the Task 16 review: CALL [dbo].[sp_MSins_dborv_t16 x]]y]); a plain value
+// is not.
+func TestFillDoublesBrackets(t *testing.T) {
+	if got, want := Fill("CALL [dbo].[sp_MSins_{schema}{table}]", "dbo", "rv_t16 x]y"), "CALL [dbo].[sp_MSins_dborv_t16 x]]y]"; got != want {
+		t.Errorf("Fill gives %q, want %q", got, want)
+	}
+	if got := Fill("{source_schema}.{source_name}", "dbo", "x]y"); got != "dbo.x]y" {
+		t.Errorf("Fill of the plain templates gives %q, want dbo.x]y", got)
+	}
+}
+
+// TestNormalizeBracketNames: sp_addpublication and sp_addarticle refuse a
+// name with [ or ] (15006, measured by the Task 16 review).
+func TestNormalizeBracketNames(t *testing.T) {
+	_, rs := Normalize(testConfig(testPub("a]b", testTable("x[y", "dbo", "t")), testPub("ok é'", testTable("x y'é", "dbo", "t]1"))), nil)
+	want := []Refusal{
+		{Path: "publications[a]]b]", Reason: "a]b: names of publications and articles cannot contain [ or ] (15006, measured)"},
+		{Path: "publications[a]]b].articles[x[y]", Reason: "x[y: names of publications and articles cannot contain [ or ] (15006, measured)"},
+	}
+	if !reflect.DeepEqual(rs, want) {
+		t.Errorf("refusals %+v, want %+v", rs, want)
+	}
+}

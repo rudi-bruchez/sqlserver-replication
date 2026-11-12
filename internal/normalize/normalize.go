@@ -382,6 +382,10 @@ func (n *normalizer) required(c *model.Config) {
 	}
 }
 
+// bracketName is the refusal of a publication or article name with a
+// bracket.
+const bracketName = "%s: names of publications and articles cannot contain [ or ] (15006, measured)"
+
 // Rule 3: names. Two publications whose names are equal without regard to
 // case collide in distribution.dbo.MSpublications (R7). A column listed
 // twice, names compared without regard to case as the plan compares them,
@@ -401,6 +405,20 @@ func (n *normalizer) names(c *model.Config) {
 			continue
 		}
 		seen[k] = p.Name
+	}
+	// sp_addpublication and sp_addarticle refuse a name with a bracket
+	// (sys.sp_MSreplcheck_name, 15006, measured), after the earlier
+	// operations of the plan have run: refused here instead.
+	for i := range c.Publications {
+		p := &c.Publications[i]
+		if strings.ContainsAny(p.Name, "[]") {
+			n.refuse(pubPath(p), bracketName, p.Name)
+		}
+		for j := range p.Articles {
+			if a := &p.Articles[j]; strings.ContainsAny(a.Name, "[]") {
+				n.refuse(artPath(p, a), bracketName, a.Name)
+			}
+		}
 	}
 	qualify := func(o *model.ObjectName) {
 		if o != nil && o.Schema == "" {

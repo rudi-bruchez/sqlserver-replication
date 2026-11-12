@@ -1,3 +1,5 @@
+-- each operation below is a batch of its own: run them one at a time (sqlrepl apply does); the file does not run as one batch
+
 -- server repllab
 USE [msdb];
 -- 1 disable job_disable publications[SalesRef].snapshot_agent: online
