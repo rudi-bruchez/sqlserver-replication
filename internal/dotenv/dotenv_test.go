@@ -36,9 +36,13 @@ PLAIN=val
 }
 
 func TestParseErrorNoEquals(t *testing.T) {
-	_, err := Parse(strings.NewReader("NOEQUALS\n"))
+	_, err := Parse(strings.NewReader("A=1\nmy-secret-password-line\n"))
 	if err == nil {
 		t.Fatal("want an error for a line without '='")
+	}
+	// The line may be a secret: the error names its number only.
+	if msg := err.Error(); !strings.Contains(msg, "line 2") || strings.Contains(msg, "my-secret") {
+		t.Errorf("error %q, want line 2 without its text", msg)
 	}
 }
 

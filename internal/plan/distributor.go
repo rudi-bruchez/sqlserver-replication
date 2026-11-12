@@ -43,9 +43,14 @@ var distFixed = map[string]bool{"data_folder": true, "data_file": true, "log_fol
 
 // distributorStrategy plans the distributor (step 1, R17, spec "Shared
 // distributor objects") and the user profiles (steps 2 and 11, R6).
+// An omitted agent_profiles key (nil after model.Load) means the file does
+// not manage the profiles: no profile operation. An explicit empty list
+// drops every unused user profile (Task 18 fix round 1, review note F7).
 func distributorStrategy(b *builder) {
 	b.planDistributor()
-	b.planProfiles()
+	if b.in.Desired != nil && b.in.Desired.AgentProfiles != nil {
+		b.planProfiles()
+	}
 }
 
 // shared is the other publication databases the distributor serves,

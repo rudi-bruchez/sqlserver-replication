@@ -163,7 +163,7 @@ func useOf(profile string) state.ProfileUse {
 }
 
 func TestProfileDropOnlyUnused(t *testing.T) {
-	noProfiles := func(des, _ *model.Config) { des.AgentProfiles = nil }
+	noProfiles := func(des, _ *model.Config) { des.AgentProfiles = []model.AgentProfile{} }
 	virtual := state.ProfileUse{Profile: "lab-distrib", AgentType: "distribution", DistributionDB: "distribution",
 		Publisher: "repllab", PublisherDB: "Sales", Publication: "SalesPub", Virtual: true}
 	for name, uses := range map[string][]state.ProfileUse{
@@ -290,7 +290,7 @@ func TestProfileDropAfterLastUse(t *testing.T) {
 	}, func(des, cur *model.Config) {
 		subOf(t, cur, "SalesPub", "SalesSub").DistributionAgent.Profile = str("lab-distrib")
 		pubOf(t, des, "SalesPub").Subscriptions = nil
-		des.AgentProfiles = nil
+		des.AgentProfiles = []model.AgentProfile{}
 	}))
 	sub := one(t, ops, "sp_dropsubscription")
 	drop := one(t, ops, "sp_drop_agent_profile")
@@ -479,5 +479,31 @@ func TestProfileCreatedOnlineUnlessDefault(t *testing.T) {
 		} else {
 			wantOpCosts(t, add, CostOnline)
 		}
+	}
+}
+
+// An omitted agent_profiles key loads as nil and means the profiles are not
+// managed; an explicit empty list drops every unused user profile (Task 18
+// fix round 1, item 7, review note F7).
+func TestProfilesOmittedNotManaged(t *testing.T) {
+	head := "version: 2\npublisher:\n    server: P\n    database: D\npublications: []\n"
+	omitted, err := model.Load(strings.NewReader(head))
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty, err := model.Load(strings.NewReader(head + "agent_profiles: []\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if omitted.AgentProfiles != nil || empty.AgentProfiles == nil {
+		t.Fatalf("Load: omitted %#v, empty %#v; want nil and an empty list", omitted.AgentProfiles, empty.AgentProfiles)
+	}
+
+	if ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) { des.AgentProfiles = omitted.AgentProfiles })); len(ops) != 0 {
+		t.Errorf("omitted agent_profiles plans:\n%s", opsString(ops))
+	}
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) { des.AgentProfiles = empty.AgentProfiles }))
+	if len(ops) != 1 || ops[0].Call.Procedure != "sp_drop_agent_profile" {
+		t.Errorf("agent_profiles: [] plans:\n%s", opsString(ops))
 	}
 }

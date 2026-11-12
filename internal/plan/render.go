@@ -196,7 +196,12 @@ func (p *Plan) Summary() string {
 	section("Secrets", lines)
 	lines = nil
 	for _, pc := range p.Preconditions {
-		l := pc.Status + " " + pc.Name + " " + pc.Object
+		object := pc.Object
+		if pc.Name == precondSubscriberDB {
+			// Two subscribers can hold a database of the same name.
+			object = pc.Server + "/" + pc.Object
+		}
+		l := pc.Status + " " + pc.Name + " " + object
 		if pc.Detail != "" {
 			l += ": " + pc.Detail
 		}

@@ -553,3 +553,41 @@ func TestListsServerNameAnswered(t *testing.T) {
 		t.Errorf("precondition %+v", pc)
 	}
 }
+
+// A pull subscription removed from the file is dropped at a subscriber the
+// file no longer names: with checks, that server must have a row, which
+// then gets the reachability and @@SERVERNAME checks of the file's servers
+// (Task 18 fix round 1, item 1).
+func TestListsRemovedPullSubscriberChecked(t *testing.T) {
+	removed := func(checks *state.Checks) *Plan {
+		return buildFull(t, checks, nil, func(des, cur *model.Config) {
+			addSub(t, cur, "SalesPub", onSUBX("x", "pull"))
+			samePullAgent(t, cur, cur, "SalesPub", "x")
+		})
+	}
+	path := "publications[SalesPub].subscriptions[SUBX/x]"
+
+	// No row for SUBX: refused.
+	p := removed(labChecks())
+	wantHasRefusal(t, p, path, "sp_droppullsubscription runs at SUBX, of which the checks hold no row: no check of server SUBX (R29)")
+	if len(p.Operations) != 0 {
+		t.Errorf("a refused plan has operations:\n%s", opsString(p.Operations))
+	}
+
+	// A row naming another server: refused by the name check.
+	answers := func(name string) *state.Checks {
+		c := labChecks()
+		c.Servers = append(c.Servers, state.ServerCheck{Name: "SUBX", ServerName: name, Version: "16.0.4275.1", Reachable: true, Major: 16})
+		return c
+	}
+	p = removed(answers("OTHERSRV"))
+	wantHasRefusal(t, p, "SUBX", "server SUBX answers as OTHERSRV: check -server")
+
+	// A reached SUBX, or no checks at all: the drop is planned.
+	for name, c := range map[string]*state.Checks{"reached": answers("subx"), "no checks": nil} {
+		p := removed(c)
+		if len(p.Refusals) != 0 || len(opsCalling(p.Operations, "sp_droppullsubscription")) != 1 {
+			t.Errorf("%s: refusals %+v\n%s", name, p.Refusals, opsString(p.Operations))
+		}
+	}
+}

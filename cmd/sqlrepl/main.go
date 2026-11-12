@@ -38,34 +38,38 @@ Run "sqlrepl export -h" or "sqlrepl plan -h" for the options.
 `
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprint(os.Stderr, usage)
-		os.Exit(2)
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// run runs a command and returns the exit code: 2 for a usage error, 1 for
+// an error or a refused plan, whose refusals are printed already, so that
+// nothing more is written for it (R28).
+func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) < 1 {
+		fmt.Fprint(stderr, usage)
+		return 2
 	}
 	var err error
-	switch os.Args[1] {
+	switch args[0] {
 	case "export":
-		err = runExport(os.Args[2:], os.Stdout)
+		err = runExport(args[1:], stdout)
 	case "plan":
-		err = runPlan(os.Args[2:], os.Stdout, os.Stderr)
+		err = runPlan(args[1:], stdout, stderr)
 	case "-h", "-help", "--help", "help":
-		fmt.Print(usage)
-		return
+		fmt.Fprint(stdout, usage)
+		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", os.Args[1], usage)
-		os.Exit(2)
+		fmt.Fprintf(stderr, "unknown command %q\n\n%s", args[0], usage)
+		return 2
 	}
-	if err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return
-		}
-		if errors.Is(err, errRefused) {
-			// The refusals are printed already.
-			os.Exit(1)
-		}
-		fmt.Fprintln(os.Stderr, "sqlrepl:", err)
-		os.Exit(1)
+	switch {
+	case err == nil, errors.Is(err, flag.ErrHelp):
+		return 0
+	case errors.Is(err, errRefused):
+		return 1
 	}
+	fmt.Fprintln(stderr, "sqlrepl:", err)
+	return 1
 }
 
 // paramFlags collects repeated -param key=value flags.

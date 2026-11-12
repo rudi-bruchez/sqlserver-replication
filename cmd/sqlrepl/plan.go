@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,9 +29,14 @@ var connect = func(ctx context.Context, server, database string, cp connParams) 
 	return open(ctx, server, database, cp)
 }
 
-// pullSubscribers reads the servers of the current pull subscriptions; the
-// tests replace it.
-var pullSubscribers = reader.PullSubscribers
+// The reads and the build runPlan calls; the tests replace them.
+var (
+	pullSubscribers = reader.PullSubscribers
+	probeDB         = reader.Probe
+	readConfig      = reader.Read
+	runPrecheck     = precheck.Run
+	buildPlan       = plan.Build
+)
 
 // deferNeedsWait refuses -defer-full-snapshot with -wait 0 before any
 // connection: the generate and wait step of a deferred publication waits
@@ -94,35 +100,46 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 			Refusals: []plan.Refusal{{Path: "-wait", Reason: deferNeedsWait}},
 		}, f)
 	}
-	unusedServers(stderr, desired, f.servers)
-
-	ctx, cancel := context.WithTimeout(context.Background(), f.timeout)
-	defer cancel()
-	cp := connParams{User: f.user, Password: os.Getenv("SQLREPL_PASSWORD"), Extra: f.params}
+	cp := planConnParams(f)
 	address := func(name string) string {
 		if e, ok := f.servers.lookup(name); ok {
 			return e.Address
 		}
 		return name
 	}
+	// Each connection and each read before the plan's own read gets its own
+	// -timeout, the connections a driver connection timeout too
+	// (planConnParams): go-mssqldb does not abort a connection when its
+	// context ends during prelogin, so a silent server would otherwise hold
+	// the command well past -timeout (Task 18 fix round 1, measured).
+	step := func() (context.Context, context.CancelFunc) {
+		return context.WithTimeout(context.Background(), f.timeout)
+	}
 
 	// The publisher and the distributor must be reached (R29). The probe
 	// runs on master, which is also the publisher's connection for the
 	// prechecks.
 	publisher := address(desired.Publisher.Server)
+	ctx, cancel := step()
 	master, err := connect(ctx, publisher, "master", cp)
+	cancel()
 	if err != nil {
 		return fmt.Errorf("publisher: %w", err)
 	}
 	defer master.Close()
-	probe, err := reader.Probe(ctx, master, desired.Publisher.Database)
+	ctx, cancel = step()
+	probe, err := probeDB(ctx, master, desired.Publisher.Database)
+	cancel()
 	if err != nil {
 		return err
 	}
 	if _, _, err := probe.Start(); err != nil {
 		return err
 	}
+	// The stored name, in its own case, from here on.
+	ctx, cancel = step()
 	pub, err := connect(ctx, publisher, probe.Name, cp)
+	cancel()
 	if err != nil {
 		return fmt.Errorf("publisher: %w", err)
 	}
@@ -134,14 +151,16 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 	}
 	var dist *sql.DB
 	if distName != "" {
+		ctx, cancel = step()
 		dist, err = connect(ctx, address(distName), "", cp)
+		cancel()
 		if err != nil {
 			return fmt.Errorf("distributor: %w", err)
 		}
 		defer dist.Close()
 	}
 
-	subs, unreachable, err := openPlanSubscribers(ctx, desired, pub, f.servers, cp)
+	subs, unreachable, pulls, err := openPlanSubscribers(step, desired, pub, f.servers, cp)
 	defer func() {
 		for _, db := range subs {
 			db.Close()
@@ -150,8 +169,12 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	unusedServers(stderr, desired, append(pulls, distName), f.servers)
 
-	res, err := reader.Read(ctx, reader.Source{
+	// The read's context starts once every connection is open.
+	ctx, cancel = step()
+	defer cancel()
+	res, err := readConfig(ctx, reader.Source{
 		Publisher:   pub,
 		Distributor: dist,
 		Database:    probe.Name,
@@ -162,17 +185,18 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	checks, err := precheck.Run(ctx, precheck.Conns{
-		Publisher:   master,
-		Publication: pub,
-		Distributor: dist,
-		Subscribers: subs,
-		Unreachable: unreachable,
+	checks, err := runPrecheck(ctx, precheck.Conns{
+		Publisher:         master,
+		Publication:       pub,
+		Distributor:       dist,
+		Subscribers:       subs,
+		Unreachable:       unreachable,
+		DistributorServer: distName,
 	}, desired)
 	if err != nil {
 		return err
 	}
-	p := plan.Build(plan.Inputs{
+	p := buildPlan(plan.Inputs{
 		Desired: desired,
 		Current: res.Config,
 		Facts:   res.Facts,
@@ -183,6 +207,29 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 		},
 	}, opt)
 	return printPlan(stdout, p, f)
+}
+
+// planConnParams is the connection parameters of every connection plan
+// opens: the password read after the .env load, and the driver's
+// connection timeout set from -timeout, in whole seconds rounded up and at
+// least 1, unless -param sets one.
+func planConnParams(f *planFlags) connParams {
+	extra := map[string]string{}
+	set := false
+	for k, v := range f.params {
+		extra[k] = v
+		if strings.EqualFold(strings.TrimSpace(k), "connection timeout") {
+			set = true
+		}
+	}
+	if !set {
+		secs := int64((f.timeout + time.Second - 1) / time.Second)
+		if secs < 1 {
+			secs = 1
+		}
+		extra["connection timeout"] = strconv.FormatInt(secs, 10)
+	}
+	return connParams{User: f.user, Password: os.Getenv("SQLREPL_PASSWORD"), Extra: extra}
 }
 
 func loadFile(path string) (*model.Config, error) {
@@ -249,11 +296,12 @@ func fileServers(c *model.Config) []string {
 }
 
 // unusedServers notes on stderr each -server entry that names no server of
-// the file: likely a typing error, which would leave a server reached at
-// its name.
-func unusedServers(stderr io.Writer, c *model.Config, servers serverFlags) {
+// the file nor of inUse (the current pull subscribers, the distributor):
+// likely a typing error, which would leave a server reached at its name.
+// Names compare without regard to case (R7).
+func unusedServers(stderr io.Writer, c *model.Config, inUse []string, servers serverFlags) {
 	named := map[string]bool{}
-	for _, s := range fileServers(c) {
+	for _, s := range append(fileServers(c), inUse...) {
 		named[strings.ToUpper(s)] = true
 	}
 	keys := make([]string, 0, len(servers))
@@ -272,11 +320,12 @@ func unusedServers(stderr io.Writer, c *model.Config, servers serverFlags) {
 // the subscribers the file names, those of the current pull subscriptions
 // (a pull subscription removed from the file is still read, and dropped
 // where it must be), and every -server entry, each once and keyed by the
-// name first met. A subscriber that cannot be reached goes to unreachable
-// with its error (R29); only a failed read of the pull subscribers is an
-// error. The connections opened are returned with any error, for the
+// name first met, each with its own context from step. A subscriber that
+// cannot be reached goes to unreachable with its error (R29); only a failed
+// read of the pull subscribers is an error. It also returns the pull
+// subscribers. The connections opened are returned with any error, for the
 // caller to close.
-func openPlanSubscribers(ctx context.Context, desired *model.Config, pub *sql.DB, servers serverFlags, cp connParams) (map[string]*sql.DB, map[string]string, error) {
+func openPlanSubscribers(step func() (context.Context, context.CancelFunc), desired *model.Config, pub *sql.DB, servers serverFlags, cp connParams) (map[string]*sql.DB, map[string]string, []string, error) {
 	subs := map[string]*sql.DB{}
 	unreachable := map[string]string{}
 	var names []string
@@ -292,9 +341,11 @@ func openPlanSubscribers(ctx context.Context, desired *model.Config, pub *sql.DB
 			add(s.Subscriber)
 		}
 	}
+	ctx, cancel := step()
 	pulls, err := pullSubscribers(ctx, pub)
+	cancel()
 	if err != nil {
-		return subs, unreachable, err
+		return subs, unreachable, nil, err
 	}
 	for _, s := range pulls {
 		add(s)
@@ -312,12 +363,14 @@ func openPlanSubscribers(ctx context.Context, desired *model.Config, pub *sql.DB
 		if e, ok := servers.lookup(name); ok {
 			address = e.Address
 		}
+		ctx, cancel := step()
 		db, err := connect(ctx, address, "master", cp)
+		cancel()
 		if err != nil {
 			unreachable[name] = err.Error()
 			continue
 		}
 		subs[name] = db
 	}
-	return subs, unreachable, nil
+	return subs, unreachable, pulls, nil
 }

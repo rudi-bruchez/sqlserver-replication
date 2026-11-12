@@ -293,7 +293,7 @@ func TestProfileUsesAfterPlan(t *testing.T) {
 		t.Helper()
 		ops := planned(t, buildLabFacts(t, func(f *state.Facts) { f.ProfileUses = uses }, func(des, cur *model.Config) {
 			cur.AgentProfiles = append(cur.AgentProfiles, profiles...)
-			des.AgentProfiles = nil
+			des.AgentProfiles = []model.AgentProfile{}
 			edit(des, cur)
 		}))
 		return len(opsCalling(ops, "sp_drop_agent_profile")) - 1 // lab-distrib, unused, is dropped too
@@ -352,7 +352,7 @@ func TestProfileDropAfterRebinding(t *testing.T) {
 	}, func(des, cur *model.Config) {
 		salesPubAgent(t, cur).Profile = str("lab-distrib")
 		salesPubAgent(t, des).Profile = nil
-		des.AgentProfiles = nil
+		des.AgentProfiles = []model.AgentProfile{}
 	}))
 	bind := one(t, ops, "[distribution].dbo.sp_update_agent_profile")
 	drop := one(t, ops, "sp_drop_agent_profile")
@@ -365,7 +365,7 @@ func TestProfileDropAfterRebinding(t *testing.T) {
 	}, func(des, cur *model.Config) {
 		salesPubAgent(t, cur).Profile = str("Default agent profile")
 		salesPubAgent(t, des).Profile = str("LAB-DISTRIB")
-		des.AgentProfiles = nil
+		des.AgentProfiles = []model.AgentProfile{}
 	}))
 	if n := len(opsCalling(ops, "sp_drop_agent_profile")); n != 0 {
 		t.Errorf("a profile the plan binds to is dropped:\n%s", opsString(ops))
@@ -438,7 +438,7 @@ func TestBoundProfileKept(t *testing.T) {
 	// A profile absent from the file that an agent of the plan is bound to
 	// is not dropped.
 	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
-		des.AgentProfiles = nil
+		des.AgentProfiles = []model.AgentProfile{}
 		salesPubAgent(t, des).Profile = str("lab-distrib")
 	}))
 	one(t, ops, "[distribution].dbo.sp_update_agent_profile")

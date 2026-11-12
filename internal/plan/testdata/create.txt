@@ -23,8 +23,8 @@ Preconditions:
   unchecked published table dbo.Orders
   unchecked published table dbo.m_t1
   unchecked published table dbo.m_t2
-  unchecked subscriber database SalesSub
-  unchecked subscriber database m_sdb
+  unchecked subscriber database REPLLAB/SalesSub
+  unchecked subscriber database REPLLAB/m_sdb
   unchecked snapshot folder /var/opt/mssql/data/ReplData
   unchecked msdb job permission sysadmin, or SQLAgentOperatorRole owning the jobs: checked by apply
 Agents apply will start:

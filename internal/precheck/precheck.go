@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -27,6 +28,11 @@ type Conns struct {
 	Distributor *sql.DB
 	Subscribers map[string]*sql.DB // matched case-insensitively, as the reader's subscriberConn
 	Unreachable map[string]string  // server name to the error that kept it out
+	// DistributorServer is the distributor's name as the caller resolved
+	// it, used when not empty; otherwise the file's, else the publisher.
+	// Without it, a file with no distributor section and a remote
+	// distributor would check the publisher in the distributor's role.
+	DistributorServer string
 }
 
 // noConnection is the Error of a server of the file that Conns neither
@@ -41,6 +47,9 @@ func Run(ctx context.Context, c Conns, desired *model.Config) (*state.Checks, er
 	distributor := publisher
 	if d := desired.Distributor; d != nil && d.Server != "" {
 		distributor = d.Server
+	}
+	if c.DistributorServer != "" {
+		distributor = c.DistributorServer
 	}
 
 	// The servers, each once whatever its roles (R7: names compare without
@@ -82,6 +91,22 @@ func Run(ctx context.Context, c Conns, desired *model.Config) (*state.Checks, er
 			if err := server(s.Subscriber, subscriberConn(c.Subscribers, s.Subscriber)); err != nil {
 				return nil, err
 			}
+		}
+	}
+	// Every other server of Conns, connected or not: a pull subscription
+	// removed from the file is dropped at a subscriber the file no longer
+	// names, which Build checks like the file's (Task 18 fix round 1).
+	var others []string
+	for name := range c.Subscribers {
+		others = append(others, name)
+	}
+	for name := range c.Unreachable {
+		others = append(others, name)
+	}
+	sort.Strings(others)
+	for _, name := range others {
+		if err := server(name, subscriberConn(c.Subscribers, name)); err != nil {
+			return nil, err
 		}
 	}
 

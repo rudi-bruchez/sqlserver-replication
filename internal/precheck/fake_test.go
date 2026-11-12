@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
+	"github.com/rudi-bruchez/sqlserver-replication/internal/state"
 )
 
 // fakeDriver is a database/sql driver whose servers answer the precheck
@@ -125,5 +126,56 @@ func TestFakeSubscriberOwnServerName(t *testing.T) {
 	}
 	if got := run(pub); got != "repllab" {
 		t.Errorf("same connection: ServerName %q", got)
+	}
+}
+
+func checkOf(c *state.Checks, name string) *state.ServerCheck {
+	for i := range c.Servers {
+		if strings.EqualFold(c.Servers[i].Name, name) {
+			return &c.Servers[i]
+		}
+	}
+	return nil
+}
+
+// Every server of Conns gets a ServerCheck, not only the file's: a
+// subscriber of a pull subscription removed from the file, reached or not
+// (Task 18 fix round 1, item 1a).
+func TestRunChecksEveryConnServer(t *testing.T) {
+	desired := &model.Config{Publisher: model.Publisher{Server: "PUB", Database: "D"}}
+	c, err := Run(context.Background(), Conns{
+		Publisher:   fakeDB(t, "PUB"),
+		Distributor: fakeDB(t, "PUB"),
+		Subscribers: map[string]*sql.DB{"OLDPULL": fakeDB(t, "OTHERSRV")},
+		Unreachable: map[string]string{"GONE": "dial tcp: refused"},
+	}, desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc := checkOf(c, "OLDPULL"); sc == nil || !sc.Reachable || sc.ServerName != "OTHERSRV" || sc.Major != 16 {
+		t.Errorf("OLDPULL: %+v", sc)
+	}
+	if sc := checkOf(c, "GONE"); sc == nil || sc.Reachable || sc.Error != "dial tcp: refused" {
+		t.Errorf("GONE: %+v", sc)
+	}
+}
+
+// With no distributor section, the distributor the caller resolved is the
+// one checked, not the publisher (item 6).
+func TestRunDistributorServer(t *testing.T) {
+	desired := &model.Config{Publisher: model.Publisher{Server: "PUB", Database: "D"}}
+	c, err := Run(context.Background(), Conns{
+		Publisher:         fakeDB(t, "PUB"),
+		Distributor:       fakeDB(t, "DIST"),
+		DistributorServer: "DIST",
+	}, desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc := checkOf(c, "DIST"); sc == nil || !sc.Reachable || sc.ServerName != "DIST" {
+		t.Errorf("DIST: %+v", sc)
+	}
+	if sc := checkOf(c, "PUB"); sc == nil || sc.ServerName != "PUB" {
+		t.Errorf("PUB: %+v, want it to answer as itself", sc)
 	}
 }

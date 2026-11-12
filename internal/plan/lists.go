@@ -21,6 +21,7 @@ const (
 	r24SharedPull    = "the shared pull agent of %s is not started by apply: its job lookup at the subscriber is not measured; the delivery waits for its next run"
 	r26NotMeasured   = "%s; repair of this state is not measured"
 	r29Unreachable   = "%s runs at subscriber %s, which cannot be reached (%s) (R29)"
+	r29NoCheck       = "%s runs at %s, of which the checks hold no row: no check of server %s (R29)"
 	tableMissing     = "table %s does not exist in %s: plan does not create published tables (spec Non-goals)"
 	tableNoKey       = "table %s has no primary key: a table article of a transactional publication needs one (error 14088)"
 	subDBMissing     = "subscriber database %s does not exist at %s: plan does not create subscriber databases (spec Non-goals)"
@@ -38,6 +39,10 @@ const (
 	pendingNote      = "publication %s already awaits a snapshot before this plan"
 	restoreImmNote   = "restoring immediate_sync on %s: the next run of its snapshot agent generates every article (the remainder of a deferred snapshot, if one was interrupted)"
 )
+
+// precondSubscriberDB is the name of a subscriber database's precondition;
+// the summary writes its object with its server (Task 18 fix round 1).
+const precondSubscriberDB = "subscriber database"
 
 // Precondition statuses.
 const (
@@ -435,6 +440,13 @@ func (b *builder) preconditions(ops []Operation) []Precondition {
 			addServer(s.Subscriber)
 		}
 	}
+	// The servers the operations run at, beside the file's: a pull
+	// subscription removed from the file is dropped at its subscriber,
+	// whose name and version are checked like the file's (Task 18 fix
+	// round 1).
+	for _, op := range ops {
+		addServer(op.Server)
+	}
 	for _, name := range servers {
 		pc := Precondition{Name: "server version", Server: name, Object: name, Status: precondUnchecked}
 		sc := serverCheck(checks, name)
@@ -506,7 +518,7 @@ func (b *builder) preconditions(ops []Operation) []Precondition {
 				continue
 			}
 			seenDB[k] = true
-			pc := Precondition{Name: "subscriber database", Server: s.Subscriber, Object: s.Database, Status: precondUnchecked}
+			pc := Precondition{Name: precondSubscriberDB, Server: s.Subscriber, Object: s.Database, Status: precondUnchecked}
 			if dc := databaseCheck(checks, s.Subscriber, s.Database); dc != nil {
 				switch {
 				case !dc.Checked:
@@ -595,15 +607,20 @@ func (b *builder) preconditions(ops []Operation) []Precondition {
 // ServerCheck says it cannot be reached (R29): the pull procedures and the
 // job operations there. The push operations run at the publisher and the
 // distributor and stay planned, with the subscriber's preconditions
-// unchecked.
+// unchecked. With checks, an operation at a server they hold no row for
+// (neither the publisher nor the distributor) is refused too: nothing says
+// the server was reached (Task 18 fix round 1).
 func (b *builder) unreachable(ops []Operation) {
 	if b.in.Checks == nil {
 		return
 	}
 	seen := map[string]bool{}
 	for _, op := range ops {
+		if strings.EqualFold(op.Server, b.des.Publisher.Server) || strings.EqualFold(op.Server, b.distributorServer()) {
+			continue
+		}
 		sc := serverCheck(b.in.Checks, op.Server)
-		if sc == nil || sc.Reachable || strings.EqualFold(op.Server, b.des.Publisher.Server) || strings.EqualFold(op.Server, b.distributorServer()) {
+		if sc != nil && sc.Reachable {
 			continue
 		}
 		k := op.Path + sep + op.Call.Procedure
@@ -611,6 +628,10 @@ func (b *builder) unreachable(ops []Operation) {
 			continue
 		}
 		seen[k] = true
+		if sc == nil {
+			b.refuse(op.Path, r29NoCheck, op.Call.Procedure, op.Server, op.Server)
+			continue
+		}
 		b.refuse(op.Path, r29Unreachable, op.Call.Procedure, op.Server, sc.Error)
 	}
 }

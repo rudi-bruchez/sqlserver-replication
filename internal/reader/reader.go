@@ -64,7 +64,8 @@ func subscriberQuery(database string) string {
 // publication database pub is connected to, sorted. They are read at their
 // subscriber, so the caller opens them before Read. A database never
 // published has no dbo.syssubscriptions: error 208 means no pull
-// subscription, not an error (measured on the lab).
+// subscription, not an error (measured on the lab: a compile error, it
+// arrives at QueryContext).
 func PullSubscribers(ctx context.Context, pub *sql.DB) ([]string, error) {
 	rows, err := pub.QueryContext(ctx, pullSubscribersQuery)
 	if errorNumber(err) == 208 {
@@ -83,9 +84,6 @@ func PullSubscribers(ctx context.Context, pub *sql.DB) ([]string, error) {
 		out = append(out, name)
 	}
 	if err := rows.Err(); err != nil {
-		if errorNumber(err) == 208 {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("reading the pull subscribers: %w", err)
 	}
 	sort.Strings(out)

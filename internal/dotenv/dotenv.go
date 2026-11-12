@@ -14,7 +14,8 @@ import (
 
 // Parse reads KEY=VALUE lines. It skips blank lines and comments (#),
 // accepts an "export " prefix, and removes one pair of single or double
-// quotes around the value. A non-blank line without '=' is an error.
+// quotes around the value. A non-blank line without '=' is an error, which
+// names the line by its number only: the line may hold a secret.
 func Parse(r io.Reader) (map[string]string, error) {
 	out := map[string]string{}
 	sc := bufio.NewScanner(r)
@@ -28,7 +29,7 @@ func Parse(r io.Reader) (map[string]string, error) {
 		s = strings.TrimPrefix(s, "export ")
 		k, v, ok := strings.Cut(s, "=")
 		if !ok {
-			return nil, fmt.Errorf("line %d: no '=': %q", line, s)
+			return nil, fmt.Errorf("line %d: no '='", line)
 		}
 		k = strings.TrimSpace(k)
 		if k == "" {
