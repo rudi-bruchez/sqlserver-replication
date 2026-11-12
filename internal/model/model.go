@@ -119,6 +119,15 @@ type Distributor struct {
 	// linked server at the publisher.
 	AdminLinkSecurity   *string `yaml:"admin_link_security,omitempty"`
 	MultiSubnetFailover *bool   `yaml:"multi_subnet_failover,omitempty"`
+	// LinkEncrypt, LinkTrustServerCertificate and LinkHostNameInCertificate
+	// are the Encrypt, TrustServerCertificate and HostNameInCertificate keys
+	// of the repl_distributor provider string (sp_adddistributor
+	// @encrypt_distributor_connection, @trust_distributor_certificate,
+	// @host_name_in_distributor_certificate, SQL Server 2025), as written;
+	// nil when the key is absent.
+	LinkEncrypt                *string `yaml:"link_encrypt,omitempty"`
+	LinkTrustServerCertificate *string `yaml:"link_trust_server_certificate,omitempty"`
+	LinkHostNameInCertificate  *string `yaml:"link_host_name_in_certificate,omitempty"`
 	// StorageConnectionStringSecret names the secret of the Azure storage
 	// connection string of the publisher, nil when there is none.
 	StorageConnectionStringSecret *string `yaml:"storage_connection_string_secret,omitempty"`

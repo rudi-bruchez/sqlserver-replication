@@ -216,10 +216,12 @@ func (s Snapshot) OmittedOK(key string, parents []Step) bool {
 
 // OmittedOK: the file sizes and the creation connection only serve to create
 // the distribution database and are never read; no storage connection string
-// is the default.
+// is the default; the link encryption keys exist only on SQL Server 2025 and
+// only when the parameter was passed.
 func (d Distributor) OmittedOK(key string, parents []Step) bool {
 	switch key {
-	case "data_file_size_mb", "log_file_size_mb", "creation_connection", "storage_connection_string_secret":
+	case "data_file_size_mb", "log_file_size_mb", "creation_connection", "storage_connection_string_secret",
+		"link_encrypt", "link_trust_server_certificate", "link_host_name_in_certificate":
 		return true
 	}
 	return false

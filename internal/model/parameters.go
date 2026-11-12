@@ -23,7 +23,7 @@ type ParamMapping struct {
 	// 11-defaults row, Learn, a measurement).
 	Reason string
 	// Since is "2019", "2022" or "2025": the first listed version that has
-	// the parameter.
+	// the parameter (laterParameters).
 	Since string
 }
 
@@ -55,7 +55,37 @@ const (
 	rCreateDB   = "only serves to create the distribution database, never read (distributor-defaults D.sp_adddistributiondb.fresh)"
 )
 
-const sinceDefault = "2022"
+// sinceDefault is the oldest listed version: every parameter not in
+// laterParameters is in its listing.
+const sinceDefault = "2019"
+
+// laterParameters are the parameters absent from the oldest listing, with the
+// first listed version that has them (lab/results/2019, 2022 and
+// 2025/17-parameters.txt).
+var laterParameters = map[string]string{
+	"sp_adddistributor.@multi_subnet_failover":                "2022",
+	"sp_adddistributor.@security_mode":                        "2022",
+	"sp_addlogreader_agent.@job_security_mode":                "2022",
+	"sp_addpublication_snapshot.@job_security_mode":           "2022",
+	"sp_addpullsubscription_agent.@job_security_mode":         "2022",
+	"sp_addpushsubscription_agent.@job_security_mode":         "2022",
+	"sp_addsubscription.@subscriber_login":                    "2022",
+	"sp_addsubscription.@subscriber_password":                 "2022",
+	"sp_addsubscription.@subscriber_security_mode":            "2022",
+	"sp_adddistributor.@encrypt_distributor_connection":       "2025",
+	"sp_adddistributor.@trust_distributor_certificate":        "2025",
+	"sp_adddistributor.@host_name_in_distributor_certificate": "2025",
+}
+
+// withSince sets the Since of each entry from laterParameters.
+func withSince(ms []ParamMapping) []ParamMapping {
+	for i := range ms {
+		if v, ok := laterParameters[ms[i].Procedure+"."+ms[i].Parameter]; ok {
+			ms[i].Since = v
+		}
+	}
+	return ms
+}
 
 func field(proc, param string, paths ...string) ParamMapping {
 	return ParamMapping{Procedure: proc, Parameter: param, Kind: ParamField, Paths: paths, Since: sinceDefault}
@@ -129,7 +159,7 @@ var (
 // Parameters maps every parameter of the creation procedures listed by
 // lab/results/<version>/17-parameters.txt. TestParametersCovered checks that
 // each listed parameter has exactly one entry.
-var Parameters = concat(
+var Parameters = withSince(concat(
 	agentProfileParameters(),
 	articleParameters(),
 	distributorParameters(),
@@ -155,7 +185,7 @@ var Parameters = concat(
 		excluded("sp_replicationdboption", "@ignore_distributor", rFlag),
 		excluded("sp_replicationdboption", "@from_scripting", rFlag),
 	},
-)
+))
 
 func agentProfileParameters() []ParamMapping {
 	const add, upd = "sp_add_agent_profile", "sp_update_agent_profile"
@@ -264,6 +294,9 @@ func distributorParameters() []ParamMapping {
 			excluded(d, "@from_scripting", rFlag),
 			field(d, "@security_mode", pDist+".admin_link_security"),
 			field(d, "@multi_subnet_failover", pDist+".multi_subnet_failover"),
+			field(d, "@encrypt_distributor_connection", pDist+".link_encrypt"),
+			field(d, "@trust_distributor_certificate", pDist+".link_trust_server_certificate"),
+			field(d, "@host_name_in_distributor_certificate", pDist+".link_host_name_in_certificate"),
 		},
 	)
 }

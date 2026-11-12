@@ -573,6 +573,7 @@ func (e *exporter) readDistributorLink(d *model.Distributor) error {
 		return nil
 	}
 	d.MultiSubnetFailover = model.Ptr(multiSubnetFailover(provider))
+	d.LinkEncrypt, d.LinkTrustServerCertificate, d.LinkHostNameInCertificate = distributorLinkEncryption(provider)
 	switch {
 	case self.Valid && self.Int64 == 1:
 		d.AdminLinkSecurity = model.Ptr("windows")
@@ -583,6 +584,35 @@ func (e *exporter) readDistributorLink(d *model.Distributor) error {
 			"the login mapping of repl_distributor is neither the current security context nor distributor_admin")
 	}
 	return nil
+}
+
+// providerStringValue returns the value of key in a provider string, a list
+// of key=value pairs separated by ";", matching the key in any case; nil when
+// the key is absent.
+func providerStringValue(provider sql.NullString, key string) *string {
+	if !provider.Valid {
+		return nil
+	}
+	for _, pair := range strings.Split(provider.String, ";") {
+		k, v, ok := strings.Cut(pair, "=")
+		if ok && strings.EqualFold(strings.TrimSpace(k), key) {
+			return model.Ptr(strings.TrimSpace(v))
+		}
+	}
+	return nil
+}
+
+// distributorLinkEncryption reads the encryption settings that SQL Server
+// 2025 writes in the provider string of repl_distributor for the
+// sp_adddistributor parameters @encrypt_distributor_connection,
+// @trust_distributor_certificate and @host_name_in_distributor_certificate.
+// The keys are those sp_changedistributor_property matches, in any case:
+// Encrypt, TrustServerCertificate and HostNameInCertificate. Each is nil when
+// absent: the parameter was not passed, or the instance is older than 2025.
+func distributorLinkEncryption(provider sql.NullString) (encrypt, trust, hostName *string) {
+	return providerStringValue(provider, "Encrypt"),
+		providerStringValue(provider, "TrustServerCertificate"),
+		providerStringValue(provider, "HostNameInCertificate")
 }
 
 // multiSubnetFailover tells whether the provider string of the

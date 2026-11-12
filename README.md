@@ -13,7 +13,7 @@ Reads a publication database, its publications, articles, push and pull subscrip
 
 Scope: transactional and snapshot replication, push and pull subscriptions, SQL Server publisher. Anything else found (anonymous and updatable subscriptions, peer-to-peer, non-SQL Server subscribers) is reported under `findings`. Each finding has a `kind` (`out_of_scope`, `incomplete`, `unreadable` or `note`), the `path` of the element concerned and a `message`.
 
-Besides the publications, the file holds the distributor properties (cleanup batch sizes, the folders and names of the distribution database files, the security of the `repl_distributor` link, `multi_subnet_failover`), the publisher's `sync_with_backup`, and per publication the partition switch options, `enabled_for_het_sub`, `snapshot.enabled_for_internet` and the `type` and `subscriber_type` of each subscription. A property the export could not read is left out and has a finding.
+Besides the publications, the file holds the distributor properties (cleanup batch sizes, the folders and names of the distribution database files, the security of the `repl_distributor` link, `multi_subnet_failover` and, on SQL Server 2025, the link's `Encrypt`, `TrustServerCertificate` and `HostNameInCertificate` settings when they are set), the publisher's `sync_with_backup`, and per publication the partition switch options, `enabled_for_het_sub`, `snapshot.enabled_for_internet` and the `type` and `subscriber_type` of each subscription. A property the export could not read is left out and has a finding.
 
 A pull subscription's agent runs at the subscriber, which keeps its settings and its job. The export reads it under `pull_agent` when the subscriber is given with `-server NAME=ADDRESS`, `NAME` being the subscriber name as the publisher records it, in any case. Without it, `pull_agent` is left out with an `unreadable` finding that names the flag to pass. The pull subscriptions of one subscriber database to publications without an independent agent share one agent, exported once under `publisher.shared_pull_agents`. The subscriber connection uses the publisher's credentials (`-user`, `-param`).
 
@@ -39,7 +39,11 @@ Options:
 
 Required permissions: read access to the publication database, and to `msdb` and the distribution database on the distributor; for a pull subscription, to the subscription database and `msdb` on the subscriber.
 
-Passwords are never exported. Where an agent uses SQL Server authentication, the file carries a `password_secret` name instead. Agent command lines are exported with their password arguments masked.
+Passwords are never exported. Where an agent uses SQL Server authentication, the file carries a `password_secret` name instead: the name of the environment variable that will provide the password at apply time, `SQLREPL_<KIND>_<PART>...` (`SQL` with the server and the login, `WIN` with a job account, `FTP` with the address and the login, `STORAGE` with the publisher), upper case, every character outside `A-Z0-9` replaced by `_`. Two agents that use the same login on the same server share one name; two different sources that sanitize to the same name get `_2`, `_3` and a `note` finding. Agent command lines are exported with their password arguments masked.
+
+### File format
+
+The file starts with `version: 2`; a file of another version is refused when read. Every property is optional: in a file written by hand, a property left out takes its default. In an exported file, a property is left out only where it does not apply (a pull subscription has no `distribution_agent`, a schema-only article no table properties) or where a finding names its path. The kinds of finding tell what a later plan does with them: `out_of_scope` makes it refuse the database, `incomplete` is a state it repairs, `unreadable` marks a value it must not compare, and `note` needs nothing.
 
 ### Runtime facts
 

@@ -234,6 +234,42 @@ func TestMultiSubnetFailover(t *testing.T) {
 	}
 }
 
+// TestDistributorLinkEncryption checks the keys SQL Server 2025 writes in the
+// provider string of repl_distributor for the encryption parameters of
+// sp_adddistributor (sp_changedistributor_property matches them in any case).
+func TestDistributorLinkEncryption(t *testing.T) {
+	str := func(s string) *string { return &s }
+	cases := []struct {
+		name                   string
+		in                     sql.NullString
+		encrypt, trust, hostNm *string
+	}{
+		{"null", sql.NullString{}, nil, nil, nil},
+		{"none", sql.NullString{String: "Addr=tcp:d,1433;MultiSubnetFailover=Yes;", Valid: true}, nil, nil, nil},
+		{"encrypt", sql.NullString{String: "Addr=tcp:d,1433;Encrypt=Mandatory;User ID=distributor_admin;", Valid: true}, str("Mandatory"), nil, nil},
+		{"trust", sql.NullString{String: "trustservercertificate=yes;", Valid: true}, nil, str("yes"), nil},
+		{"host name", sql.NullString{String: "HOSTNAMEINCERTIFICATE= dist.example.com ;Encrypt=strict", Valid: true}, str("strict"), nil, str("dist.example.com")},
+	}
+	for _, c := range cases {
+		e, tr, h := distributorLinkEncryption(c.in)
+		for _, v := range []struct {
+			what      string
+			got, want *string
+		}{{"encrypt", e, c.encrypt}, {"trust", tr, c.trust}, {"host name", h, c.hostNm}} {
+			if (v.got == nil) != (v.want == nil) || v.got != nil && *v.got != *v.want {
+				t.Errorf("%s: %s = %v, want %v", c.name, v.what, deref(v.got), deref(v.want))
+			}
+		}
+	}
+}
+
+func deref(p *string) string {
+	if p == nil {
+		return "<nil>"
+	}
+	return *p
+}
+
 func TestSplitFilePath(t *testing.T) {
 	cases := []struct{ in, folder, file string }{
 		{`/var/opt/mssql//DATA/distribution.MDF`, `/var/opt/mssql//DATA`, `distribution.MDF`},

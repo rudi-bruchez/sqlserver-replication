@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Go tool, `sqlrepl`, that manages SQL Server transactional replication as a declarative file, on the Terraform model: export the current state, diff it against the desired state, generate the `sp_add*` / `sp_change*` / `sp_drop*` calls. The tool replaces the configuration layer only; Microsoft's replication engine (log reader, distribution) stays.
 
-Roadmap and status: step 1 (analysis, `docs/analysis/step-1-analysis.md`) and step 2 (read-only export) are done. The design of steps 3 and 4 is in `docs/superpowers/specs/2026-11-10-sqlrepl-plan-apply-design.md`; plan 1 (`docs/superpowers/plans/`, rename and measurement campaign) is done: the 2022 CU27 results in `lab/results/2022/` are those of commit `21c33a1`, its last measuring commit. Step 3 (plan) and step 4 (apply) are not started; the measurements that gate step 3 are made. The export has run against the lab replication of `lab/README.md` (SQL Server 2022 Developer in podman), which found and fixed the command parsing and the filter procedure and sync view rules.
+Roadmap and status: step 1 (analysis, `docs/analysis/step-1-analysis.md`) and step 2 (read-only export) are done. The design of steps 3 and 4 is in `docs/superpowers/specs/2026-11-10-sqlrepl-plan-apply-design.md`; plan 1 (`docs/superpowers/plans/`, rename and measurement campaign) is done: the 2022 CU27 results in `lab/results/2022/` are those of commit `21c33a1`, its last measuring commit. Plan 2 (`docs/superpowers/plans/2026-11-11-sqlrepl-2-model-and-export.md`, model and export) is done: the model maps every parameter of the creation procedures, the export reads pull subscriptions, snapshot publications, every profile and, on request, the runtime facts, and an unconfigured database exports as the empty configuration. Step 3 (plan) and step 4 (apply) are not started; the measurements that gate step 3 are made. The export has run against the lab replication of `lab/README.md` (SQL Server 2022 Developer in podman), which found and fixed the command parsing and the filter procedure and sync view rules.
 
-Scope: transactional replication, push subscriptions, SQL Server publisher. Merge, peer-to-peer, updatable, pull and anonymous subscriptions and Oracle publishers are out of scope; the export reports them under `findings` instead of modelling them.
+Scope: transactional and snapshot replication, push and pull subscriptions, SQL Server publisher. Merge, peer-to-peer, updatable and anonymous subscriptions, non-SQL Server subscribers and Oracle publishers are out of scope; the export reports them under `findings` (kind `out_of_scope`) instead of modelling them.
 
 Everything written in this repository (docs, code, comments, commits) is in English.
 
@@ -29,17 +29,20 @@ SQLREPL_TEST_DSN='server=lpc:localhost\SQLEXPRESS;encrypt=disable' go test ./...
 SQLREPL_TEST_DSN='sqlserver://sa:<url-encoded password>@127.0.0.1:11980?encrypt=disable' go test ./...
 ```
 
+The lab tests (`TestReadLab*`) need the lab replication and run through `lab/gotest.sh FILTER PACKAGE...`, which builds the DSN from `MSSQL_SA_PASSWORD`, sets `SQLREPL_TEST_LAB=1` and redacts the password from the output. Load the password in the same shell command: `set -a; . <harness>/.env; set +a; lab/gotest.sh '^TestReadLabSales$' ./internal/reader`. It exits 3 when the filter matches no test.
+
 Running the export:
 
 ```
-sqlrepl export -publisher PUBSRV -database Sales [-distributor DISTSRV] [-o out.yaml]
+sqlrepl export -publisher PUBSRV -database Sales [-distributor DISTSRV] [-server NAME=ADDRESS]... [-facts facts.json] [-o out.yaml]
 ```
 
 ## Architecture
 
 - `internal/decode`: pure functions between the coded values of the system tables (`schema_option` as big-endian `binary(8)`, article `type` and `status` bits, `pre_creation_cmd`, `ins_cmd`/`upd_cmd`/`del_cmd`, schedule codes…) and readable names. Invariant: unknown values are never dropped. They render as `unknown(n)` or as a hex bit, and the `*Code` / `Encode*` inverses accept them, so an export round-trips. Keep that invariant when adding a code table; step 3 relies on the inverses.
-- `internal/model`: the YAML file format (`Config`). It holds configuration only, with no runtime state and no secrets: a password appears as a `password_secret` name.
-- `internal/reader`: builds a `model.Config` from two connections, the publisher (connected to the publication database) and the distributor. `exporter.run()` reads in a fixed order (distributor, profiles, publications, articles, subscriptions, agents), and later steps depend on earlier ones (`pubIndex`, `articleNames`, `publisherID`). All SQL is in `queries.go`. `{dist}` and `{servers}` are substituted by `distQuery`: the quoted distribution database name, and `MSreplservers` or the `fallbackServers` derived table for distributors older than 2016 SP2 CU3.
+- `internal/model`: the YAML file format (`Config`, `FormatVersion` 2; `Load` refuses any other version). It holds configuration only, with no runtime state and no secrets: a password appears as a `password_secret` name, an environment variable name built by `SecretName` (`SQLREPL_<KIND>_<PART>...`, kinds `SQL`, `WIN`, `FTP`, `STORAGE`, every character outside `A-Z0-9` turned into `_`; a clash gets `_2`, `_3` and a `note` finding). Properties are pointers: nil means omitted, take the default, in a desired file; in a read configuration nil appears only where the type's `OmittedOK` allows it or a finding names the path (`TestReadLabExportsEveryProperty`). `Finding.Kind` is `out_of_scope` (plan 3 refuses the database), `incomplete` (a state to repair), `unreadable` (a value not to compare) or `note`. `Parameters` maps every parameter of the creation procedures (`field`, `creation_only` or `excluded`, with the first version that has it); `TestParametersCovered` checks it against each `lab/results/<version>/17-parameters.txt`.
+- `internal/state`: the observed runtime facts (`Facts`: snapshot readiness and last generation, subscription status at the publisher and the distributor, agent jobs and history, profile uses). Never part of the YAML; written as JSON by `export -facts`.
+- `internal/reader`: `Read(ctx, Source)` returns a `Result` (`Config`, and `Facts` only when `Source.Facts` is set: without it no facts query runs). It reads from the publisher (connected to the publication database), the distributor and the subscribers of `Source.Subscribers` (keys matched case-insensitively), where pull subscriptions are read. A probe through `master` first decides whether there is anything to read; otherwise the result is the empty configuration with a finding. `exporter.run()` reads in a fixed order (distributor, profiles, publications, articles, subscriptions, agents), and later steps depend on earlier ones (`pubIndex`, `articleNames`, `publisherID`). All SQL is in `queries.go`. `{dist}` and `{servers}` are substituted by `distQuery`: the quoted distribution database name, and `MSreplservers` or the `fallbackServers` derived table for distributors older than 2016 SP2 CU3.
 - `cmd/sqlrepl`: flag parsing and DSN building (`host\instance,port`, optional `lpc:`/`np:`/`tcp:` prefix mapped to the go-mssqldb `protocol` parameter; Windows authentication when no `-user`).
 
 Traps already paid for, documented at the queries:
@@ -53,6 +56,9 @@ Traps already paid for, documented at the queries:
 - `MSsnapshot_agents` has a row for every publication, `local_job = 0` and a never-created `job_id` when `sp_addpublication_snapshot` was not called.
 - Server names differ in case between tables (`syssubscriptions.srvname` is upper case, `@@SERVERNAME` is not): compare them case-insensitively.
 - The article `type` does not tell a user-named filter procedure or sync view; see `lab/README.md` for what does.
+- The synchronization view `sp_articleview` writes has one exact form, on one line (`create view [s].[v]as select [c1],[c2]  from  [s].[t]  where HAS_PERMS_BY_NAME(...)= 1  and (<clause>)`). `checkSyncView` reads it by position, since a clause can contain `= 1` and a bracketed name `from` or `,`; any other text is a user's own view, not checked.
+- `MSsubscriptions` has rows for the publication's virtual subscribers (`subscriber_id` -1, -2) whose window moves at every run. Read only each subscription's own rows (`subscriber_id >= 0`, joined to `MSpublications` and `MSarticles` on publisher id, database and ids, the subscriber named through `{servers}`, whose ids differ from the publisher's `srvid`). Status 3 is read there, never in `syssubscriptions`.
+- A pull subscription is read at its subscriber with the join of `sp_helppullsubscription` (`MSreplication_subscriptions` left joined to `MSsubscription_properties` on `UPPER(publisher)`, `publisher_db`, `publication`). Do not filter on `subscription_type`: the unique index includes it, so an anonymous row (type 2) can stand beside the type 1 row, and it must be reported. `independent_agent` and `immediate_sync` at the subscriber are parameters that default to 1, not copies of the publication's.
 
 ## stored-procedures/
 
