@@ -1192,7 +1192,7 @@ WHERE f.profile_name = N'lab-distrib' AND f.agent_type = 3`)
 	if len(want) == 0 {
 		t.Fatalf("%s: lab-distrib has no parameter row", label)
 	}
-	if !reflect.DeepEqual(prof.Parameters, want) {
+	if !reflect.DeepEqual(map[string]string(prof.Parameters), want) {
 		t.Errorf("%s: lab-distrib parameters = %v, want %v", label, prof.Parameters, want)
 	}
 }
