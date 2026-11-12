@@ -384,7 +384,8 @@ func TestNormalizeQualifiesNames(t *testing.T) {
 	a.SyncObject = &model.ObjectName{Name: "m_x"}
 	b := testTable("B", "s", "m_x")
 	b.Filter = &model.Filter{Clause: "x = 1", Procedure: &model.ObjectName{Schema: "s", Name: "m_x"}}
-	b.SyncObject = &model.ObjectName{Schema: "s", Name: "m_x"}
+	// A sync view outside dbo is refused (TestNormalizeSyncViewSchema).
+	b.SyncObject = &model.ObjectName{Schema: "dbo", Name: "m_x"}
 	out, rs := Normalize(testConfig(testPub("P", a, b)), nil)
 	noRefusal(t, "names", rs)
 	na, nb := out.Publications[0].Articles[0], out.Publications[0].Articles[1]
@@ -403,7 +404,7 @@ func TestNormalizeQualifiesNames(t *testing.T) {
 		{"A sync_object", *na.SyncObject, "dbo"},
 		{"A source", na.Source, "dbo"},
 		{"B filter.procedure", *nb.Filter.Procedure, "s"},
-		{"B sync_object", *nb.SyncObject, "s"},
+		{"B sync_object", *nb.SyncObject, "dbo"},
 		{"B source", nb.Source, "s"},
 	} {
 		if c.got.Schema != c.want || c.got.Name != "m_x" {
@@ -480,6 +481,42 @@ func TestNormalizeSchedules(t *testing.T) {
 	_, rs = Normalize(withSchedule(model.Schedule{Name: "s"}), nil)
 	if !refused(rs, path+".frequency", "has no default and must be written") {
 		t.Errorf("no frequency: refusals %v", rs)
+	}
+}
+
+func TestNormalizeScheduleSubday(t *testing.T) {
+	withSchedule := func(s model.Schedule) *model.Config {
+		q := testPub("P", testTable("A", "dbo", "T"))
+		q.SnapshotAgent = &model.Agent{Schedules: &[]model.Schedule{s}}
+		return testConfig(q)
+	}
+	for freq, want := range map[string]string{
+		"daily": "at_time", "weekly": "at_time", "monthly": "at_time", "monthly_relative": "at_time",
+		"once": "", "agent_start": "",
+	} {
+		out, rs := Normalize(withSchedule(model.Schedule{Name: "s", Frequency: freq, Interval: 1}), nil)
+		noRefusal(t, freq, rs)
+		if got := (*out.Publications[0].SnapshotAgent.Schedules)[0].Subday; got != want {
+			t.Errorf("%s with no subday: %q, want %q", freq, got, want)
+		}
+	}
+	out, _ := Normalize(withSchedule(model.Schedule{Name: "s", Frequency: "daily", Interval: 1, Subday: "minutes", SubdayInterval: 5}), nil)
+	if got := (*out.Publications[0].SnapshotAgent.Schedules)[0].Subday; got != "minutes" {
+		t.Errorf("a declared subday became %q", got)
+	}
+}
+
+func TestNormalizeSyncViewSchema(t *testing.T) {
+	a := testTable("A", "s", "T")
+	a.SyncObject = &model.ObjectName{Schema: "s", Name: "v"}
+	b := testTable("B", "s", "U")
+	b.SyncObject = &model.ObjectName{Name: "w"}
+	_, rs := Normalize(testConfig(testPub("P", a, b)), nil)
+	if !refused(rs, "publications[P].articles[A].sync_object", "outside dbo", "sp_articleview") {
+		t.Errorf("sync view in s: refusals %v", rs)
+	}
+	if refused(rs, "publications[P].articles[B].sync_object") {
+		t.Errorf("an unqualified sync view (dbo) refused: %v", rs)
 	}
 }
 

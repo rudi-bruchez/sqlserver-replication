@@ -416,6 +416,11 @@ func (n *normalizer) names(c *model.Config) {
 			a := &c.Publications[i].Articles[j]
 			qualify(&a.Source)
 			qualify(a.SyncObject)
+			if a.SyncObject != nil && a.SyncObject.Schema != "dbo" {
+				// Measured by the Task 8 review: sp_articleview ignores the
+				// schema of @view_name and creates the view in dbo.
+				n.refuse(artPath(p, a)+".sync_object", "a synchronization view outside dbo (%s) is not supported: sp_articleview creates its view in dbo whatever the schema of @view_name (measured)", a.SyncObject.Schema)
+			}
 			if a.Filter != nil {
 				qualify(a.Filter.Procedure)
 			}
@@ -895,6 +900,17 @@ func (n *normalizer) articleType(a *model.Article, path string, f frame) {
 	a.Type = model.Ptr(d.Value)
 }
 
+// subdayRequired are the frequencies whose schedule SQL Server Agent stores
+// with a nonzero subday type.
+var subdayRequired = map[string]bool{"daily": true, "weekly": true, "monthly": true, "monthly_relative": true}
+
+// ObjectBase returns the model path pattern the entries of object are
+// relative to (objectBases).
+func ObjectBase(object string) (string, bool) {
+	b, ok := objectBases[object]
+	return b, ok
+}
+
 // Rule 6: omitted means current (R4, R14, R22, R23, R37, R38, R41).
 func (n *normalizer) keepCurrent(c *model.Config) {
 	cur := n.current
@@ -948,6 +964,12 @@ func (n *normalizer) keepCurrent(c *model.Config) {
 				}
 				if s.EndTime == 0 {
 					s.EndTime = 235959
+				}
+				if s.Subday == "" && subdayRequired[s.Frequency] {
+					// Measured by the Task 8 review: @frequency_subday = NULL
+					// with a daily schedule stores freq_subday_type 1, read
+					// back as at_time, so "" would never converge.
+					s.Subday = "at_time"
 				}
 			}
 		}

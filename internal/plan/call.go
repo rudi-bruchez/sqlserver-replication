@@ -67,10 +67,10 @@ var procContexts = map[string]procContext{
 	// msdb.dbo. and the plain name from a publication database are 21482.
 	"sp_update_agent_profile": {"distributor", "distribution", "07-changes PRF.distribution-prefix.cwd-distribution"},
 
-	// The DST.* calls of 07-changes ran with USE Sales, the publication
-	// database of the local distributor (run_case).
-	"sp_changedistributiondb": {"distributor", "publication", "07-changes DST.*"},
-	"sp_changedistpublisher":  {"distributor", "publication", "07-changes DST.*"},
+	// The DST.* calls of 07-changes ran with USE Sales; the Task 8 review
+	// measured both from master, which a remote distributor has too.
+	"sp_changedistributiondb": {"distributor", "master", "07-changes DST.*"},
+	"sp_changedistpublisher":  {"distributor", "master", "07-changes DST.*"},
 
 	// The job's server: the distributor for the snapshot agent and a push
 	// distribution agent, the subscriber for a pull agent, whose operation
@@ -341,8 +341,10 @@ func encCommand(v any) (string, error) {
 	return literal(s), nil
 }
 
-// encObjectName passes the name of an object (a view, a filter procedure);
-// its schema is a parameter of its own where the procedure has one.
+// encObjectName passes the name of an object alone: sp_addarticle
+// @sync_object, whose schema is @sync_object_owner, and sp_articleview
+// @view_name, whose schema the procedure ignores (it creates the view in
+// dbo, measured by the Task 8 review; normalization refuses another schema).
 func encObjectName(v any) (string, error) {
 	x, ok := value(v)
 	if !ok {
@@ -353,6 +355,38 @@ func encObjectName(v any) (string, error) {
 		return "", fmt.Errorf("%T is not an object name", x)
 	}
 	return literal(n.Name), nil
+}
+
+// encQualifiedName passes the quoted two-part name N'[schema].[name]'.
+// Measured by the Task 8 review: sp_articlefilter creates an unqualified
+// @filter_name in dbo whatever the article's schema, and sp_changearticle
+// sync_object with an unqualified view outside dbo is 15001 and leaves the
+// transaction open.
+func encQualifiedName(v any) (string, error) {
+	x, ok := value(v)
+	if !ok {
+		return "", fmt.Errorf("no value")
+	}
+	n, ok := x.(model.ObjectName)
+	if !ok {
+		return "", fmt.Errorf("%T is not an object name", x)
+	}
+	if n.Schema == "" {
+		return "", fmt.Errorf("%s has no schema", n.Name)
+	}
+	return literal(quoteName(n.Schema) + "." + quoteName(n.Name)), nil
+}
+
+// encBit is 1 or 0, for an int parameter that holds a boolean.
+func encBit(v any) (string, error) {
+	b, err := asBool(v)
+	if err != nil {
+		return "", err
+	}
+	if b {
+		return "1", nil
+	}
+	return "0", nil
 }
 
 // encArticleList is sp_addsubscription @article for a one-article list; a
@@ -458,9 +492,12 @@ var encoders = func() map[string]encoder {
 	set(encReplFreq, p, "@repl_freq")
 	set(encBool, p, "@independent_agent", "@immediate_sync", "@enabled_for_internet", "@allow_push", "@allow_pull",
 		"@allow_anonymous", "@snapshot_in_defaultfolder", "@compress_snapshot", "@allow_subscription_copy",
-		"@allow_initialize_from_backup", "@replicate_ddl", "@enabled_for_het_sub", "@allow_partition_switch",
+		"@allow_initialize_from_backup", "@enabled_for_het_sub", "@allow_partition_switch",
 		"@replicate_partition_switch", "@allow_drop")
 	set(encInt, p, "@retention", "@ftp_port")
+	// @replicate_ddl is int (17-parameters): N'false' is 8114 (the Task 8
+	// review); the change call keeps N'0' and N'1' (R39).
+	set(encBit, p, "@replicate_ddl")
 	set(encSecret, p, "@ftp_password")
 
 	const s = "sp_addpublication_snapshot"
@@ -497,16 +534,14 @@ var encoders = func() map[string]encoder {
 	set(encSyncType, sub, "@sync_type")
 	set(encSubscription, sub, "@subscription_type")
 	set(encBool, sub, "@loopback_detection", "@unload", "@memory_optimized")
-	schedule(sub)
 	set(encSecret, sub, "@mediapassword", "@password")
 	set(encInt, sub, "@fileidhint", "@subscriptionstreams")
 	set(encSubscriber, sub, "@subscriber_type")
-	connection(sub, "@subscriber_")
 
 	set(encString, "sp_articlecolumn", "@publication", "@article")
 	set(encFromIdentity, "sp_articlecolumn", "@column", "@operation")
 	set(encString, "sp_articlefilter", "@publication", "@article", "@filter_clause")
-	set(encObjectName, "sp_articlefilter", "@filter_name")
+	set(encQualifiedName, "sp_articlefilter", "@filter_name")
 	set(encString, "sp_articleview", "@publication", "@article", "@filter_clause")
 	set(encObjectName, "sp_articleview", "@view_name")
 
@@ -545,29 +580,33 @@ var neverPassed = map[string]string{
 	"sp_addsubscription.@subscriptionlsn":                 "creation_only for a subscription initialized from an LSN, which the plan does not create (R21)",
 	"sp_addarticle.@source_table":                         "@source_object names the same table; the campaign scripts pass @source_owner and @source_object (03-add-article.sh)",
 	"sp_addarticle.@filter":                               "measured by a reader: 14027, the procedure does not exist before sp_articlefilter creates it, and the call's sys.sp_MSreinit_article adds 20026",
+	"sp_addsubscription.@frequency_type":                  rDeprecated,
+	"sp_addsubscription.@frequency_interval":              rDeprecated,
+	"sp_addsubscription.@frequency_subday":                rDeprecated,
+	"sp_addsubscription.@frequency_subday_interval":       rDeprecated,
+	"sp_addsubscription.@frequency_relative_interval":     rDeprecated,
+	"sp_addsubscription.@frequency_recurrence_factor":     rDeprecated,
+	"sp_addsubscription.@active_start_date":               rDeprecated,
+	"sp_addsubscription.@active_end_date":                 rDeprecated,
+	"sp_addsubscription.@active_start_time_of_day":        rDeprecated,
+	"sp_addsubscription.@active_end_time_of_day":          rDeprecated,
+	"sp_addsubscription.@subscriber_security_mode":        rDeprecated,
+	"sp_addsubscription.@subscriber_login":                rDeprecated,
+	"sp_addsubscription.@subscriber_password":             rDeprecated,
 	"sp_addarticle.@filter_owner":                         "the schema of @filter, which is never passed (14027)",
 	"sp_addarticle.@vertical_partition":                   "measured by a reader: N'true' publishes the key column alone and later sp_articlecolumn drops leave it so; the article starts with every column and drops (Task 11)",
 }
 
-// objectBases gives the model path pattern each Context.Object is relative
-// to: normalize's objectBases (internal/normalize/defaults.go), and the
-// publisher, which no default is measured for (sp_replicationdboption).
-var objectBases = map[string]string{
-	"publication":                  "publications[*]",
-	"article":                      "publications[*].articles[*]",
-	"push_subscription":            "publications[*].subscriptions[*]",
-	"snapshot_agent":               "publications[*].snapshot_agent",
-	"push_agent":                   "publications[*].subscriptions[*].distribution_agent",
-	"shared_push_agent":            "publisher.shared_distribution_agents[*].distribution_agent",
-	"pull_subscription":            "publications[*].subscriptions[*]",
-	"subscriber_pull_subscription": "publications[*].subscriptions[*]",
-	"pull_agent":                   "publications[*].subscriptions[*].pull_agent",
-	"log_reader_agent":             "publisher.log_reader_agent",
-	"distributor":                  "distributor",
-	"distribution_db":              "distributor",
-	"distpublisher":                "distributor",
-	"profile":                      "agent_profiles[*]",
-	"publisher":                    "publisher",
+const rDeprecated = "deprecated on sp_addsubscription (it prints \"The parameters for security, batch size, and scheduling have been deprecated\", creates the job implicitly and binds a secret twice, the Task 8 review): the agent's schedule and security go through sp_addpushsubscription_agent"
+
+// objectBase gives the model path pattern a Context.Object is relative to:
+// normalize's, and the publisher, which no default is measured for
+// (sp_replicationdboption).
+func objectBase(object string) (string, bool) {
+	if object == "publisher" {
+		return "publisher", true
+	}
+	return normalize.ObjectBase(object)
 }
 
 // creationCall builds the call of the creation procedure proc for the
@@ -580,7 +619,7 @@ var objectBases = map[string]string{
 // non-pointer value without a default (a schedule's start_date, R37) are not
 // passed. Identity parameters that model.Parameters does not list come last.
 func creationCall(proc string, obj any, ctx normalize.Context, identity []Param) (Call, error) {
-	base, ok := objectBases[ctx.Object]
+	base, ok := objectBase(ctx.Object)
 	if !ok {
 		return Call{}, fmt.Errorf("%s: unknown object %q", proc, ctx.Object)
 	}
@@ -635,6 +674,13 @@ func resolveParam(m model.ParamMapping, obj any, base string, ctx normalize.Cont
 		}
 		d, hasDefault := normalize.Lookup(ctx, rel)
 		switch {
+		case scheduleFrequency(rel):
+			// A declared schedule passes every frequency field (R22, R38):
+			// the omitted-schedule defaults are not those of a declared one
+			// (measured by the Task 8 review: daily with only
+			// @frequency_type and @frequency_interval stores subday 4,
+			// subday_interval 5, relative_interval 1 on a push agent).
+			differs = true
 		case hasDefault:
 			if !equalDefault(rel, v, d.Value, obj) {
 				differs = true
@@ -664,6 +710,13 @@ func resolveParam(m model.ParamMapping, obj any, base string, ctx normalize.Cont
 		return Param{Name: m.Parameter, Secret: lit}, true, nil
 	}
 	return Param{Name: m.Parameter, Value: lit}, true, nil
+}
+
+// scheduleFrequency tells a frequency field of a schedule.
+func scheduleFrequency(rel string) bool {
+	_, key, ok := strings.Cut(rel, "schedules[*].")
+	return ok && map[string]bool{"frequency": true, "interval": true, "subday": true, "subday_interval": true,
+		"relative_interval": true, "recurrence_factor": true}[key]
 }
 
 // isZero tells a zero non-pointer value (a schedule's 0, an empty clause).
@@ -923,7 +976,7 @@ var valueEncoders = map[[2]string]encoder{
 	{"sp_changearticle", "status"}:                    chgArticleStatus, // (N'SalesPub', N'Orders', N'status', N'include column names'); articleStatusWord
 	{"sp_changearticle", "creation_script"}:           chgString,        // (N'SalesPub', N'Orders', N'creation_script', N'/var/opt/mssql/data/create.sql')
 	{"sp_changearticle", "fire_triggers_on_snapshot"}: chgBool,          // (N'SalesPub', N'Orders', N'fire_triggers_on_snapshot', N'true')
-	{"sp_changearticle", "sync_object"}:               encObjectName,    // (N'SalesPub', N'Orders', N'sync_object', N'vCustomerFR')
+	{"sp_changearticle", "sync_object"}:               encQualifiedName, // (N'SalesPub', N'Orders', N'sync_object', N'vCustomerFR'), two-part: unqualified, a view outside dbo is 15001 (the Task 8 review)
 	{"sp_changearticle", "type"}:                      articleTypeWord,  // (N'SalesPub', N'Orders', N'type', N'logbased manualfilter')
 
 	// 07-changes.sh, the sub helper (@value = N'$2').

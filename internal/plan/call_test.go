@@ -133,6 +133,13 @@ func TestProcContextsCiteRows(t *testing.T) {
 	notes := readmeNotes(t)
 	roles := map[string]bool{"publisher": true, "distributor": true, "subscriber": true}
 	dbs := map[string]bool{"master": true, "publication": true, "distribution": true, "subscription": true, "msdb": true}
+	// Measured by the Task 8 review: both run from master, which a remote
+	// distributor has too.
+	for _, proc := range []string{"sp_changedistributiondb", "sp_changedistpublisher"} {
+		if pc := procContexts[proc]; pc.Role != "distributor" || pc.Database != "master" {
+			t.Errorf("%s runs at %s, %s; want distributor, master", proc, pc.Role, pc.Database)
+		}
+	}
 	for proc, pc := range procContexts {
 		if !roles[pc.Role] || !dbs[pc.Database] {
 			t.Errorf("%s: role %q, database %q", proc, pc.Role, pc.Database)
@@ -194,6 +201,10 @@ func TestEncodeValues(t *testing.T) {
 		{"sp_addpublication.@sync_method", str("concurrent_c"), "N'concurrent_c'"},
 		{"sp_addpublication.@repl_freq", str("transactional"), "N'continuous'"},
 		{"sp_addpublication.@retention", model.Ptr(100), "100"},
+		{"sp_addpublication.@replicate_ddl", model.Ptr(false), "0"}, // int(4), 17-parameters: N'false' is 8114
+		{"sp_addpublication.@replicate_ddl", model.Ptr(true), "1"},
+		{"sp_articlefilter.@filter_name", &model.ObjectName{Schema: "s", Name: "FLTR_A"}, "N'[s].[FLTR_A]'"},
+		{"sp_addarticle.@sync_object", &model.ObjectName{Schema: "s", Name: "v"}, "N'v'"}, // the schema is @sync_object_owner
 		{"sp_addarticle.@type", str("proc_schema_only"), "N'proc schema only'"},
 		{"sp_addarticle.@type", str("logbased_manualfilter"), "N'logbased manualfilter'"},
 		{"sp_addarticle.@schema_option", names(0x30073), "0x0000000000030073"},
@@ -263,7 +274,7 @@ func TestEncodeValues(t *testing.T) {
 		{"sp_changearticle", "status", "include column names", "N'include column names'"},
 		{"sp_changearticle", "creation_script", str("/var/opt/mssql/data/create.sql"), "N'/var/opt/mssql/data/create.sql'"},
 		{"sp_changearticle", "fire_triggers_on_snapshot", model.Ptr(true), "N'true'"},
-		{"sp_changearticle", "sync_object", &model.ObjectName{Schema: "dbo", Name: "vCustomerFR"}, "N'vCustomerFR'"},
+		{"sp_changearticle", "sync_object", &model.ObjectName{Schema: "s", Name: "vCustomerFR"}, "N'[s].[vCustomerFR]'"}, // two-part (the Task 8 review: 15001 unqualified)
 		{"sp_changearticle", "type", str("logbased_manualfilter"), "N'logbased manualfilter'"},
 		{"sp_changedistributiondb", "max_distretention", model.Ptr(96), "N'96'"}, // 07-changes.sh db helper
 		{"sp_changedistpublisher", "security_mode", str("sql"), "N'0'"},          // 07-changes.sh dp helper
@@ -370,4 +381,77 @@ func shown(v any) any {
 		return x
 	}
 	return v
+}
+
+// pushWithAgent is a normalized publication P with a push subscription whose
+// agent declares a daily schedule at a time and a SQL login.
+func pushWithAgent(t *testing.T) *model.Subscription {
+	t.Helper()
+	p := testPub("P", testTable("A", "dbo", "T"))
+	p.Subscriptions = []model.Subscription{{
+		Subscriber: "SUB", Database: "SD", Type: str("push"), Initialization: str("snapshot"),
+		DistributionAgent: &model.DistributionAgent{Agent: model.Agent{
+			Schedules: &[]model.Schedule{{Name: "s", Frequency: "daily", Interval: 1, Subday: "at_time"}},
+			Connection: &model.Connection{Security: str("sql"), Login: str("m_login"),
+				PasswordSecret: str("SQLREPL_SQL_SUB_M_LOGIN")},
+		}},
+	}}
+	c := normalized(t, testConfig(p))
+	return &c.Publications[0].Subscriptions[0]
+}
+
+func TestCreationCallDeclaredSchedule(t *testing.T) {
+	sub := pushWithAgent(t)
+	call, err := creationCall("sp_addpushsubscription_agent", sub.DistributionAgent, normalize.Context{Object: "push_agent", PubType: "transactional"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, p := range call.Params {
+		got[p.Name] = p.Value
+	}
+	// Every frequency field of the declared schedule, those equal to the
+	// omitted-schedule defaults included (R22, R38).
+	for name, want := range map[string]string{
+		"@frequency_type": "4", "@frequency_interval": "1", "@frequency_subday": "1",
+		"@frequency_subday_interval": "0", "@frequency_relative_interval": "0", "@frequency_recurrence_factor": "0",
+	} {
+		if v, ok := got[name]; !ok || v != want {
+			t.Errorf("%s = %q (passed %v), want %s; params %v", name, v, ok, want, call.Params)
+		}
+	}
+}
+
+func TestAddSubscriptionLeavesAgentParameters(t *testing.T) {
+	sub := pushWithAgent(t)
+	call, err := creationCall("sp_addsubscription", sub, normalize.Context{Object: "push_subscription", PubType: "transactional"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range call.Params {
+		if strings.HasPrefix(p.Name, "@frequency_") || strings.HasPrefix(p.Name, "@active_") || strings.HasPrefix(p.Name, "@subscriber_security") ||
+			p.Name == "@subscriber_login" || p.Name == "@subscriber_password" {
+			t.Errorf("sp_addsubscription passes %s (%s%s)", p.Name, p.Value, p.Secret)
+		}
+	}
+	agent, err := creationCall("sp_addpushsubscription_agent", sub.DistributionAgent, normalize.Context{Object: "push_agent", PubType: "transactional"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]Param{
+		"@subscriber_security_mode": {Name: "@subscriber_security_mode", Value: "0"},
+		"@subscriber_login":         {Name: "@subscriber_login", Value: "N'm_login'"},
+		"@subscriber_password":      {Name: "@subscriber_password", Secret: "SQLREPL_SQL_SUB_M_LOGIN"},
+	}
+	for _, p := range agent.Params {
+		if w, ok := want[p.Name]; ok {
+			if p != w {
+				t.Errorf("%v, want %v", p, w)
+			}
+			delete(want, p.Name)
+		}
+	}
+	for n := range want {
+		t.Errorf("sp_addpushsubscription_agent does not pass %s; params %v", n, agent.Params)
+	}
 }
