@@ -91,8 +91,11 @@ func (b *builder) diff(path string, desired, current any) []Change {
 	return diffIn(pubType, path, desired, current, b.skip)
 }
 
-// Build: Normalize, refuse on out_of_scope (R26), normalize the current
-// side's R14 bit, match objects (R7), call the strategies, finish.
+// Build: Normalize, refuse on out_of_scope and on the incomplete findings no
+// rule repairs (R26), normalize the current side's R14 bit, match objects
+// (R7), call the strategies, finish, then the plan-level lists (lists.go):
+// the job operations, the preconditions, the agents to start, the secrets,
+// the warnings and the notes.
 //
 // Matching is the strategies' (matchPublications and its siblings), each
 // on the lists it plans, and a matched pair is diffed at pair.path, built
@@ -117,9 +120,12 @@ func Build(in Inputs, opt Options) *Plan {
 			b.refuse(f.Path, "%s", f.Message)
 		case model.FindingUnreadable:
 			b.notes = append(b.notes, fmt.Sprintf("%s could not be read and is not compared: %s", f.Path, f.Message))
+		case model.FindingIncomplete:
+			b.incomplete(f) // R26
 		}
 	}
 	b.skip = unreadable(b.cur)
+	before := NewState(b.cur, in.Facts) // the state observed before the plan
 
 	p := &Plan{Publisher: des.Publisher.Server, Database: des.Publisher.Database, Options: opt}
 	if len(b.refusals) == 0 {
@@ -141,6 +147,7 @@ func Build(in Inputs, opt Options) *Plan {
 			p.Operations = ops
 		}
 	}
+	b.lists(p, before)
 	p.Refusals = b.refusals
 	p.Warnings = b.warnings
 	p.Notes = b.notes

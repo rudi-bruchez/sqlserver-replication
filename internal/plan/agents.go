@@ -621,23 +621,7 @@ func (b *builder) jobEnabled(s agentSlot, ch Change) {
 	if on {
 		enabled = "1"
 	}
-	var pro string
-	missing := literal(fmt.Sprintf("the job of %s does not exist", s.path))
-	if s.kind == agentPull {
-		// The pull agent's job is at the subscriber, named by the
-		// subscription's row there (internal/reader/agents.go).
-		pro = "DECLARE @job_id uniqueidentifier;\n" +
-			"SELECT @job_id = sj.job_id FROM " + quoteName(s.database) + ".dbo.MSreplication_subscriptions AS rs" +
-			" JOIN msdb.dbo.sysjobs AS sj ON sj.job_id = CONVERT(uniqueidentifier, rs.agent_id)" +
-			" WHERE UPPER(rs.publisher) = UPPER(" + literal(b.des.Publisher.Server) + ") AND rs.publisher_db = " +
-			literal(b.des.Publisher.Database) + " AND rs.publication = " + literal(s.pub) + " AND rs.subscription_type = 1;\n" +
-			"IF @job_id IS NULL THROW 50000, " + missing + ", 1;"
-	} else {
-		from, where := b.agentRow(s, quoteName(b.distributionDB()))
-		pro = "DECLARE @job_id uniqueidentifier;\n" +
-			"SELECT @job_id = sj.job_id " + from + " JOIN msdb.dbo.sysjobs AS sj ON sj.job_id = CONVERT(uniqueidentifier, a.job_id) WHERE " + where + ";\n" +
-			"IF @job_id IS NULL THROW 50000, " + missing + ", 1;"
-	}
+	pro := b.jobLookup(s)
 	op := b.distOp(10, s.path+sep+"3", "job_enabled", "change", s.path, Call{Procedure: "msdb.dbo.sp_update_job", Prologue: pro, Params: []Param{
 		{Name: "@job_id", Value: "@job_id"},
 		{Name: "@enabled", Value: enabled},
@@ -657,6 +641,27 @@ func (b *builder) jobEnabled(s agentSlot, ch Change) {
 	op.Reason = "the agent's job_enabled changes (R23)"
 	op.Sources = append(op.Sources, "R23")
 	b.add(op)
+}
+
+// jobLookup is the prologue that sets @job_id to an agent's job, joined to
+// msdb.dbo.sysjobs so that a row with a dead job_id gives none, and throws
+// when there is none (R24): at the distributor through the agent's row
+// (agentRow), for a pull agent at the subscriber through the subscription's
+// row there (internal/reader/agents.go).
+func (b *builder) jobLookup(s agentSlot) string {
+	missing := literal(fmt.Sprintf("the job of %s does not exist", s.path))
+	if s.kind == agentPull {
+		return "DECLARE @job_id uniqueidentifier;\n" +
+			"SELECT @job_id = sj.job_id FROM " + quoteName(s.database) + ".dbo.MSreplication_subscriptions AS rs" +
+			" JOIN msdb.dbo.sysjobs AS sj ON sj.job_id = CONVERT(uniqueidentifier, rs.agent_id)" +
+			" WHERE UPPER(rs.publisher) = UPPER(" + literal(b.des.Publisher.Server) + ") AND rs.publisher_db = " +
+			literal(b.des.Publisher.Database) + " AND rs.publication = " + literal(s.pub) + " AND rs.subscription_type = 1;\n" +
+			"IF @job_id IS NULL THROW 50000, " + missing + ", 1;"
+	}
+	from, where := b.agentRow(s, quoteName(b.distributionDB()))
+	return "DECLARE @job_id uniqueidentifier;\n" +
+		"SELECT @job_id = sj.job_id " + from + " JOIN msdb.dbo.sysjobs AS sj ON sj.job_id = CONVERT(uniqueidentifier, a.job_id) WHERE " + where + ";\n" +
+		"IF @job_id IS NULL THROW 50000, " + missing + ", 1;"
 }
 
 // schedule plans the changes of an agent's schedule, its fields grouped

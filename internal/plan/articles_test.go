@@ -21,6 +21,9 @@ func buildLab(t *testing.T, checks *state.Checks, edit func(des, cur *model.Conf
 	return Build(Inputs{Desired: des, Current: cur, Facts: facts, Checks: checks}, Options{})
 }
 
+// planned is a plan's operations without R24's job operations (Task 15),
+// which the tests of the strategies leave to build_test.go; it stops the
+// test on a refusal.
 func planned(t *testing.T, p *Plan) []Operation {
 	t.Helper()
 	for _, r := range p.Refusals {
@@ -29,7 +32,19 @@ func planned(t *testing.T, p *Plan) []Operation {
 	if t.Failed() {
 		t.FailNow()
 	}
-	return p.Operations
+	return withoutJobOps(p.Operations)
+}
+
+// withoutJobOps leaves out R24's job operations, keeping the Seq of the
+// others.
+func withoutJobOps(ops []Operation) []Operation {
+	var out []Operation
+	for _, op := range ops {
+		if op.Kind != "job_disable" && op.Kind != "job_restore" && op.Kind != "job_start" {
+			out = append(out, op)
+		}
+	}
+	return out
 }
 
 func opsCalling(ops []Operation, proc string) []Operation {
@@ -669,7 +684,7 @@ func TestPullExtension(t *testing.T) {
 }
 
 func TestAddArticleColumnNotInTable(t *testing.T) {
-	checks := &state.Checks{Tables: []state.TableCheck{{Schema: "dbo", Name: "m_t9", Exists: true, Columns: []string{"id", "a"}}}}
+	checks := &state.Checks{Tables: []state.TableCheck{{Schema: "dbo", Name: "m_t9", Exists: true, HasPrimaryKey: true, Columns: []string{"id", "a"}}}}
 	p := buildLab(t, checks, func(des, _ *model.Config) {
 		a := newTable("m_t9")
 		a.Columns = []string{"id", "x"}

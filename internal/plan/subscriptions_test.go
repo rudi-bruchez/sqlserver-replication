@@ -259,7 +259,7 @@ func plannedAlone(t *testing.T, p *Plan) []Operation {
 	if len(p.Refusals) > 0 {
 		t.FailNow()
 	}
-	return p.Operations
+	return withoutJobOps(p.Operations)
 }
 
 // oneAlone is one without stopping the test: an empty Operation when the
