@@ -157,8 +157,10 @@ type Agent struct {
 	// DistributorConnection is how a snapshot agent connects to the
 	// distributor, read from its command line.
 	DistributorConnection *Connection `yaml:"distributor_connection,omitempty"`
-	// Profile is the name of the agent profile, empty when the agent uses
-	// the default profile of its type.
+	// Profile is the name of the agent profile the agent's row at the
+	// distributor names (msdb.dbo.MSagent_profiles.profile_name), a system
+	// profile such as "Default agent profile" included; empty when the row has
+	// no profile id (0).
 	Profile *string `yaml:"profile,omitempty"`
 	// RunAs is the credential identity of the job step proxy, empty when the
 	// step runs as the SQL Server Agent service account.
