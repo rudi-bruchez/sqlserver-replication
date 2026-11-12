@@ -1,0 +1,11 @@
+# Microsoft SQL Server 2022 (RTM-CU27-GDR) (KB5126934) - 16.0.4305.5 (X64)
+R|AS.detect.dm_server_services.running|Running|services=SQL Server Agent (MSSQLSERVER):Running
+R|AS.detect.agent_sessions.running|3|programs=SQLAgent - Contained AG, SQLAgent - Email Logger, SQLAgent - Generic Refresher
+R|AS.detect.xp_servicecontrol.running|Running.|rows=1
+R|AS.detect.dm_server_services.stopped|Stopped|services=SQL Server Agent (MSSQLSERVER):Stopped
+R|AS.detect.agent_sessions.stopped|0|programs=none
+R|AS.detect.xp_servicecontrol.stopped|Stopped.|rows=1
+R|AS.guard.stopped|idle|after_start_job=idle
+R|AS.start_job.stopped|22022|rc=1 error=0 form=HResult msg=SQLServerAgent is not currently running so it cannot be notified of this action.
+R|AS.startpub.stopped|22022|rc=1 error=0 form=HResult msg=SQLServerAgent is not currently running so it cannot be notified of this action.
+R|TOTAL|9

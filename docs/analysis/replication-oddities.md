@@ -816,6 +816,12 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Observed: on a snapshot job owned by `sa`, `SQLAgentOperatorRole` runs `sp_update_job @enabled = 0` and `sp_start_job` (the job runs), but a `SELECT` of `msdb.dbo.sysjobs` (to find the job from `MSsnapshot_agents`) and of `syssessions` with `sysjobactivity` (to know whether it is idle) fails with 229 (the message names `syssessions`, the first table the predicate reads; `sysjobactivity` read alone is 229 as well). `SQLAgentUserRole` gets the same 229 on both reads, and 14262 ("does not exist") from `sp_update_job` and `sp_start_job` on a job it does not own. An msdb user in no Agent role gets 229 on the two procedures themselves. The same texts run as `sa`. A tool that finds, checks and starts the job therefore needs `sysadmin`, or an operator granted `SELECT` on `sysjobs`, `sysjobactivity` and `syssessions` (the granted case is not measured; it is rule R55 of plan 4).
 - Source: measured, `20-apply AP.perm.*`, `AP.perm.sa.*` (logins with a distribution user granted `SELECT`, so that the refusals are msdb's).
 
+### SQL Server Agent stopped
+
+- Expected: with SQL Server Agent stopped, `sp_start_job` fails with a number of its own, raised like any T-SQL error to a `TRY...CATCH`.
+- Observed: on SQL Server 2022 CU27 for Linux, `msdb.dbo.sp_start_job` and `sp_startpublication_snapshot` both return code 1 and print `HResult 0x5606, Level 16` (22022, the number of a busy job) with the message "SQLServerAgent is not currently running so it cannot be notified of this action."; the message is not raised to the `CATCH` and `@@ERROR` reads 0 after the call. `sys.dm_server_services` has one row on Linux, `SQL Server Agent (MSSQLSERVER)`, `status_desc` `Running` or `Stopped`; the `SQLAgent - %` sessions go from 3 to 0; `xp_servicecontrol N'QueryState', N'SQLServerAGENT'` returns `Running.` or `Stopped.`. The `syssessions`-based idle read reads `idle` for a job that was idle when Agent stopped, before and after the refused start: no session row is added while Agent is down. `MSSQL_AGENT_ENABLED=false` at container start does keep Agent down (a job started writes no history in 30 s).
+- Source: measured, `lab/agent-stopped.sh`, `AS.*`. A job running when Agent stopped, and what go-mssqldb returns for the refusal, are not measured.
+
 ### sp_stop_job on a job that has just ended
 
 - Expected: inside `TRY`, a refusal goes to the `CATCH`.
@@ -1384,7 +1390,7 @@ The numbers met, with their meaning in this context. The agent messages met in t
 | 21854 | `sp_addarticle` | a snapshot is being generated |
 | 21861 | `sp_articlefilter` | would deactivate an article while a snapshot is generated |
 | 21866 | `sp_changepublication` | `replicate_partition_switch` without `allow_partition_switch` |
-| 22022 | `msdb.dbo.sp_start_job`, `sp_startpublication_snapshot` | the job is running or has a pending request (HResult 0x5606); retry until accepted |
+| 22022 | `msdb.dbo.sp_start_job`, `sp_startpublication_snapshot` | the job is running or has a pending request (HResult 0x5606); retry until accepted. Also SQL Server Agent stopped, message "SQLServerAgent is not currently running so it cannot be notified of this action.", return code 1, not caught by `TRY...CATCH`: not to retry |
 | 22547 | `sp_changepublication`, creation | `concurrent` on a snapshot publication |
 | 41989 | agent changes | `@job_security_mode` is Managed Instance only |
 | 50000 | `job_password` changes | generic `RAISERROR`: `@job_login` must be non-null |
