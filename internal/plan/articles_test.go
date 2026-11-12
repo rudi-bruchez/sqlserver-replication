@@ -705,8 +705,10 @@ func TestLogReaderOfAddedPublications(t *testing.T) {
 		if len(lr) != want {
 			t.Errorf("%s: %d sp_addlogreader_agent, want %d:\n%s", typ, len(lr), want, opsString(ops))
 		}
-		if want == 1 && (lr[0].Step != 3 || lr[0].Seq != 1) {
-			t.Errorf("log reader in step %d, seq %d", lr[0].Step, lr[0].Seq)
+		// After sp_replicationdboption publish, which a database without a
+		// publication gets first (Task 14).
+		if want == 1 && (lr[0].Step != 3 || lr[0].Seq != 2 || ops[0].Call.Procedure != "sp_replicationdboption") {
+			t.Errorf("log reader in step %d, seq %d:\n%s", lr[0].Step, lr[0].Seq, opsString(ops))
 		}
 	}
 	// Every current publication dropped: step 5 removes the log reader

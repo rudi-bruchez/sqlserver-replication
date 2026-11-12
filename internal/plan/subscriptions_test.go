@@ -463,7 +463,10 @@ func TestAgentOwnedChangesLeftToAgents(t *testing.T) {
 		a := subOf(t, des, "SalesPub", "SalesSub").DistributionAgent
 		a.Profile, a.JobEnabled = str("lab-distrib"), model.Ptr(false)
 	}))
-	if len(ops) != 0 {
+	// Task 14 plans them (agentsStrategy): a binding and a job_enabled
+	// change, and no subscription property call of Task 12.
+	if len(ops) != 2 || len(opsCalling(ops, "sp_changesubscription")) != 0 ||
+		ops[0].Kind != "agent_binding" || ops[1].Kind != "job_enabled" {
 		t.Errorf("profile and job_enabled are Task 14's; operations:\n%s", opsString(ops))
 	}
 	if !agentOwned("pull_agent.schedules[*].frequency") || agentOwned("distribution_agent.subscription_streams") {
@@ -543,6 +546,11 @@ func TestSharedPushAgentCreatedOnce(t *testing.T) {
 	// The shared agent exists: sp_addsubscription alone keeps its job.
 	ops = plannedAlone(t, buildLab(t, nil, func(des, cur *model.Config) {
 		both(des, cur, func(c *model.Config) { sharedRef(c, "m_sdb_shared") })
+		// The current agent as the export reads it: the values the file's
+		// defaults give (Task 14 compares a shared agent's properties).
+		a := &cur.Publisher.SharedDistributionAgents[len(cur.Publisher.SharedDistributionAgents)-1].DistributionAgent
+		a.Connection = &model.Connection{Security: str("windows")}
+		a.SubscriptionStreams, a.MemoryOptimized = model.Ptr(0), model.Ptr(false)
 		addSub(t, des, "SalesRef", newSub("m_sdb_shared", "push", "snapshot"))
 	}))
 	if n := len(opsCalling(ops, "sp_addpushsubscription_agent")); n != 0 || len(opsCalling(ops, "sp_addsubscription")) != 1 {

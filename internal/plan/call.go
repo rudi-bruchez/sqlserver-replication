@@ -450,7 +450,8 @@ var encoders = func() map[string]encoder {
 	set(encFromIdentity, "sp_add_agent_parameter", "@profile_id", "@parameter_name", "@parameter_value")
 	set(encString, "sp_add_agent_profile", "@profile_name", "@description")
 	set(encAgentType, "sp_add_agent_profile", "@agent_type")
-	set(encBool, "sp_add_agent_profile", "@default")
+	// @default is bit: the form 19-profiles PF.create_default passed (= 1).
+	set(encBit, "sp_add_agent_profile", "@default")
 	set(encFromIdentity, "sp_update_agent_profile", "@agent_type", "@agent_id", "@profile_id")
 
 	const a = "sp_addarticle"

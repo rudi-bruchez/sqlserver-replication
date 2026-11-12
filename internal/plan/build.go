@@ -23,6 +23,13 @@ type strategy func(b *builder)
 
 var strategies []strategy
 
+// lateStrategies run after every strategy of strategies: they read what the
+// others planned (b.ops, b.dropped, b.readd, b.sharedPush). The distributor
+// and agents strategies of Task 14 are late, since a profile's last use, an
+// agent created by the plan and the log reader the publications strategy
+// adds are known only then.
+var lateStrategies []strategy
+
 // builder is the state Build hands the strategies.
 type builder struct {
 	in              Inputs
@@ -117,6 +124,9 @@ func Build(in Inputs, opt Options) *Plan {
 		foldColumns(b.cur, in.Checks)
 		b.st = NewState(b.cur, in.Facts)
 		for _, s := range strategies {
+			s(b)
+		}
+		for _, s := range lateStrategies {
 			s(b)
 		}
 	}

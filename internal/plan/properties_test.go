@@ -77,10 +77,19 @@ func TestChainOrder(t *testing.T) {
 	}
 }
 
+// refIndependent makes SalesRef independent in the desired file, which then
+// no longer declares the shared distribution agent SalesRef alone used
+// (Task 14, sharedPlacement).
+func refIndependent(t *testing.T, des *model.Config) {
+	t.Helper()
+	pubOf(t, des, "SalesRef").IndependentAgent = model.Ptr(true)
+	des.Publisher.SharedDistributionAgents = nil
+}
+
 func TestIndependentAgentDropReadd(t *testing.T) {
 	const subscription = "REPLLAB/SalesSub"
 	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
-		pubOf(t, des, "SalesRef").IndependentAgent = model.Ptr(true)
+		refIndependent(t, des)
 	}))
 	drop := one(t, ops, "sp_dropsubscription")
 	change := one(t, ops, "sp_changepublication")
@@ -119,6 +128,9 @@ func anonymousPub(t *testing.T, des, cur *model.Config, keepAnon bool) {
 	pubOf(t, cur, "SalesPub").AllowAnonymous = model.Ptr(true)
 	p := pubOf(t, des, "SalesPub")
 	p.IndependentAgent, p.ImmediateSync, p.AllowAnonymous = model.Ptr(false), model.Ptr(false), model.Ptr(keepAnon)
+	// Its subscription then uses the shared agent of REPLLAB/SalesSub, which
+	// the file declares already (Task 14, sharedPlacement).
+	subOf(t, des, "SalesPub", "SalesSub").DistributionAgent = nil
 }
 
 func TestIndependentAgentDropReaddAnonymous(t *testing.T) {
@@ -387,7 +399,7 @@ func TestSnapshotScriptWarning(t *testing.T) {
 
 func TestReaddWithArticleChanges(t *testing.T) {
 	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
-		pubOf(t, des, "SalesRef").IndependentAgent = model.Ptr(true)
+		refIndependent(t, des)
 		addTo(t, des, "SalesRef", newTable("m_t1"))
 		removeArticle(t, des, "SalesRef", "vCustomerFR")
 	}))
@@ -438,7 +450,7 @@ func TestReinitKeepsRowsWarning(t *testing.T) {
 	t.Run("drop_readd", func(t *testing.T) {
 		ops := plannedAlone(t, buildLab(t, nil, func(des, cur *model.Config) {
 			both(des, cur, func(c *model.Config) { articleOf(t, c, "SalesRef", "Product").PreCreationCmd = str("none") })
-			pubOf(t, des, "SalesRef").IndependentAgent = model.Ptr(true)
+			refIndependent(t, des)
 		}))
 		add := oneAlone(t, ops, "sp_addsubscription")
 		if len(add.Warnings) != 1 || add.Warnings[0] != fmt.Sprintf(keepsRowsWarning, "Product") {
@@ -545,6 +557,7 @@ func TestReaddRefusals(t *testing.T) {
 		p := buildLab(t, nil, func(des, _ *model.Config) {
 			d := pubOf(t, des, "SalesRef")
 			d.IndependentAgent, d.AllowPull = model.Ptr(true), model.Ptr(true)
+			des.Publisher.SharedDistributionAgents = nil // Task 14, sharedPlacement
 			subOf(t, des, "SalesRef", "SalesSub").Type = str("pull")
 		})
 		wantRefusal(t, p, refPath("type"), fmt.Sprintf(r21Type, "REPLLAB/SalesSub", "push", "pull"))
@@ -552,7 +565,7 @@ func TestReaddRefusals(t *testing.T) {
 	for _, side := range []string{"current", "desired"} {
 		t.Run("initialization "+side, func(t *testing.T) {
 			p := buildLab(t, nil, func(des, cur *model.Config) {
-				pubOf(t, des, "SalesRef").IndependentAgent = model.Ptr(true)
+				refIndependent(t, des)
 				c := cur
 				if side == "desired" {
 					c = des
