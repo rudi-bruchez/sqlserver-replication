@@ -10,8 +10,12 @@ import (
 	"github.com/rudi-bruchez/sqlserver-replication/internal/decode"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/normalize"
+	"github.com/rudi-bruchez/sqlserver-replication/internal/state"
 )
 
+// Registered after agentsStrategy (Go runs the init functions of a package
+// in file name order, agents.go before distributor.go): a profile's drop
+// reads the bindings agentsStrategy plans (b.rebound).
 func init() { lateStrategies = append(lateStrategies, distributorStrategy) }
 
 // The refusals of the distributor and the profiles (R6, R17, spec
@@ -28,7 +32,8 @@ const (
 // The Order keys of steps 1, 2 and 11 (finish sorts by (Step, Order)):
 //
 //   - step 1: 1 sp_adddistributor, 2 sp_adddistributiondb, 3
-//     sp_adddistpublisher, then "4\x00<path>" for a change;
+//     sp_adddistpublisher, then "4\x00<rank>\x00<path>" for a change, the
+//     rank ordering the two retention calls (retentionOrder);
 //   - step 2: "<agent type>\x00<lower-cased name>\x00" then 1 for
 //     sp_add_agent_profile, 2 for sp_change_agent_profile, and
 //     "3\x00<lower-cased parameter>" for a parameter call;
@@ -131,7 +136,8 @@ func (b *builder) planDistributor() {
 	pub := b.des.Publisher.Server
 	if des == nil {
 		// Neither side has one (normalization copies the current
-		// distributor into a file that omits it, R4).
+		// distributor into a file that omits it): R4.
+		b.refuse("distributor", "%s", r4Declare)
 		return
 	}
 	local := strings.EqualFold(des.Server, pub)
@@ -163,6 +169,7 @@ func (b *builder) planDistributor() {
 	if b.skip("distributor") {
 		return
 	}
+	retention := retentionOrder(des, cur)
 	for _, ch := range b.diff("distributor", des, cur) {
 		rel := strings.TrimPrefix(ch.Pattern, "distributor.")
 		switch {
@@ -173,8 +180,22 @@ func (b *builder) planDistributor() {
 			b.refuse(ch.Path, noDistChange, rel)
 			continue
 		}
-		b.distributorChange(ch)
+		b.distributorChange(ch, retention[rel])
 	}
+}
+
+// retentionOrder is the Order keys of the min and max retention changes.
+// Measured by the Task 14 review: sp_changedistributiondb refuses with
+// 14107 a state where max_distretention is below min_distretention (equal
+// is accepted), so the two calls run in the order that keeps min <= max at
+// each step: max first when it goes up, min first otherwise (both down, or
+// max down and min up). Normalization refuses a desired min above max.
+func retentionOrder(des, cur *model.Distributor) map[string]string {
+	up := des.MaxRetentionHours != nil && cur.MaxRetentionHours != nil && *des.MaxRetentionHours > *cur.MaxRetentionHours
+	if up {
+		return map[string]string{"max_retention_hours": "1", "min_retention_hours": "2"}
+	}
+	return map[string]string{"min_retention_hours": "1", "max_retention_hours": "2"}
 }
 
 // createDistributor is step 1 on a server without a distributor:
@@ -225,7 +246,7 @@ func (b *builder) addDistPublisher(d *model.Distributor, reason string) {
 // distributorChange is one sp_changedistributiondb or sp_changedistpublisher
 // for a changed property of the distributor, its entry from cost.Lookup; a
 // change of a shared object (spec "Shared distributor objects").
-func (b *builder) distributorChange(ch Change) {
+func (b *builder) distributorChange(ch Change, rank string) {
 	e, ok := lookupChange(ch)
 	if !ok {
 		b.unmeasured(ch)
@@ -261,7 +282,7 @@ func (b *builder) distributorChange(ch Change) {
 		b.refuse(ch.Path, "no measured call for %s", ch.Pattern)
 		return
 	}
-	op := b.distOp(1, "4"+sep+ch.Path, "distributor_property", "change", "distributor", Call{Procedure: e.Procedure, Params: []Param{
+	op := b.distOp(1, "4"+sep+rank+sep+ch.Path, "distributor_property", "change", "distributor", Call{Procedure: e.Procedure, Params: []Param{
 		first, {Name: "@property", Value: literal(e.Property)}, {Name: "@value", Value: lit},
 	}})
 	withCites(&op, e)
@@ -531,7 +552,7 @@ func (b *builder) profileUsed(p *model.AgentProfile) bool {
 	}
 	gone := b.droppedUses()
 	for _, u := range b.in.Facts.ProfileUses {
-		if u.AgentType == p.AgentType && strings.EqualFold(u.Profile, p.Name) && !gone(u.Publisher, u.PublisherDB, u.Publication, u.Subscriber, u.Database) {
+		if u.AgentType == p.AgentType && strings.EqualFold(u.Profile, p.Name) && !gone(u) {
 			return true
 		}
 	}
@@ -543,18 +564,22 @@ func (b *builder) profileUsed(p *model.AgentProfile) bool {
 // its distribution agents, virtual ones included), the distribution agent
 // of a dropped subscription, a shared push agent whose every push
 // subscription the plan drops (measured by the Task 12 review: it goes with
-// the last), and the log reader when every publication is dropped
-// (13-transient T02).
-func (b *builder) droppedUses() func(publisher, db, pub, subscriber, database string) bool {
+// the last), the log reader when every publication is dropped
+// (13-transient T02), and an agent this plan binds to another profile.
+func (b *builder) droppedUses() func(u state.ProfileUse) bool {
 	_, _, curOnly := matchPublications(b.des.Publications, b.cur.Publications)
 	droppedPub := map[string]bool{}
 	for _, p := range curOnly {
 		droppedPub[p.Name] = true
 	}
 	allDropped := len(b.cur.Publications) > 0 && len(curOnly) == len(b.cur.Publications)
-	return func(publisher, db, pub, subscriber, database string) bool {
-		if !strings.EqualFold(publisher, b.des.Publisher.Server) || !strings.EqualFold(db, b.des.Publisher.Database) {
+	return func(u state.ProfileUse) bool {
+		pub, subscriber, database := u.Publication, u.Subscriber, u.Database
+		if !strings.EqualFold(u.Publisher, b.des.Publisher.Server) || !strings.EqualFold(u.PublisherDB, b.des.Publisher.Database) {
 			return false
+		}
+		if want, ok := b.rebound[agentKey(u.AgentType, pub, subscriber, database)]; ok && !strings.EqualFold(want, u.Profile) {
+			return true // bound to another profile by this plan (agentsStrategy runs first)
 		}
 		switch {
 		case pub == "":

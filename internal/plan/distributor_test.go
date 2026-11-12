@@ -60,12 +60,17 @@ func inStep(ops []Operation, step int) []Operation {
 	return out
 }
 
+func noDistributor(c *model.Config) *model.Config {
+	c.Distributor = nil
+	return c
+}
+
 func newDistributor(server string) *model.Distributor {
 	return &model.Distributor{Server: server, Database: "distribution", AdminPasswordSecret: str("SQLREPL_SQL_S_DISTRIBUTOR_ADMIN")}
 }
 
 func TestDistributorCreateLocal(t *testing.T) {
-	cur := normalized(t, testConfig())
+	cur := normalized(t, noDistributor(testConfig()))
 	des := testConfig()
 	des.Distributor = newDistributor("s") // the publisher S, in another case
 	ops := planned(t, Build(Inputs{Desired: des, Current: cur, Facts: &state.Facts{}}, Options{}))
@@ -91,7 +96,7 @@ func TestDistributorCreateLocal(t *testing.T) {
 }
 
 func TestDistributorRemoteRefused(t *testing.T) {
-	cur := normalized(t, testConfig())
+	cur := normalized(t, noDistributor(testConfig()))
 	des := testConfig()
 	des.Distributor = newDistributor("REMOTE")
 	wantOnlyRefusal(t, Build(Inputs{Desired: des, Current: cur, Facts: &state.Facts{}}, Options{}), r17Remote)

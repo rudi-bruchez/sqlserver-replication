@@ -56,6 +56,9 @@ type builder struct {
 	readd map[string]bool
 	// deferrals memoizes deferred (defer.go), by publication name.
 	deferrals map[string]bool
+	// rebound is the profile each agent this plan binds is bound to, by
+	// agentKey (agents.go): the profile drop of step 11 reads it.
+	rebound map[string]string
 }
 
 func (b *builder) refuse(path, format string, args ...any) {

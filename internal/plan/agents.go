@@ -19,6 +19,7 @@ const (
 	sharedPushDeclared = "publication %s uses a shared distribution agent after this plan: declare the agent under publisher.shared_distribution_agents"
 	sharedPullDeclared = "publication %s uses a shared pull agent after this plan: declare the agent under publisher.shared_pull_agents"
 	sharedPushStale    = "the publications the shared distribution agent of %s serves become independent in this plan: remove it from publisher.shared_distribution_agents"
+	createdJobWarning  = "the job starts at its creation, before this call disables it (measured by the Task 14 review: sp_addlogreader_agent and the implicit shared distribution job start at once)"
 	sharedPullStale    = "the publications the shared pull agent of %s serves become independent in this plan: remove it from publisher.shared_pull_agents"
 )
 
@@ -353,9 +354,19 @@ func agentProfiles(c *model.Config) []agentProfile {
 	return out
 }
 
-// defaultProfile is the default profile of an agent type
-// (state.Facts.DefaultProfiles), "" when unknown.
+// defaultProfile is the default profile of an agent type this plan leaves
+// in place: a profile of the file with default true (a new one gets it from
+// sp_add_agent_profile @default = 1 in step 2; normalization refuses two),
+// otherwise state.Facts.DefaultProfiles; "" when unknown (R41, fix round 1
+// of Task 14). Measured by the Task 14 review: sp_add_agent_profile
+// @default = 1 rebinds no existing agent, so an omitted profile is bound to
+// the new default by this plan.
 func (b *builder) defaultProfile(agentType string) string {
+	for _, p := range b.des.AgentProfiles {
+		if p.AgentType == agentType && boolOf(p.Default) {
+			return p.Name
+		}
+	}
 	if b.in.Facts == nil {
 		return ""
 	}
@@ -375,6 +386,11 @@ func (b *builder) planAgent(s agentSlot) {
 	}
 	b.binding(s)
 	if s.cur == nil {
+		if j := s.des.JobEnabled; j != nil && !*j && s.kind != agentSnapshot {
+			// R23 on an agent the plan creates: disabled after its creation
+			// (the snapshot agent's is Task 15's job_restore).
+			b.jobEnabled(s, Change{Path: s.path + ".job_enabled", Pattern: model.Pattern(s.path + ".job_enabled"), After: model.Ptr("false")})
+		}
 		return
 	}
 	var schedules []Change
@@ -447,6 +463,10 @@ func (b *builder) binding(s agentSlot) {
 	if have != "" && strings.EqualFold(have, want) {
 		return
 	}
+	if b.rebound == nil {
+		b.rebound = map[string]string{}
+	}
+	b.rebound[agentKey(s.agentType, s.pub, s.subscriber, s.database)] = want
 	e, ok := cost.Lookup(cost.OpProfileBinding, "", "transactional")
 	if !ok {
 		b.refuse(s.path+".profile", "cost of %s not measured", cost.OpProfileBinding)
@@ -480,6 +500,13 @@ func (b *builder) binding(s agentSlot) {
 	}
 	op.Sources = append(op.Sources, "spec Agents and profiles", "spec Order step 10")
 	b.add(op)
+}
+
+// agentKey names an agent of this publication database as a
+// state.ProfileUse does: its type, its publication ("" for the log reader,
+// ALL for a shared agent), its subscriber and subscription database.
+func agentKey(agentType, pub, subscriber, database string) string {
+	return agentType + sep + pub + sep + strings.ToLower(subscriber) + sep + strings.ToLower(database)
 }
 
 func (s agentSlot) affects() Affects {
@@ -566,6 +593,9 @@ func (b *builder) jobEnabled(s agentSlot, ch Change) {
 	}})
 	if s.kind == agentPull {
 		op.Server = s.subscriber
+	}
+	if s.cur == nil {
+		op.Warnings = append(op.Warnings, createdJobWarning)
 	}
 	withCites(&op, e)
 	for _, n := range e.Notes {

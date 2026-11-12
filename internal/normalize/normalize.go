@@ -1099,6 +1099,12 @@ func (n *normalizer) passwords(c *model.Config) {
 
 // Rule 7: combinations the server refuses, after defaults.
 func (n *normalizer) conflicts(c *model.Config) {
+	if d := c.Distributor; d != nil && d.MinRetentionHours != nil && d.MaxRetentionHours != nil && *d.MinRetentionHours > *d.MaxRetentionHours {
+		// Measured by the Task 14 review: sp_changedistributiondb refuses a
+		// min above the max, and a max below the min, with 14107.
+		n.refuse("distributor.min_retention_hours", "min_distretention %d is above max_distretention %d (14107, measured)",
+			*d.MinRetentionHours, *d.MaxRetentionHours)
+	}
 	for i := range c.Publications {
 		p := &c.Publications[i]
 		pp := pubPath(p)

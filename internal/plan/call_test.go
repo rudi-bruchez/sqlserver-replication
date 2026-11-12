@@ -18,7 +18,9 @@ import (
 var str = model.Ptr[string]
 
 func testConfig(pubs ...model.Publication) *model.Config {
-	return &model.Config{Version: model.FormatVersion, Publisher: model.Publisher{Server: "S", Database: "D"}, Publications: pubs}
+	// A local distributor: a file must declare the one it needs (R4).
+	return &model.Config{Version: model.FormatVersion, Publisher: model.Publisher{Server: "S", Database: "D"},
+		Distributor: newDistributor("S"), Publications: pubs}
 }
 
 func testPub(name string, arts ...model.Article) model.Publication {
