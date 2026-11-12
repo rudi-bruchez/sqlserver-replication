@@ -51,6 +51,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: properties change independently.
 - Observed: `allow_anonymous` needs `immediate_sync` (20011), which needs `independent_agent` (21022); `sp_addpublication @immediate_sync = 'true'` alone is refused with 21022 and does not fill `independent_agent`. `independent_agent` cannot change while subscriptions exist, in either direction (20013), so it cannot be turned off while `immediate_sync` is on (21022) and cannot be turned on once subscribed. `compress_snapshot` needs `alt_snapshot_folder` (21157), `enabled_for_internet` needs `ftp_address` (21158), `allow_subscription_copy` needs `immediate_sync` (21210), `enabled_for_het_sub` is refused while subscriptions exist (20640), `allow_push = false` while push subscriptions exist (20012, whose message contains `(null)`).
+- Also observed: `sp_changepublication @property = N'allow_pull', @value = N'false'` on a publication with subscriptions is refused with 20013 (plan 3 task 8 review, measured, 2026-11-12).
 - Also observed: `independent_agent` set to false while subscriptions exist returns 20013 in all four flag cells (plan 3 task 7 review, measured); the lab rows of the matrix cover only the change to true (`02-matrix P26`, `09-snapshot-pub SNAP.P16`, 20013 in all four cells), the change to false on an `immediate_sync` publication returning 21022 (`02-matrix P25`, `09-snapshot-pub SNAPI.P16`). `enabled_for_het_sub` true returns 20640 in all four cells while subscriptions exist (`02-matrix P37`, `09-snapshot-pub SNAP.P24`, `SNAPI.P24`).
 - Source: measured, `02-matrix` (analysis section 5, table "Publication properties"), the panel for `sp_addpublication` (design, "Omitted properties").
 
@@ -183,6 +184,24 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Observed: `sp_articlefilter` accepts `[dbo].[x]` and `dbo.x` and stores the schema `dbo`.
 - Source: measured, panel 3 Opus, "Concluded by reading" item 2 (the measurement is quoted inside it).
 
+### The schema of the procedure sp_articlefilter creates
+
+- Expected: the filter procedure goes to the schema of the article's source table.
+- Observed: `sp_articlefilter` accepts a schema-qualified `@filter_name` (`N'[s].[f]'`) and creates the procedure in that schema. Unqualified, it goes to the caller's default schema (`dbo` for `sa`), even when the article's source table is in another schema.
+- Source: measured, plan 3 task 8 review (2026-11-12).
+
+### The schema of the view sp_articleview creates
+
+- Expected: `sp_articleview` honors the schema of `@view_name`, as `sp_articlefilter` does for its procedure.
+- Observed: it ignores it: `@view_name = N'[s].[v]'` returned 0 and created `dbo.v`.
+- Source: measured, plan 3 task 8 review (2026-11-12).
+
+### sync_object with an unqualified view name
+
+- Expected: `sp_changearticle @property = N'sync_object'` finds a view by its name.
+- Observed: with the unqualified name of a view in a schema other than `dbo`, it fails with 15001 ("Object ... does not exist") and leaves `@@TRANCOUNT` at 1. The qualified name `N'[s].[v]'` is accepted.
+- Source: measured, plan 3 task 8 review (2026-11-12).
+
 ### Identity range management
 
 - Expected: `@identityrangemanagementoption` concerns updatable subscriptions only; schema option `0x04` (identity as identity) is an independent bit.
@@ -281,6 +300,12 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected: `sp_addsubscription @article = '<name>'` adds one article to a subscription.
 - Observed: on an `immediate_sync` publication any explicit extension is refused, with `'all'` by 14058 ("already exists"), by name by 14122 under `native` and 14100 under `concurrent`, whether or not anything is marked. On a `concurrent` or `concurrent_c` publication without `immediate_sync`, a named extension is refused with 14100 and `'all'` is the way, which delivers only the new article. These are static rules, not effects of a reinitialization mark: they repeat after a snapshot.
 - Source: measured, `15-snapshot-scope D.imm_native.*`, `D.imm_concurrent.*`, `D.non_native_pub.extend`, `D.non_concurrent_pub.extend`, `D.*.extend_after_snapshot`; `O8` (Mistral); panel 3 GLM item 3 (14100 on `immediate_sync` plus `concurrent`, 14122 on `immediate_sync` plus `native`).
+
+### A subset subscription with replication support only
+
+- Expected: a subscription to one article out of three on an `immediate_sync` publication is refused with 14122 under automatic initialization, and the same under `replication support only`.
+- Observed: `sp_addsubscription` of one article out of three on an `immediate_sync` publication with `@sync_type = N'replication support only'` returned 0. A single observation, not yet a measured row: it awaits a campaign row before the planner relies on it.
+- Source: measured once, plan 3 task 8 review (2026-11-12).
 
 ### Re-adding a subscription with @article = 'all'
 
@@ -495,6 +520,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected: `sp_addsubscription` registers the subscription and `sp_addpushsubscription_agent` creates its agent.
 - Observed: `sp_addsubscription` of a push subscription creates and starts the distribution agent job by itself, printing "The distribution agent job has been implicitly created and will run under the SQL Server Agent Service Account", and that job delivered the snapshot about 5 s later. The `sp_addpushsubscription_agent` that follows returns 0 and updates the same job (same name, schedule changed from continuous to the one given). Between the two calls the agent runs under the Agent service account. Measured on 2022 only.
 - Also observed: on a publication with `independent_agent`, `sp_addsubscription` starts the distribution job at once, even for an unreachable subscriber. A pull subscription at an unreachable subscriber reads, from the publisher, as a job NULL with "Distribution agent for subscription added.". Source: plan 3 task 4 and task 5 reviews, measured; the ledger lines do not show where that message appears.
+- Also observed: the same happens when `sp_addsubscription` is given schedule or security parameters (`@frequency_*`, `@subscriber_security_mode`, `@subscriber_login`, `@subscriber_password`). It prints "The parameters for security, batch size, and scheduling have been deprecated and should no longer be used", then creates the distribution agent job implicitly; a following `sp_addpushsubscription_agent` returns 0 and updates the same job. Source: plan 3 task 8 review, measured (2026-11-12).
 - Source: measured, `O13` (Claude, controller); p2 task-11-fix-1-report (the same warning on `m_gen`).
 
 ### sp_addsubscription in a transaction
@@ -787,6 +813,18 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Observed: msdb allows it.
 - Source: reported by the re-review of plan 2's final fixes (F2), ledger 2 line 89, p2 final-fix-report; the ledger does not say whether it was run.
 
+### An omitted @frequency_subday
+
+- Expected: a daily schedule with `@frequency_subday = NULL` stores no sub-day type, or 0.
+- Observed: `sp_addpublication_snapshot` with a daily schedule and `@frequency_subday = NULL` stores `freq_subday_type` 1 (once at the time). `sp_addpushsubscription_agent` with `@frequency_type = 4` and `@frequency_subday = NULL` also stores 1.
+- Source: measured, plan 3 task 8 review (2026-11-12).
+
+### Schedule defaults that depend on the frequency
+
+- Expected: an omitted schedule field takes the default of the procedure, 0 for a schedule that starts with the agent.
+- Observed: `sp_addpushsubscription_agent` with only `@frequency_type = 4` and `@frequency_interval = 1` stores `freq_subday_type` 4 (minutes), a sub-day interval of 5 and a relative interval of 1, although the defaults of the procedure for an omitted schedule are 0. The defaults of the other schedule fields depend on the frequency.
+- Source: measured, plan 3 task 8 review (2026-11-12).
+
 ### Fields of start and idle schedules
 
 - Expected: every schedule carries its interval fields.
@@ -817,7 +855,14 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: all in `master`, or all anywhere.
 - Observed: `sp_adddistributor` needs `master` (5001 "User must be in the master database" elsewhere); `sp_adddistributiondb` and `sp_adddistpublisher` run from any database. `sp_adddistributor` fails with 14099 when a distributor exists.
+- Also observed: `sp_changedistributiondb` succeeds from `master`, from the publication database and from the distribution database; `sp_changedistpublisher` from `master` and from the publication database. Source: plan 3 task 8 review, measured (2026-11-12).
 - Source: measured, `distributor-defaults X.*`; 14099 the panel (design "Order").
+
+### sp_adddistpublisher for a server that does not exist
+
+- Expected: the publisher must exist as a server, or the call is refused.
+- Observed: `sp_adddistpublisher` for a server that does not exist succeeds and adds it to `sys.servers`; `sp_dropdistpublisher` removes it.
+- Source: measured, plan 3 task 8 review (2026-11-12).
 
 ### The snapshot working directory
 
@@ -959,13 +1004,15 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected: a refused replication procedure rolls back what it opened.
 - Observed: it leaves its transaction open: `@@TRANCOUNT = 1` in the `CATCH` of a refused `sp_addarticle`, two levels after a refused `sp_droparticle`, 2 after `sp_changepublication replicate_ddl = N'false'` (245), 1 after `sp_changearticle schema_option` given a binary literal (21805). What follows runs in it and is lost when the session ends. The transaction may also be doomed (`XACT_STATE() <> 1`), so the state read after it is not the state of the case.
 - Also observed: the count adds up: `@@TRANCOUNT` reads 3 after `sp_dropsubscription` followed by `sp_droparticle` (whether both were refused is not recorded in the ledger line); a refusal by 20640 leaves it unchanged; and `@@ERROR` is 0 right after the refused `EXEC`, so it cannot be used to detect the refusal. Source: plan 3 task 7 review, measured.
+- Also observed: not every refusal leaves the transaction open. `sp_changepublication allow_pull N'false'` on a publication with subscriptions is refused with 20013 and leaves `@@TRANCOUNT` at 1; `sp_changearticle ins_cmd N'XCALL ...'` is refused with 15251 and leaves it at 0; `sp_changearticle sync_object` with an unqualified view name outside `dbo` fails with 15001 and leaves it at 1. Source: plan 3 task 8 review, measured (2026-11-12).
 - Source: measured, lab row 11 (`03-add-article C3`); the panel for `sp_droparticle` (design "apply" step 4); panel 3 Mistral, verified items 1 and 2; `lab/campaign/14-filter-view-cases.sql:141-143`.
 
 ### The @value of sp_changearticle and sp_changepublication
 
 - Expected: `@value` takes the literal of the property's type, and booleans accept `N'true'` and `N'false'`.
 - Observed: `sp_changearticle @property = 'schema_option'` needs the string `N'0x0000000000030073'`; the binary literal `0x0000000000030073` is refused with 21805 ("'' is not a valid value for the '@value' parameter. The value must be an integer"). `sp_changepublication replicate_ddl` refuses `N'false'` with 245 (conversion to int) and accepts `N'0'` and `N'1'`, while every other boolean property accepts `N'true'` and `N'false'`. `sp_addarticle @schema_option` is `binary(8)` and takes the bare literal.
-- Source: measured, panel 3 Mistral, verified items 1 and 2; plan 3 rule R39.
+- Also observed: the creation procedure has the opposite type. `sp_addpublication @replicate_ddl = N'false'` fails client-side with 8114 ("Error converting data type nvarchar to int", HResult 0x1FB2), the return code NULL: the parameter is `int(4)` at creation, while `sp_changepublication @property = N'replicate_ddl'` takes `N'0'` or `N'1'`. `@replicate_ddl = 0` at creation succeeds.
+- Source: measured, panel 3 Mistral, verified items 1 and 2; plan 3 rule R39; the creation case plan 3 task 8 review, measured (2026-11-12).
 
 ### Message 18752 during drops
 
@@ -1091,6 +1138,7 @@ The numbers met, with their meaning in this context. The agent messages met in t
 | 3624 | `sp_changearticle filter` | engine assertion, severity 20, connection ended |
 | 4406 | `sp_articlecolumn` in `distribution` | update of the Oracle view `sysarticlecolumns` |
 | 5001 | `sp_adddistributor` | must run in `master` |
+| 8114 | `sp_addpublication @replicate_ddl = N'false'` | conversion of nvarchar to int, client-side; the parameter is int at creation |
 | 14005 | `sp_droppublication` | subscriptions remain |
 | 14013 | publication procedures | the current database is not enabled for publication |
 | 14027 | `sp_addarticle @filter` | the filter procedure does not exist yet |
@@ -1111,14 +1159,15 @@ The numbers met, with their meaning in this context. The agent messages met in t
 | 14278 | `sp_changepublication_snapshot` | `frequency_type` without the interval it needs |
 | 14288 | `sp_changepublication_snapshot` | end date before start date |
 | 14529 | `job_login` changes | not a valid Windows account |
+| 15001 | `sp_changearticle sync_object` | the unqualified name of a view outside `dbo`; leaves `@@TRANCOUNT` at 1 |
 | 15002 | `sp_addsubscription` | cannot run inside a transaction |
-| 15251 | `sp_addarticle` | `upd_cmd = 'SCALL'` without a procedure name |
+| 15251 | `sp_addarticle`, `sp_changearticle` | `upd_cmd = 'SCALL'` without a procedure name; `ins_cmd N'XCALL ...'` (leaves `@@TRANCOUNT` at 0) |
 | 18752 | publication drops | another log reader or log-related procedure; the drop may still complete |
 | 18757 | `sp_addpublication_snapshot` | the database is not published |
 | 18787 | `sp_changepublication` | initialization from backup on a snapshot publication |
 | 20011 | `sp_changepublication` | `allow_anonymous` without `immediate_sync` |
 | 20012 | `sp_changepublication`, `sp_addsubscription` | `allow_push` or `allow_pull` needed or refused, message with `(null)` |
-| 20013 | `sp_changepublication` | `independent_agent` changed while subscriptions exist |
+| 20013 | `sp_changepublication` | `independent_agent` or `allow_pull = false` changed while subscriptions exist |
 | 20016 | `sp_addpullsubscription` (2019 source) | pull without `@subscription_type`, by reading |
 | 20017 | `sp_addpullsubscription_agent` | the subscription does not exist at the subscriber |
 | 20026 | `sp_articlefilter` in `distribution`, inside 14027 | the publication does not exist |
