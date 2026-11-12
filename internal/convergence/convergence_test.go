@@ -1,0 +1,240 @@
+package convergence
+
+import (
+	"os"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
+	"github.com/rudi-bruchez/sqlserver-replication/internal/plan"
+)
+
+// The plan of the lab fixture against the live Sales is empty (Review Focus
+// 1 and 6; the fixture has no schedule dates, R37). Read-only: no statement
+// runs.
+func TestLabSalesPlanEmpty(t *testing.T) {
+	e := newEnv(t)
+	var ready bool
+	if err := e.master.QueryRow("SELECT immediate_sync_ready FROM Sales.dbo.syspublications WHERE name = N'SalesPub'").Scan(&ready); err != nil {
+		t.Fatal(err)
+	}
+	if !ready {
+		t.Fatal("SalesPub's immediate_sync_ready is 0: the lab's first snapshot run has not ended (lab/start.sh)")
+	}
+	f, err := os.Open("../testdata/lab/sales.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	des, err := model.Load(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := e.plan(t, des, plan.Options{}); !p.Empty() {
+		t.Fatalf("the plan of sales.yaml against Sales is not empty:\n%s", p.Summary())
+	}
+}
+
+// step is an expected operation: its procedure and the parameters that
+// tell it, a value "" meaning the parameter is absent.
+type step struct {
+	proc   string
+	params map[string]string
+}
+
+// inOrder checks that the plan's operations hold the steps in this order,
+// other operations between them allowed.
+func inOrder(t *testing.T, p *plan.Plan, steps []step) {
+	t.Helper()
+	i := 0
+	for _, op := range p.Operations {
+		if i < len(steps) && procedure(op) == steps[i].proc && matches(op, steps[i].params) {
+			i++
+		}
+	}
+	if i < len(steps) {
+		t.Fatalf("step %d (%s %v) not found in order in the plan:\n%s%s", i+1, steps[i].proc, steps[i].params, p.Summary(), p.SQL())
+	}
+}
+
+// createAndDeliver plans create.yaml, runs it, starts the snapshot and
+// waits until the subscriber holds m_t1's 10 rows and m_t2's 20.
+func createAndDeliver(t *testing.T, e *env) *plan.Plan {
+	t.Helper()
+	p := e.plan(t, e.desired(t, "create.yaml"), plan.Options{})
+	if len(p.Refusals) > 0 {
+		t.Fatalf("create.yaml refused:\n%s", p.Summary())
+	}
+	e.run(t, p)
+	e.deliveries = []delivery{{"m_t1", 10}, {"m_t2", 20}}
+	e.startAndWait(t, p)
+	return p
+}
+
+func TestLabCreatePublication(t *testing.T) {
+	e := labEnv(t, "create")
+	des := e.desired(t, "create.yaml")
+	p := e.plan(t, des, plan.Options{})
+	if len(p.Refusals) > 0 {
+		t.Fatalf("refused:\n%s", p.Summary())
+	}
+	art := func(name string) string { return "N'" + name + "'" }
+	inOrder(t, p, []step{
+		{"sp_replicationdboption", nil},
+		{"sp_addlogreader_agent", nil},
+		{"sp_addpublication", nil},
+		{"sp_addpublication_snapshot", nil},
+		{"sp_addarticle", map[string]string{"@article": art("m_t1")}},
+		{"sp_articlefilter", map[string]string{"@article": art("m_t1")}},
+		{"sp_articleview", map[string]string{"@article": art("m_t1")}},
+		{"sp_addarticle", map[string]string{"@article": art("m_t2"), "@vertical_partition": ""}},
+		{"sp_articlecolumn", map[string]string{"@article": art("m_t2"), "@column": art("b"), "@operation": art("drop")}},
+		{"sp_articleview", map[string]string{"@article": art("m_t2"), "@filter_clause": ""}},
+		{"sp_addsubscription", nil},
+		{"sp_addpushsubscription_agent", nil},
+	})
+	// The R24 job operations around them: the snapshot job disabled after
+	// its creation, restored at the end.
+	var kinds []string
+	for _, op := range p.Operations {
+		if strings.HasPrefix(op.Kind, "job_") {
+			kinds = append(kinds, op.Kind)
+		}
+	}
+	if len(kinds) == 0 || kinds[0] != "job_disable" || !strings.Contains(strings.Join(kinds, " "), "job_restore") {
+		t.Errorf("job operations %v, want a job_disable then a job_restore\n%s", kinds, p.Summary())
+	}
+
+	e.run(t, p)
+	e.deliveries = []delivery{{"m_t1", 10}, {"m_t2", 20}}
+	e.startAndWait(t, p)
+
+	if n := e.count(t, "SELECT COUNT(*) FROM {sub}.dbo.m_t1 WHERE a > 0"); n != 10 {
+		t.Errorf("subscriber m_t1: %d rows with a > 0, want all 10", n)
+	}
+	var cols []string
+	rows, err := e.master.Query(e.replace("SELECT name FROM {sub}.sys.columns WHERE object_id = OBJECT_ID(N'{sub}.dbo.m_t2') ORDER BY column_id"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			t.Fatal(err)
+		}
+		cols = append(cols, c)
+	}
+	rows.Close()
+	if want := []string{"id", "a"}; !reflect.DeepEqual(cols, want) {
+		t.Errorf("subscriber m_t2 columns %q, want %q", cols, want)
+	}
+
+	// The filter holds for the changes the log reader carries.
+	if _, err := e.master.Exec(e.replace("INSERT {db}.dbo.m_t1 (id, a, b) VALUES (100, -5, 0), (101, 5, 0)")); err != nil {
+		t.Fatal(err)
+	}
+	e.waitDelivered(t, "m_t1", 11)
+	if n := e.count(t, "SELECT COUNT(*) FROM {sub}.dbo.m_t1 WHERE id = 101"); n != 1 {
+		t.Errorf("subscriber m_t1 lacks the row 101 (a = 5)")
+	}
+	if n := e.count(t, "SELECT COUNT(*) FROM {sub}.dbo.m_t1 WHERE id = 100"); n != 0 {
+		t.Errorf("subscriber m_t1 holds the row 100 (a = -5)")
+	}
+	e.converged(t, des)
+}
+
+func TestLabAddArticle(t *testing.T) {
+	e := labEnv(t, "addarticle")
+	createAndDeliver(t, e)
+
+	des := e.desired(t, "add-article.yaml")
+	p := e.plan(t, des, plan.Options{})
+	if len(p.Refusals) > 0 {
+		t.Fatalf("refused:\n%s", p.Summary())
+	}
+	add, err := find(p, "sp_addarticle", map[string]string{"@article": "N'm_t3'",
+		"@force_invalidate_snapshot": "", "@force_reinit_subscription": ""})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, p.Summary())
+	}
+	if !reflect.DeepEqual(add.Costs, []plan.Cost{plan.CostOnline}) {
+		t.Errorf("sp_addarticle m_t3 costs %v, want online", add.Costs)
+	}
+	var exts []plan.Operation
+	for _, op := range p.Operations {
+		if procedure(op) == "sp_addsubscription" {
+			exts = append(exts, op)
+		}
+	}
+	if len(exts) != 1 || !matches(exts[0], map[string]string{"@article": "N'm_t3'",
+		"@subscription_type": "N'push'", "@sync_type": "N'automatic'"}) {
+		t.Fatalf("want one sp_addsubscription @article = N'm_t3', push, automatic\n%s%s", p.Summary(), p.SQL())
+	}
+	if !reflect.DeepEqual(exts[0].Costs, []plan.Cost{plan.CostNewSnapshot}) {
+		t.Errorf("sp_addsubscription m_t3 costs %v, want new_snapshot", exts[0].Costs)
+	}
+
+	e.run(t, p)
+	e.deliveries = []delivery{{"m_t3", 20}}
+	e.startAndWait(t, p)
+	e.converged(t, des)
+}
+
+func TestLabFilterChange(t *testing.T) {
+	e := labEnv(t, "filterchange")
+	createAndDeliver(t, e)
+
+	des := e.desired(t, "filter-change.yaml")
+	p := e.plan(t, des, plan.Options{})
+	if len(p.Refusals) > 0 {
+		t.Fatalf("refused:\n%s", p.Summary())
+	}
+	inOrder(t, p, []step{
+		{"sp_articlefilter", map[string]string{"@article": "N'm_t1'", "@filter_clause": "N'a > 5'", "@force_reinit_subscription": "1"}},
+		{"sp_articleview", map[string]string{"@article": "N'm_t1'", "@filter_clause": "N'a > 5'"}},
+	})
+	flt, _ := find(p, "sp_articlefilter", nil)
+	if !hasCost(flt, plan.CostReinitialization) {
+		t.Errorf("sp_articlefilter costs %v, want reinitialization", flt.Costs)
+	}
+
+	e.run(t, p)
+	e.deliveries = []delivery{{"m_t1", 5}}
+	e.startAndWait(t, p)
+	if n := e.count(t, "SELECT COUNT(*) FROM {sub}.dbo.m_t1 WHERE a > 5"); n != 5 {
+		t.Errorf("subscriber m_t1: %d rows with a > 5, want all 5", n)
+	}
+	e.converged(t, des)
+}
+
+func TestLabDropArticle(t *testing.T) {
+	e := labEnv(t, "droparticle")
+	createAndDeliver(t, e)
+
+	des := e.desired(t, "drop-article.yaml")
+	p := e.plan(t, des, plan.Options{})
+	if len(p.Refusals) > 0 {
+		t.Fatalf("refused:\n%s", p.Summary())
+	}
+	inOrder(t, p, []step{
+		{"sp_dropsubscription", map[string]string{"@article": "N'm_t2'"}},
+		{"sp_droparticle", map[string]string{"@article": "N'm_t2'",
+			"@force_invalidate_snapshot": "", "@force_reinit_subscription": ""}},
+	})
+	left := false
+	for _, op := range p.Operations {
+		left = left || hasCost(op, plan.CostSubscriberObjectLeft)
+	}
+	if !left {
+		t.Errorf("no operation costs subscriber_object_left\n%s", p.Summary())
+	}
+
+	e.run(t, p)
+	e.deliveries = nil
+	e.startAndWait(t, p)
+	if n := e.count(t, "SELECT COUNT(*) FROM {sub}.sys.tables WHERE name = N'm_t2'"); n != 1 {
+		t.Errorf("subscriber m_t2 is gone after the drop of the article, want it left behind")
+	}
+	e.converged(t, des)
+}
