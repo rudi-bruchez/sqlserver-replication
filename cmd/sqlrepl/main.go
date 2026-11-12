@@ -3,12 +3,14 @@
 //
 // Only the export is implemented: it reads a publication database, its
 // publications, articles, push and pull subscriptions and agents, and writes
-// them as YAML. It runs SELECT statements only.
+// them as YAML, and on request the observed runtime facts as JSON. It runs
+// SELECT statements only.
 package main
 
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -80,6 +82,7 @@ func runExport(args []string, stdout io.Writer) error {
 	publisherName := fs.String("publisher-name", "", "publisher name registered at the distributor (default: @@SERVERNAME of the publisher)")
 	user := fs.String("user", "", "SQL Server login; the password is read from SQLREPL_PASSWORD (default: Windows authentication)")
 	output := fs.String("o", "", "output file (default: standard output)")
+	factsPath := fs.String("facts", "", "also write the observed runtime facts (snapshot, subscription and agent state) as JSON to this file")
 	timeout := fs.Duration("timeout", 2*time.Minute, "overall timeout")
 	params := paramFlags{}
 	fs.Var(params, "param", "extra connection parameter key=value, repeatable (e.g. -param encrypt=disable)")
@@ -166,9 +169,23 @@ func runExport(args []string, stdout io.Writer) error {
 	}
 	if *output == "" {
 		_, err = stdout.Write(out)
+	} else {
+		err = os.WriteFile(*output, out, 0o644)
+	}
+	if err != nil || *factsPath == "" {
 		return err
 	}
-	return os.WriteFile(*output, out, 0o644)
+	return writeFacts(*factsPath, res)
+}
+
+// writeFacts writes the observed runtime facts as indented JSON. They are
+// what the planner needs beside the configuration, never part of it.
+func writeFacts(path string, res *reader.Result) error {
+	b, err := json.MarshalIndent(res.Facts, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(b, '\n'), 0o644)
 }
 
 func open(ctx context.Context, server, database string, cp connParams) (*sql.DB, error) {

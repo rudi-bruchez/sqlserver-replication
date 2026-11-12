@@ -6,11 +6,13 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode"
 
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
+	"github.com/rudi-bruchez/sqlserver-replication/internal/state"
 )
 
 // labDB opens a database of the lab instance (lab/gotest.sh sets the
@@ -733,5 +735,115 @@ func TestReadLabSharedPullAgentMissingRow(t *testing.T) {
 	}
 	for _, f := range findingsUnder(cfg, "publications[m_ps2]") {
 		t.Errorf("unexpected finding %s %s: %s", f.Kind, f.Path, f.Message)
+	}
+}
+
+// TestReadLabFacts checks the facts of the lab's publications in the state
+// lab/start.sh waits for: every subscription row delivered (status 2 at both
+// ends) and the agents running.
+func TestReadLabFacts(t *testing.T) {
+	res := labRead(t)
+	f := res.Facts
+	if f == nil {
+		t.Fatal("no facts")
+	}
+	if f.ReadAt == "" {
+		t.Error("read_at is empty")
+	}
+
+	// Articles per publication, schema-only ones included: SalesRef's
+	// vCustomerFR is only in sysschemaarticles and has its subscription row.
+	articles := map[string]int{}
+	rows, err := labDB(t, "Sales").Query(`
+SELECT p.name, COUNT(*) FROM dbo.sysextendedarticlesview AS a
+JOIN dbo.syspublications AS p ON p.pubid = a.pubid
+WHERE p.name IN (N'SalesPub', N'SalesRef') GROUP BY p.name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var name string
+		var n int
+		if err := rows.Scan(&name, &n); err != nil {
+			t.Fatal(err)
+		}
+		articles[name] = n
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if articles["SalesPub"] == 0 || articles["SalesRef"] == 0 {
+		t.Fatalf("article counts %v", articles)
+	}
+
+	pubs := map[string]state.PublicationFacts{}
+	for _, p := range f.Publications {
+		pubs[p.Name] = p
+	}
+	if p := pubs["SalesPub"]; !p.ImmediateSyncReady || p.LastGeneration == "" {
+		t.Errorf("SalesPub: immediate_sync_ready %t, last_generation %q, want true and a time", p.ImmediateSyncReady, p.LastGeneration)
+	}
+	if p, ok := pubs["SalesRef"]; !ok || p.ImmediateSyncReady {
+		t.Errorf("SalesRef: found %t, immediate_sync_ready %t, want found and false", ok, p.ImmediateSyncReady)
+	}
+	customer := false
+	for _, a := range pubs["SalesPub"].Articles {
+		if a.Name == "Customer" {
+			customer = a.Active
+		}
+	}
+	if !customer {
+		t.Error("SalesPub article Customer is not active")
+	}
+
+	seen := 0
+	for _, s := range f.Subscriptions {
+		if (s.Publication != "SalesPub" && s.Publication != "SalesRef") || s.Database != "SalesSub" {
+			continue
+		}
+		seen++
+		if len(s.Rows) != articles[s.Publication] {
+			t.Errorf("%s %s.%s: %d rows, want %d", s.Publication, s.Subscriber, s.Database, len(s.Rows), articles[s.Publication])
+		}
+		for _, r := range s.Rows {
+			if r.PublisherStatus != 2 || r.DistributorStatus == nil || *r.DistributorStatus != 2 {
+				ds := "null"
+				if r.DistributorStatus != nil {
+					ds = strconv.Itoa(*r.DistributorStatus)
+				}
+				t.Errorf("%s %s: publisher_status %d, distributor_status %s, want 2 and 2", s.Publication, r.Article, r.PublisherStatus, ds)
+			}
+		}
+	}
+	if seen != 2 {
+		t.Errorf("%d subscriptions to SalesSub, want 2", seen)
+	}
+
+	running := func(what string, a state.AgentFacts) {
+		if a.Job == nil || !a.Job.Exists || !a.Job.Enabled || !a.Job.Running {
+			t.Errorf("%s: job %+v, want exists, enabled and running", what, a.Job)
+		}
+	}
+	var logReader, salesPub, shared int
+	for _, a := range f.Agents {
+		switch {
+		case a.Kind == "log_reader":
+			logReader++
+			running("log reader", a)
+		case a.Kind == "distribution" && a.Publication == "SalesPub" && a.Database == "SalesSub":
+			salesPub++
+			running("SalesPub distribution agent", a)
+		case a.Kind == "distribution" && a.Publication == "ALL" && a.Database == "SalesSub":
+			shared++
+			running("shared distribution agent", a)
+		}
+	}
+	if logReader != 1 || salesPub != 1 || shared != 1 {
+		t.Errorf("agents: %d log reader, %d SalesPub, %d shared distribution, want 1 each", logReader, salesPub, shared)
+	}
+	// lab-distrib is bound to no agent (Task 9).
+	if len(f.ProfileUses) != 0 {
+		t.Errorf("profile_uses = %+v, want empty", f.ProfileUses)
 	}
 }

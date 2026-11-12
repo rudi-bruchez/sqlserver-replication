@@ -35,10 +35,23 @@ Options:
 | `-param key=value` | extra go-mssqldb connection parameter, repeatable (`-param encrypt=disable`) |
 | `-server NAME=ADDRESS` | address of a server by its name, repeatable: each one is opened as a subscriber whose pull subscriptions are read, and the distributor name registered at the publisher is looked up among them; the address takes the `-publisher` forms. A name given twice, in any case, is an error |
 | `-o` | output file; standard output by default |
+| `-facts PATH` | also write the observed runtime facts as JSON to `PATH` (below); without it nothing about them is written and the YAML is unchanged |
 
 Required permissions: read access to the publication database, and to `msdb` and the distribution database on the distributor; for a pull subscription, to the subscription database and `msdb` on the subscriber.
 
 Passwords are never exported. Where an agent uses SQL Server authentication, the file carries a `password_secret` name instead. Agent command lines are exported with their password arguments masked.
+
+### Runtime facts
+
+`-facts PATH` writes, beside the YAML, what the export observed of the replication at run time, as indented JSON. The file is not configuration: it is never compared, never part of the YAML, and it changes with every run. It is the input the planner needs to decide whether a change invalidates the snapshot or reinitializes a subscription:
+
+- `read_at`: the distributor's `SYSDATETIME()` when the facts were read.
+- `publications`: per publication, `immediate_sync_ready`, `last_generation` (the latest successful run of its snapshot agent) and per article `active` (bit `0x1` of `sysarticles.status`, set by the snapshot generation; schema-only articles are listed inactive).
+- `subscriptions`: per subscription, one row per subscribed article with its status at the publisher (`syssubscriptions`) and at the distributor (`MSsubscriptions`, the subscription's own row; `null` when there is none).
+- `agents`: per log reader, snapshot, distribution and pull agent, its id at the distributor, whether its job exists, is enabled and is running (`job` is `null` for a pull agent whose subscriber is not given with `-server`), and its last history row and last failure.
+- `profile_uses`: the agents of every distribution database of the distributor that use a user-defined profile.
+
+Reading the facts needs, besides the permissions above, read access to `msdb.dbo.sysjobactivity` and `syssessions` and to every distribution database of the distributor.
 
 ### Empty configuration
 

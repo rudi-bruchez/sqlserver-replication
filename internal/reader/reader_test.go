@@ -10,8 +10,10 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
+	"github.com/rudi-bruchez/sqlserver-replication/internal/state"
 
 	mssql "github.com/microsoft/go-mssqldb"
 	_ "github.com/microsoft/go-mssqldb/namedpipe"
@@ -67,6 +69,12 @@ func TestQueriesParse(t *testing.T) {
 		"qSyncWithBackup":  qSyncWithBackup, "qDistributorLink": qDistributorLink,
 		"qDistributionFiles": qDistributionFiles, "qSubscriberType": qSubscriberType,
 		"qDatabaseExists": qDatabaseExists, "qPullSubscription": subscriberQuery("SalesSub"),
+		"qPublicationFacts": qPublicationFacts, "qArticleFacts": qArticleFacts,
+		"qSubscriptionStatus": qSubscriptionStatus, "qReadAt": qReadAt,
+		"qDistributorSubscriptionStatus": qDistributorSubscriptionStatus,
+		"qLastGeneration":                qLastGeneration, "qLogReaderHistory": qLogReaderHistory,
+		"qSnapshotHistory": qSnapshotHistory, "qDistributionHistory": qDistributionHistory,
+		"qJobState": qJobState, "qDistributionDBs": qDistributionDBs,
 	}
 	ctx := context.Background()
 	// PARSEONLY only applies to the batches that follow it in the session,
@@ -93,6 +101,18 @@ func TestQueriesParse(t *testing.T) {
 			if _, err := conn.ExecContext(ctx, batch); err != nil {
 				t.Errorf("%s with %s: %v", name, servers, err)
 			}
+		}
+	}
+	// profileUsesQuery is built at run time from the distribution databases:
+	// it is parsed for two names, one that needs quoting, with both server
+	// tables.
+	for _, fallback := range []bool{false, true} {
+		q := profileUsesQuery([]string{"distribution", "m dist]2"}, fallback)
+		if strings.Contains(q, "{") {
+			t.Errorf("profileUsesQuery: unreplaced placeholder")
+		}
+		if _, err := conn.ExecContext(ctx, q); err != nil {
+			t.Errorf("profileUsesQuery (fallback %t): %v", fallback, err)
 		}
 	}
 	// A syntax error must still be reported, or the test proves nothing.
@@ -547,6 +567,30 @@ func TestErrorNumber(t *testing.T) {
 	for _, c := range cases {
 		if got := errorNumber(c.err); got != c.want {
 			t.Errorf("errorNumber(%v) = %d, want %d", c.err, got, c.want)
+		}
+	}
+}
+
+func TestJobState(t *testing.T) {
+	at := sql.NullTime{Time: time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC), Valid: true}
+	null := sql.NullTime{}
+	cases := []struct {
+		name    string
+		exists  bool
+		enabled int
+		start   sql.NullTime
+		stop    sql.NullTime
+		want    state.JobState
+	}{
+		{"no job", false, 1, at, null, state.JobState{}},
+		{"running", true, 1, at, null, state.JobState{Exists: true, Enabled: true, Running: true}},
+		{"stopped", true, 1, at, at, state.JobState{Exists: true, Enabled: true}},
+		{"never started", true, 1, null, null, state.JobState{Exists: true, Enabled: true}},
+		{"disabled", true, 0, null, null, state.JobState{Exists: true}},
+	}
+	for _, c := range cases {
+		if got := jobState(c.exists, c.enabled, c.start, c.stop); got != c.want {
+			t.Errorf("%s: jobState = %+v, want %+v", c.name, got, c.want)
 		}
 	}
 }

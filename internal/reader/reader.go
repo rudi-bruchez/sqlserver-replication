@@ -13,6 +13,7 @@ import (
 
 	"github.com/rudi-bruchez/sqlserver-replication/internal/decode"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
+	"github.com/rudi-bruchez/sqlserver-replication/internal/state"
 )
 
 // Source groups the connections a read needs.
@@ -107,6 +108,9 @@ func (p PublisherProbe) Start() (empty bool, findings []model.Finding, err error
 // Result is what Read returns.
 type Result struct {
 	Config *model.Config
+	// Facts are the observed runtime facts the planner needs beside the
+	// configuration; they are never part of the declarative file.
+	Facts *state.Facts
 }
 
 // Read reads the whole configuration of the publication database, or the
@@ -116,13 +120,14 @@ func Read(ctx context.Context, src Source) (*Result, error) {
 	if err := e.run(); err != nil {
 		return nil, err
 	}
-	return &Result{Config: e.cfg}, nil
+	return &Result{Config: e.cfg, Facts: e.facts}, nil
 }
 
 type exporter struct {
-	ctx context.Context
-	src Source
-	cfg *model.Config
+	ctx   context.Context
+	src   Source
+	cfg   *model.Config
+	facts *state.Facts
 
 	dist        string // quoted distribution database name
 	servers     string // server name table at the distributor
@@ -180,6 +185,7 @@ func subscriptionPath(pub, subscriber, database string) string {
 
 func (e *exporter) run() error {
 	e.cfg = &model.Config{Version: model.FormatVersion}
+	e.facts = newFacts()
 	e.usedProfiles = map[int]bool{}
 	e.found = map[string]bool{}
 
@@ -200,6 +206,9 @@ func (e *exporter) run() error {
 	}
 	if err := e.readSyncWithBackup(); err != nil {
 		return fmt.Errorf("reading sync with backup: %w", err)
+	}
+	if err := e.readReadAt(); err != nil {
+		return fmt.Errorf("reading the distributor time: %w", err)
 	}
 	if empty {
 		if e.src.Probe.Distributor != "" && e.src.Distributor != nil {
@@ -223,6 +232,7 @@ func (e *exporter) run() error {
 		{"snapshot agents", e.readSnapshotAgents},
 		{"distribution agents", e.readDistributionAgents},
 		{"agent profile parameters", e.collectProfiles},
+		{"facts", e.readFacts},
 	}
 	for _, s := range steps {
 		if err := s.fn(); err != nil {

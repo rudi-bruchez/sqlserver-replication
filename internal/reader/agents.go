@@ -13,6 +13,7 @@ import (
 
 	"github.com/rudi-bruchez/sqlserver-replication/internal/decode"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
+	"github.com/rudi-bruchez/sqlserver-replication/internal/state"
 )
 
 // agentRow holds the columns shared by the three MS*_agents tables.
@@ -34,6 +35,9 @@ type agentRow struct {
 	// and its job login is the credential of the step's proxy, both with
 	// run_as (MSsubscription_properties.job_login only stores @cl_login).
 	pullSubscriber string
+	// fact, when set, is the agent's facts, completed with the job state and
+	// recorded by agent.
+	fact *state.AgentFacts
 }
 
 // agent builds the model of an agent: profile, job, run-as account, command
@@ -58,6 +62,7 @@ func (e *exporter) agent(path, label string, r agentRow, secretParts ...string) 
 
 	if r.jobID == "" {
 		e.find(model.FindingIncomplete, path, "%s: no SQL Server Agent job recorded", label)
+		e.recordAgent(r.fact, &state.JobState{})
 		return a, nil
 	}
 	var jobName, command string
@@ -69,10 +74,18 @@ func (e *exporter) agent(path, label string, r agentRow, secretParts ...string) 
 		&jobName, &enabled, &proxyID, &proxyFound, &credential, &command, &stepFound)
 	if err == sql.ErrNoRows {
 		e.find(model.FindingIncomplete, path, "%s: job %s recorded by replication no longer exists in msdb", label, r.jobID)
+		e.recordAgent(r.fact, &state.JobState{})
 		return a, nil
 	}
 	if err != nil {
 		return a, err
+	}
+	if r.fact != nil {
+		js, err := e.readJobState(jobs, r.jobID)
+		if err != nil {
+			return a, err
+		}
+		e.recordAgent(r.fact, &js)
 	}
 	a.JobName = model.Ptr(jobName)
 	a.JobEnabled = model.Ptr(enabled != 0)
@@ -337,9 +350,10 @@ func commandSwitch(cmd, name string) (string, bool) {
 
 func (e *exporter) readLogReaderAgent() error {
 	var name string
+	var id int
 	var r agentRow
 	err := e.src.Distributor.QueryRowContext(e.ctx, e.distQuery(qLogReaderAgent), e.publisherID, e.src.Database).Scan(
-		&name, &r.securityMode, &r.login, &r.profileID, &r.jobID, &r.stepUID, &r.jobLogin)
+		&id, &name, &r.securityMode, &r.login, &r.profileID, &r.jobID, &r.stepUID, &r.jobLogin)
 	if err == sql.ErrNoRows {
 		if len(e.cfg.Publications) > 0 {
 			e.find(model.FindingIncomplete, "publisher.log_reader_agent", "no log reader agent found for %s.%s", e.cfg.Publisher.Server, e.src.Database)
@@ -349,6 +363,7 @@ func (e *exporter) readLogReaderAgent() error {
 	if err != nil {
 		return err
 	}
+	r.fact = &state.AgentFacts{Kind: "log_reader", AgentID: id}
 	a, err := e.agent("publisher.log_reader_agent", "log reader agent "+name, r, e.cfg.Publisher.Server)
 	if err != nil {
 		return err
@@ -363,13 +378,14 @@ func (e *exporter) readSnapshotAgents() error {
 		return err
 	}
 	type found struct {
+		id          int
 		publication string
 		row         agentRow
 	}
 	var all []found
 	for rows.Next() {
 		var f found
-		if err := rows.Scan(&f.publication, &f.row.securityMode, &f.row.login, &f.row.profileID,
+		if err := rows.Scan(&f.id, &f.publication, &f.row.securityMode, &f.row.login, &f.row.profileID,
 			&f.row.jobID, &f.row.stepUID, &f.row.jobLogin); err != nil {
 			rows.Close()
 			return err
@@ -389,6 +405,7 @@ func (e *exporter) readSnapshotAgents() error {
 		if p == nil {
 			continue
 		}
+		f.row.fact = &state.AgentFacts{Kind: "snapshot", Publication: p.Name, AgentID: f.id}
 		a, err := e.agent(model.Join(publicationPath(p.Name), "snapshot_agent"), "snapshot agent of "+p.Name, f.row, e.cfg.Publisher.Server)
 		if err != nil {
 			return err
@@ -409,6 +426,7 @@ func (e *exporter) readDistributionAgents() error {
 		return err
 	}
 	type found struct {
+		id                                int
 		publication, subscriber, database string
 		subscriptionType                  int
 		streams, memoryOptimized          int
@@ -417,7 +435,7 @@ func (e *exporter) readDistributionAgents() error {
 	var all []found
 	for rows.Next() {
 		var f found
-		if err := rows.Scan(&f.publication, &f.subscriber, &f.database, &f.subscriptionType,
+		if err := rows.Scan(&f.id, &f.publication, &f.subscriber, &f.database, &f.subscriptionType,
 			&f.row.securityMode, &f.row.login, &f.row.profileID, &f.row.jobID, &f.row.stepUID,
 			&f.streams, &f.memoryOptimized, &f.row.jobLogin); err != nil {
 			rows.Close()
@@ -442,7 +460,9 @@ func (e *exporter) readDistributionAgents() error {
 		}
 		return nil
 	}
-	build := func(path, label string, f *found, subscriber string) (model.DistributionAgent, error) {
+	build := func(path, label string, f *found, subscriber, database string) (model.DistributionAgent, error) {
+		f.row.fact = &state.AgentFacts{Kind: "distribution", Publication: f.publication, Subscriber: subscriber,
+			Database: database, AgentID: f.id}
 		a, err := e.agent(path, label, f.row, subscriber)
 		return model.DistributionAgent{
 			Agent:               a,
@@ -460,7 +480,7 @@ func (e *exporter) readDistributionAgents() error {
 		if f == nil {
 			return nil
 		}
-		return &pullDistRow{profileID: f.row.profileID, streams: f.streams, memoryOptimized: f.memoryOptimized != 0}
+		return &pullDistRow{id: f.id, profileID: f.row.profileID, streams: f.streams, memoryOptimized: f.memoryOptimized != 0}
 	}
 	// sharedRow is one subscription's row at the subscriber, kept until
 	// every subscription of its subscriber database has been read.
@@ -481,10 +501,16 @@ func (e *exporter) readDistributionAgents() error {
 		if *p.IndependentAgent {
 			path := model.Join(subPath, "pull_agent")
 			r, db, err := e.readPullRow(p, s, label, path, path)
-			if err != nil || r == nil {
+			if err != nil {
 				return err
 			}
-			s.PullAgent, err = e.buildPullAgent(path, "pull agent of "+label, r, distRow(p.Name, s.Subscriber, s.Database), db, s.Subscriber)
+			d := distRow(p.Name, s.Subscriber, s.Database)
+			fact := &state.AgentFacts{Kind: "pull_distribution", Publication: p.Name, Subscriber: s.Subscriber, Database: s.Database}
+			if r == nil {
+				e.recordUnreadPull(fact, d)
+				return nil
+			}
+			s.PullAgent, err = e.buildPullAgent(path, "pull agent of "+label, r, d, db, fact)
 			return err
 		}
 		// One pull agent serves every subscription of the subscriber
@@ -535,10 +561,13 @@ func (e *exporter) readDistributionAgents() error {
 					first.publication, r.publication, first.row.agentID, r.row.agentID, first.row.stepUID, r.row.stepUID, first.publication)
 			}
 		}
+		fact := &state.AgentFacts{Kind: "pull_distribution", Publication: "ALL", Subscriber: sp.subscriber, Database: sp.database}
+		d := distRow("ALL", sp.subscriber, sp.database)
 		if first == nil {
 			if !sp.unreadable {
 				e.find(model.FindingIncomplete, sp.path, "subscriber %s.%s: no shared pull agent found at the subscriber", sp.subscriber, sp.database)
 			}
+			e.recordUnreadPull(fact, d)
 			return nil
 		}
 		for _, r := range sp.rows {
@@ -548,7 +577,7 @@ func (e *exporter) readDistributionAgents() error {
 			}
 		}
 		a, err := e.buildPullAgent(sp.path, fmt.Sprintf("shared pull agent of %s.%s", sp.subscriber, sp.database), first.row,
-			distRow("ALL", sp.subscriber, sp.database), sp.db, sp.subscriber)
+			d, sp.db, fact)
 		if err != nil {
 			return err
 		}
@@ -578,7 +607,7 @@ func (e *exporter) readDistributionAgents() error {
 					e.find(model.FindingIncomplete, path, "%s: no push distribution agent found at the distributor", label)
 					continue
 				}
-				a, err := build(path, "distribution agent of "+label, f, s.Subscriber)
+				a, err := build(path, "distribution agent of "+label, f, s.Subscriber, s.Database)
 				if err != nil {
 					return err
 				}
@@ -597,7 +626,7 @@ func (e *exporter) readDistributionAgents() error {
 				e.find(model.FindingIncomplete, path, "subscriber %s.%s: no shared push distribution agent found at the distributor", s.Subscriber, s.Database)
 				continue
 			}
-			a, err := build(model.Join(path, "distribution_agent"), fmt.Sprintf("shared distribution agent of %s.%s", s.Subscriber, s.Database), f, s.Subscriber)
+			a, err := build(model.Join(path, "distribution_agent"), fmt.Sprintf("shared distribution agent of %s.%s", s.Subscriber, s.Database), f, s.Subscriber, s.Database)
 			if err != nil {
 				return err
 			}
@@ -630,6 +659,7 @@ func (e *exporter) readDistributionAgents() error {
 // pullDistRow is what the distributor records about a pull agent
 // (MSdistribution_agents, subscription_type 1).
 type pullDistRow struct {
+	id              int
 	profileID       int
 	streams         int
 	memoryOptimized bool
@@ -748,11 +778,13 @@ func errorNumber(err error) int32 {
 
 // buildPullAgent builds a pull agent from its row at the subscriber, its job
 // in the subscriber's msdb (db) and its row at the distributor (d, nil when
-// there is none).
-func (e *exporter) buildPullAgent(path, label string, pull *pullRow, d *pullDistRow, db *sql.DB, subscriber string) (*model.PullAgent, error) {
-	row := agentRow{jobID: pull.agentID, stepUID: pull.stepUID, jobs: db, pullSubscriber: subscriber}
+// there is none). fact is the agent's facts, its subscriber the subscriber.
+func (e *exporter) buildPullAgent(path, label string, pull *pullRow, d *pullDistRow, db *sql.DB, fact *state.AgentFacts) (*model.PullAgent, error) {
+	subscriber := fact.Subscriber
+	row := agentRow{jobID: pull.agentID, stepUID: pull.stepUID, jobs: db, pullSubscriber: subscriber, fact: fact}
 	if d != nil {
 		row.profileID = d.profileID
+		fact.AgentID = d.id
 	}
 	a, err := e.agent(path, label, row)
 	if err != nil {

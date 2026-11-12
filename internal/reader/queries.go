@@ -1,5 +1,10 @@
 package reader
 
+import (
+	"fmt"
+	"strings"
+)
+
 // Queries run in the publication database, on the publisher.
 //
 // The objects are read in the publication database only: the distribution
@@ -110,6 +115,27 @@ FROM dbo.syssubscriptions AS s
 JOIN dbo.sysextendedarticlesview AS a ON a.artid = s.artid
 WHERE s.srvid >= 0 AND s.srvname IS NOT NULL AND s.srvname <> N''
 ORDER BY a.pubid, s.srvname, s.dest_db, a.name`
+
+	// Facts: immediate_sync_ready of each publication (spec "Inputs").
+	qPublicationFacts = `
+SELECT p.name, CAST(ISNULL(p.immediate_sync_ready, 0) AS int)
+FROM dbo.syspublications AS p`
+
+	// Facts: bit 0x1 of sysarticles.status is set by the snapshot generation.
+	// Schema articles are listed inactive.
+	qArticleFacts = `
+SELECT a.pubid, a.name, a.status & 1 FROM dbo.sysarticles AS a
+UNION ALL
+SELECT a.pubid, a.name, 0 FROM dbo.sysschemaarticles AS a`
+
+	// Facts: the status of each article of each real subscription, at the
+	// publisher. Status 3 (active, the snapshot delivered) is only ever read
+	// in MSsubscriptions (O18).
+	qSubscriptionStatus = `
+SELECT a.pubid, a.name, s.srvname, s.dest_db, CAST(s.status AS int)
+FROM dbo.syssubscriptions AS s
+JOIN dbo.sysextendedarticlesview AS a ON a.artid = s.artid
+WHERE s.srvid >= 0 AND s.srvname IS NOT NULL AND s.srvname <> N''`
 )
 
 // Queries run on the distributor. {dist} is replaced by the quoted name of the
@@ -161,7 +187,7 @@ ORDER BY type`
 	qServerID = `SELECT rs.srvid FROM {servers} AS rs WHERE UPPER(rs.srvname) = UPPER(@p1)`
 
 	qLogReaderAgent = `
-SELECT msla.name, CAST(ISNULL(msla.publisher_security_mode, 1) AS int), ISNULL(msla.publisher_login, N''),
+SELECT msla.id, msla.name, CAST(ISNULL(msla.publisher_security_mode, 1) AS int), ISNULL(msla.publisher_login, N''),
        ISNULL(msla.profile_id, 0),
        ISNULL(CONVERT(nvarchar(36), CONVERT(uniqueidentifier, msla.job_id)), N''),
        ISNULL(CONVERT(nvarchar(36), msla.job_step_uid), N''),
@@ -171,7 +197,7 @@ WHERE msla.publisher_id = @p1 AND msla.publisher_db = @p2
 ORDER BY msla.name`
 
 	qSnapshotAgents = `
-SELECT mssa.publication, CAST(ISNULL(mssa.publisher_security_mode, 1) AS int), ISNULL(mssa.publisher_login, N''),
+SELECT mssa.id, mssa.publication, CAST(ISNULL(mssa.publisher_security_mode, 1) AS int), ISNULL(mssa.publisher_login, N''),
        ISNULL(mssa.profile_id, 0),
        ISNULL(CONVERT(nvarchar(36), CONVERT(uniqueidentifier, mssa.job_id)), N''),
        ISNULL(CONVERT(nvarchar(36), mssa.job_step_uid), N''),
@@ -187,7 +213,7 @@ ORDER BY mssa.publication`
 	// A shared agent has publication = N'ALL'
 	// (sp_MSenumdistributionagentproperties.sql:57-64).
 	qDistributionAgents = `
-SELECT msda.publication, rs.srvname, msda.subscriber_db, msda.subscription_type,
+SELECT msda.id, msda.publication, rs.srvname, msda.subscriber_db, msda.subscription_type,
        CAST(ISNULL(msda.subscriber_security_mode, 1) AS int), ISNULL(msda.subscriber_login, N''),
        ISNULL(msda.profile_id, 0),
        ISNULL(CONVERT(nvarchar(36), CONVERT(uniqueidentifier, msda.job_id)), N''),
@@ -238,7 +264,104 @@ FROM msdb.dbo.MSagent_profiles`
 SELECT profile_id, parameter_name, ISNULL(value, N'')
 FROM msdb.dbo.MSagent_parameters
 ORDER BY profile_id, parameter_name`
+
+	// Facts: the time the facts are read, at the distributor.
+	qReadAt = `SELECT CONVERT(nvarchar(33), SYSDATETIME(), 126)`
+
+	// Facts: MSsubscriptions.status of the subscriptions' own rows. The
+	// virtual subscribers (subscriber_id -1 and -2) are left out: the window
+	// of the -1 row moves at every run (spec "Inputs"). The subscriber is
+	// named through the server table, whose ids differ from the publisher's
+	// srvid.
+	qDistributorSubscriptionStatus = `
+SELECT msp.publication, msa.article, rs.srvname, mss.subscriber_db, CAST(mss.status AS int)
+FROM {dist}.dbo.MSsubscriptions AS mss
+JOIN {dist}.dbo.MSpublications AS msp
+     ON msp.publisher_id = mss.publisher_id AND msp.publisher_db = mss.publisher_db
+    AND msp.publication_id = mss.publication_id
+JOIN {dist}.dbo.MSarticles AS msa
+     ON msa.publisher_id = mss.publisher_id AND msa.publisher_db = mss.publisher_db
+    AND msa.publication_id = mss.publication_id AND msa.article_id = mss.article_id
+JOIN {servers} AS rs ON rs.srvid = mss.subscriber_id
+WHERE mss.publisher_id = @p1 AND mss.publisher_db = @p2 AND mss.subscriber_id >= 0`
+
+	// Facts: the latest successful run (runstatus 2) of a snapshot agent.
+	qLastGeneration = `
+SELECT TOP (1) CONVERT(nvarchar(33), h.time, 126)
+FROM {dist}.dbo.MSsnapshot_history AS h
+WHERE h.agent_id = @p1 AND h.runstatus = 2
+ORDER BY h.time DESC, h.timestamp DESC`
+
+	// Facts: the latest history row of an agent, or with @p2 = 1 the latest
+	// failure (runstatus 6), with the first error of its error_id.
+	qHistorySelect = `
+SELECT TOP (1) CONVERT(nvarchar(33), h.time, 126), h.runstatus, ISNULL(h.comments, N''), ISNULL(e.error_text, N'')
+FROM {dist}.dbo.`
+	qHistoryRest = ` AS h
+OUTER APPLY (SELECT TOP (1) x.error_text FROM {dist}.dbo.MSrepl_errors AS x
+             WHERE x.id = h.error_id AND h.error_id <> 0
+             ORDER BY x.time) AS e
+WHERE h.agent_id = @p1 AND (@p2 = 0 OR h.runstatus = 6)
+ORDER BY h.time DESC, h.timestamp DESC`
+	qLogReaderHistory    = qHistorySelect + "MSlogreader_history" + qHistoryRest
+	qSnapshotHistory     = qHistorySelect + "MSsnapshot_history" + qHistoryRest
+	qDistributionHistory = qHistorySelect + "MSdistribution_history" + qHistoryRest
+
+	// Facts: whether a job is enabled and running. A job runs when its
+	// sysjobactivity row of the latest Agent session has a start and no stop.
+	// No row: the job_id kept by replication outlived the job.
+	qJobState = `
+SELECT CAST(sj.enabled AS int), ja.start_execution_date, ja.stop_execution_date
+FROM msdb.dbo.sysjobs AS sj
+OUTER APPLY (SELECT TOP (1) a.start_execution_date, a.stop_execution_date
+             FROM msdb.dbo.sysjobactivity AS a
+             WHERE a.job_id = sj.job_id
+               AND a.session_id = (SELECT TOP (1) ss.session_id FROM msdb.dbo.syssessions AS ss
+                                   ORDER BY ss.agent_start_date DESC, ss.session_id DESC)) AS ja
+WHERE sj.job_id = CONVERT(uniqueidentifier, @p1)`
+
+	// Facts: every distribution database of the distributor.
+	qDistributionDBs = `SELECT name FROM msdb.dbo.MSdistributiondbs ORDER BY name`
 )
+
+// profileUsesQuery builds the query of the agents that use a user-defined
+// profile (msdb.dbo.MSagent_profiles.type = 1) in every distribution database
+// of dbs. The profiles live in msdb and are shared by all of them, so a
+// profile used through another distribution database would otherwise read as
+// unused. Each branch joins its distribution agents to its own database's
+// MSreplservers (or, with useFallback, to fallbackServers), never to
+// {servers}, whose srvid values belong to one distribution database. The
+// first column is the index of the database in dbs. String columns are
+// brought to one collation: the databases may differ.
+func profileUsesQuery(dbs []string, useFallback bool) string {
+	const c = " COLLATE DATABASE_DEFAULT"
+	var b strings.Builder
+	for i, db := range dbs {
+		d := quoteName(db)
+		servers := d + ".dbo.MSreplservers"
+		if useFallback {
+			servers = fallbackServers
+		}
+		if i > 0 {
+			b.WriteString("\nUNION ALL")
+		}
+		fmt.Fprintf(&b, `
+SELECT %[1]d, mp.profile_name%[2]s, mp.agent_type, a.publisher_db%[2]s, N''%[2]s, N''%[2]s, N''%[2]s
+FROM %[3]s.dbo.MSlogreader_agents AS a
+JOIN msdb.dbo.MSagent_profiles AS mp ON mp.profile_id = a.profile_id AND mp.type = 1
+UNION ALL
+SELECT %[1]d, mp.profile_name%[2]s, mp.agent_type, a.publisher_db%[2]s, a.publication%[2]s, N''%[2]s, N''%[2]s
+FROM %[3]s.dbo.MSsnapshot_agents AS a
+JOIN msdb.dbo.MSagent_profiles AS mp ON mp.profile_id = a.profile_id AND mp.type = 1
+UNION ALL
+SELECT %[1]d, mp.profile_name%[2]s, mp.agent_type, a.publisher_db%[2]s, a.publication%[2]s,
+       ISNULL(rs.srvname, N'')%[2]s, ISNULL(a.subscriber_db, N'')%[2]s
+FROM %[3]s.dbo.MSdistribution_agents AS a
+JOIN msdb.dbo.MSagent_profiles AS mp ON mp.profile_id = a.profile_id AND mp.type = 1
+LEFT JOIN %[4]s AS rs ON rs.srvid = a.subscriber_id`, i, c, d, servers)
+	}
+	return b.String()
+}
 
 // Queries run on a subscriber, connected to master. {subdb} is replaced by the
 // quoted name of the subscription database (subscriberQuery).
