@@ -132,7 +132,7 @@ func (e *exporter) agent(path, label string, r agentRow, secretParts ...string) 
 			&s.RelativeInterval, &s.RecurrenceFactor, &s.StartDate, &s.EndDate, &s.StartTime, &s.EndTime); err != nil {
 			return a, err
 		}
-		s.Enabled = enabled != 0
+		s.Enabled = model.Ptr(enabled != 0)
 		s.Frequency = decode.FreqType(freqType)
 		// Agent start and idle schedules carry no interval of their own, and
 		// one-time schedules usually store freq_subday_type 0, which has no

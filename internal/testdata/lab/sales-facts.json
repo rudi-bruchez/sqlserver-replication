@@ -1,0 +1,444 @@
+{
+  "read_at": "2026-11-12 04:05:15.195",
+  "publications": [
+    {
+      "name": "SalesPub",
+      "immediate_sync_ready": true,
+      "last_generation": "2026-11-12 04:05:06.657",
+      "articles": [
+        {
+          "name": "Customer",
+          "active": true
+        },
+        {
+          "name": "Orders",
+          "active": true
+        }
+      ]
+    },
+    {
+      "name": "SalesRef",
+      "immediate_sync_ready": false,
+      "last_generation": "2026-11-12 01:08:05.567",
+      "articles": [
+        {
+          "name": "Product",
+          "active": true
+        },
+        {
+          "name": "vCustomerFR",
+          "active": true
+        }
+      ]
+    }
+  ],
+  "subscriptions": [
+    {
+      "publication": "SalesPub",
+      "subscriber": "REPLLAB",
+      "database": "SalesSub",
+      "rows": [
+        {
+          "article": "Customer",
+          "publisher_status": 2,
+          "distributor_status": 2
+        },
+        {
+          "article": "Orders",
+          "publisher_status": 2,
+          "distributor_status": 2
+        }
+      ]
+    },
+    {
+      "publication": "SalesRef",
+      "subscriber": "REPLLAB",
+      "database": "SalesSub",
+      "rows": [
+        {
+          "article": "Product",
+          "publisher_status": 2,
+          "distributor_status": 2
+        },
+        {
+          "article": "vCustomerFR",
+          "publisher_status": 2,
+          "distributor_status": 2
+        }
+      ]
+    }
+  ],
+  "agents": [
+    {
+      "kind": "log_reader",
+      "agent_id": 1,
+      "job": {
+        "exists": true,
+        "enabled": true,
+        "running": true
+      },
+      "last_history": {
+        "time": "2026-11-12 04:05:06.830",
+        "runstatus": 3,
+        "comments": "3 transaction(s) with 14 command(s) were delivered."
+      }
+    },
+    {
+      "kind": "snapshot",
+      "publication": "SalesPub",
+      "agent_id": 1,
+      "job": {
+        "exists": true,
+        "enabled": true,
+        "running": false
+      },
+      "last_history": {
+        "time": "2026-11-12 04:05:06.657",
+        "runstatus": 2,
+        "comments": "[100%] A snapshot of 2 article(s) was generated."
+      }
+    },
+    {
+      "kind": "snapshot",
+      "publication": "SalesRef",
+      "agent_id": 2,
+      "job": {
+        "exists": true,
+        "enabled": true,
+        "running": false
+      },
+      "last_history": {
+        "time": "2026-11-12 04:05:03.760",
+        "runstatus": 2,
+        "comments": "[0%] A snapshot was not generated because no subscriptions needed initialization."
+      }
+    },
+    {
+      "kind": "distribution",
+      "publication": "SalesPub",
+      "subscriber": "REPLLAB",
+      "database": "SalesSub",
+      "agent_id": 3,
+      "job": {
+        "exists": true,
+        "enabled": true,
+        "running": true
+      },
+      "last_history": {
+        "time": "2026-11-12 04:05:10.923",
+        "runstatus": 3,
+        "comments": "1 transaction(s) with 6 command(s) were delivered."
+      }
+    },
+    {
+      "kind": "distribution",
+      "publication": "ALL",
+      "subscriber": "REPLLAB",
+      "database": "SalesSub",
+      "agent_id": 4,
+      "job": {
+        "exists": true,
+        "enabled": true,
+        "running": true
+      },
+      "last_history": {
+        "time": "2026-11-12 04:04:45.850",
+        "runstatus": 4,
+        "comments": "No replicated transactions are available."
+      },
+      "last_failure": {
+        "time": "2026-11-12 01:08:09.933",
+        "runstatus": 6,
+        "comments": "Unable to replicate a view or function because the referenced objects or columns are not present on the Subscriber.",
+        "error_text": "Replication-Replication Distribution Subsystem: agent repllab-Sales-repllab-4 failed. Unable to replicate a view or function because the referenced objects or columns are not present on the Subscriber."
+      }
+    }
+  ],
+  "profile_uses": [],
+  "publisher_databases": [
+    {
+      "distribution_db": "distribution",
+      "publisher": "repllab",
+      "database": "Sales"
+    }
+  ],
+  "template_profile_parameters": [
+    {
+      "agent_type": "snapshot",
+      "name": "-BcpBatchSize",
+      "value": "100000"
+    },
+    {
+      "agent_type": "snapshot",
+      "name": "-HistoryVerboseLevel",
+      "value": "2"
+    },
+    {
+      "agent_type": "snapshot",
+      "name": "-LoginTimeout",
+      "value": "15"
+    },
+    {
+      "agent_type": "snapshot",
+      "name": "-QueryTimeout",
+      "value": "1800"
+    },
+    {
+      "agent_type": "logreader",
+      "name": "-HistoryVerboseLevel",
+      "value": "1"
+    },
+    {
+      "agent_type": "logreader",
+      "name": "-LoginTimeout",
+      "value": "15"
+    },
+    {
+      "agent_type": "logreader",
+      "name": "-LogScanThreshold",
+      "value": "500000"
+    },
+    {
+      "agent_type": "logreader",
+      "name": "-PollingInterval",
+      "value": "5"
+    },
+    {
+      "agent_type": "logreader",
+      "name": "-QueryTimeout",
+      "value": "1800"
+    },
+    {
+      "agent_type": "logreader",
+      "name": "-ReadBatchSize",
+      "value": "500"
+    },
+    {
+      "agent_type": "distribution",
+      "name": "-BcpBatchSize",
+      "value": "0"
+    },
+    {
+      "agent_type": "distribution",
+      "name": "-CommitBatchSize",
+      "value": "100"
+    },
+    {
+      "agent_type": "distribution",
+      "name": "-CommitBatchThreshold",
+      "value": "1000"
+    },
+    {
+      "agent_type": "distribution",
+      "name": "-HistoryVerboseLevel",
+      "value": "1"
+    },
+    {
+      "agent_type": "distribution",
+      "name": "-KeepAliveMessageInterval",
+      "value": "300"
+    },
+    {
+      "agent_type": "distribution",
+      "name": "-LoginTimeout",
+      "value": "15"
+    },
+    {
+      "agent_type": "distribution",
+      "name": "-MaxBcpThreads",
+      "value": "1"
+    },
+    {
+      "agent_type": "distribution",
+      "name": "-MaxDeliveredTransactions",
+      "value": "0"
+    },
+    {
+      "agent_type": "distribution",
+      "name": "-PollingInterval",
+      "value": "5"
+    },
+    {
+      "agent_type": "distribution",
+      "name": "-QueryTimeout",
+      "value": "1800"
+    },
+    {
+      "agent_type": "distribution",
+      "name": "-SkipErrors",
+      "value": ""
+    },
+    {
+      "agent_type": "distribution",
+      "name": "-TransactionsPerHistory",
+      "value": "100"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-BcpBatchSize",
+      "value": "100000"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-ChangesPerHistory",
+      "value": "100"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-DestThreads",
+      "value": "2"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-DownloadGenerationsPerBatch",
+      "value": "50"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-DownloadReadChangesPerBatch",
+      "value": "100"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-DownloadWriteChangesPerBatch",
+      "value": "100"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-FastRowCount",
+      "value": "1"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-HistoryVerboseLevel",
+      "value": "2"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-KeepAliveMessageInterval",
+      "value": "300"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-LoginTimeout",
+      "value": "15"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-MakeGenerationInterval",
+      "value": "1"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-MaxBcpThreads",
+      "value": "2"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-MaxDownloadChanges",
+      "value": "0"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-MaxUploadChanges",
+      "value": "0"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-MetadataRetentionCleanup",
+      "value": "1"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-NumDeadlockRetries",
+      "value": "5"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-PollingInterval",
+      "value": "60"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-QueryTimeout",
+      "value": "300"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-SrcThreads",
+      "value": "2"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-StartQueueTimeout",
+      "value": "0"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-UploadGenerationsPerBatch",
+      "value": "50"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-UploadReadChangesPerBatch",
+      "value": "100"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-UploadWriteChangesPerBatch",
+      "value": "100"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-Validate",
+      "value": "0"
+    },
+    {
+      "agent_type": "merge",
+      "name": "-ValidateInterval",
+      "value": "60"
+    },
+    {
+      "agent_type": "queuereader",
+      "name": "-HistoryVerboseLevel",
+      "value": "1"
+    },
+    {
+      "agent_type": "queuereader",
+      "name": "-LoginTimeout",
+      "value": "15"
+    },
+    {
+      "agent_type": "queuereader",
+      "name": "-PollingInterval",
+      "value": "5"
+    },
+    {
+      "agent_type": "queuereader",
+      "name": "-QueryTimeout",
+      "value": "1800"
+    }
+  ],
+  "default_profiles": [
+    {
+      "agent_type": "snapshot",
+      "name": "Default agent profile"
+    },
+    {
+      "agent_type": "logreader",
+      "name": "Default agent profile"
+    },
+    {
+      "agent_type": "distribution",
+      "name": "Default agent profile"
+    },
+    {
+      "agent_type": "merge",
+      "name": "Default agent profile"
+    },
+    {
+      "agent_type": "queuereader",
+      "name": "Default agent profile"
+    }
+  ]
+}

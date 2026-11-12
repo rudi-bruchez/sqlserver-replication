@@ -35,6 +35,9 @@ func TestFactsJSONKeys(t *testing.T) {
 			Job: &JobState{Exists: true, Enabled: true, Running: true}, LastHistory: hist, LastFailure: hist}},
 		ProfileUses: []ProfileUse{{Profile: "p", AgentType: "distribution", DistributionDB: "distribution",
 			Publisher: "PUB", PublisherDB: "Sales", Publication: "P", Subscriber: "S", Database: "D", Virtual: true}},
+		PublisherDatabases:        []PublisherDatabase{{DistributionDB: "distribution", Publisher: "PUB", Database: "Sales"}},
+		TemplateProfileParameters: []ProfileParameter{{AgentType: "distribution", Name: "-CommitBatchSize", Value: "100"}},
+		DefaultProfiles:           []DefaultProfile{{AgentType: "distribution", Name: "Default agent profile"}},
 	}
 	b, err := json.Marshal(f)
 	if err != nil {
@@ -66,6 +69,11 @@ func TestFactsJSONKeys(t *testing.T) {
 		".profile_uses[].profile", ".profile_uses[].agent_type", ".profile_uses[].distribution_db",
 		".profile_uses[].publisher", ".profile_uses[].publisher_db", ".profile_uses[].publication", ".profile_uses[].subscriber",
 		".profile_uses[].database", ".profile_uses[].virtual",
+		".publisher_databases", ".publisher_databases[].distribution_db", ".publisher_databases[].publisher",
+		".publisher_databases[].database",
+		".template_profile_parameters", ".template_profile_parameters[].agent_type",
+		".template_profile_parameters[].name", ".template_profile_parameters[].value",
+		".default_profiles", ".default_profiles[].agent_type", ".default_profiles[].name",
 	}
 	wantSet := map[string]bool{}
 	for _, k := range want {

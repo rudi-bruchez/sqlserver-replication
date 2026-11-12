@@ -1,0 +1,354 @@
+version: 2
+publisher:
+    server: repllab
+    database: Sales
+    sync_with_backup: false
+    log_reader_agent:
+        job_name: REPLLAB-Sales-1
+        job_enabled: true
+        job_login: ""
+        profile: Default agent profile
+        run_as: ""
+        connection:
+            security: windows
+            login: ""
+        schedules:
+            - name: Replication agent schedule.
+              enabled: true
+              frequency: agent_start
+              end_date: 99991231
+              end_time: 235959
+        command: -Publisher [REPLLAB] -PublisherDB [Sales] -Distributor [repllab] -DistributorSecurityMode 1 -Continuous
+    shared_distribution_agents:
+        - subscriber: REPLLAB
+          database: SalesSub
+          distribution_agent:
+            job_name: repllab-Sales-repllab-4
+            job_enabled: true
+            job_login: ""
+            profile: Default agent profile
+            run_as: ""
+            connection:
+                security: windows
+                login: ""
+            schedules:
+                - name: Replication agent schedule.
+                  enabled: true
+                  frequency: agent_start
+                  end_date: 99991231
+                  end_time: 235959
+            command: -Subscriber [repllab] -SubscriberDB [SalesSub] -Publisher [repllab] -Distributor [repllab] -DistributorSecurityMode 1 -PublisherDB [Sales]    -Continuous
+            subscription_streams: 0
+            memory_optimized: false
+distributor:
+    server: repllab
+    database: distribution
+    min_retention_hours: 0
+    max_retention_hours: 72
+    history_retention_hours: 48
+    working_directory: /var/opt/mssql/data/ReplData
+    publisher_connection:
+        security: windows
+        login: ""
+    trusted: false
+    delete_batch_size_xact: 5000
+    delete_batch_size_cmd: 2000
+    data_folder: /var/opt/mssql//DATA
+    data_file: distribution.MDF
+    log_folder: /var/opt/mssql//DATA
+    log_file: distribution.LDF
+    admin_password_secret: SQLREPL_SQL_REPLLAB_DISTRIBUTOR_ADMIN
+    admin_link_security: sql
+    multi_subnet_failover: false
+    properties:
+        heartbeat_interval: "10"
+publications:
+    - name: SalesPub
+      description: lab publication
+      type: transactional
+      status: active
+      sync_method: concurrent
+      retention_hours: 0
+      independent_agent: true
+      immediate_sync: true
+      allow_push: true
+      allow_pull: true
+      allow_anonymous: false
+      allow_subscription_copy: false
+      allow_initialize_from_backup: false
+      replicate_ddl: true
+      allow_drop: false
+      allow_partition_switch: false
+      replicate_partition_switch: false
+      enabled_for_het_sub: false
+      snapshot:
+        in_default_folder: true
+        alt_folder: ""
+        compress: false
+        pre_script: ""
+        post_script: ""
+        enabled_for_internet: false
+      snapshot_agent:
+        job_name: REPLLAB-Sales-SalesPub-1
+        job_enabled: true
+        job_login: ""
+        distributor_connection:
+            security: windows
+        profile: Default agent profile
+        run_as: ""
+        connection:
+            security: windows
+            login: ""
+        schedules:
+            - name: Replication agent schedule.
+              enabled: true
+              frequency: daily
+              interval: 1
+              subday: minutes
+              subday_interval: 5
+              relative_interval: 1
+              end_date: 99991231
+              end_time: 235959
+        command: -Publisher [REPLLAB] -PublisherDB [Sales] -Distributor [REPLLAB] -Publication [SalesPub] -DistributorSecurityMode 1
+      articles:
+        - name: Customer
+          type: logbased
+          source:
+            schema: dbo
+            name: Customer
+          destination:
+            schema: dbo
+            name: Customer
+          description: ""
+          pre_creation_cmd: drop
+          schema_options:
+            - object_creation
+            - custom_procedures
+            - identity_property
+            - timestamp_as_timestamp
+            - clustered_index
+            - primary_key
+            - column_collation
+            - unique_keys
+            - check_constraints_not_for_replication
+            - foreign_keys_not_for_replication
+            - create_schemas
+          creation_script: ""
+          insert_column_names: true
+          parameterized: true
+          commands:
+            insert:
+                mode: CALL
+                procedure:
+                    schema: dbo
+                    name: sp_MSins_dboCustomer
+            update:
+                mode: SCALL
+                procedure:
+                    schema: dbo
+                    name: sp_MSupd_dboCustomer
+            delete:
+                mode: CALL
+                procedure:
+                    schema: dbo
+                    name: sp_MSdel_dboCustomer
+          filter:
+            clause: Country = 'FR'
+            procedure:
+                schema: dbo
+                name: FLTR_Customer
+          sync_object:
+            schema: dbo
+            name: SYNC_Customer
+          fire_triggers_on_snapshot: false
+          identity_range_management: none
+          columns:
+            - CustomerID
+            - Name
+            - Country
+        - name: Orders
+          type: logbased
+          source:
+            schema: dbo
+            name: Orders
+          destination:
+            schema: dbo
+            name: OrdersCopy
+          description: ""
+          pre_creation_cmd: truncate
+          schema_options:
+            - object_creation
+            - custom_procedures
+            - clustered_index
+            - udt_to_base_types
+            - nonclustered_indexes
+            - check_constraints_not_for_replication
+            - foreign_keys_not_for_replication
+          creation_script: ""
+          insert_column_names: false
+          parameterized: true
+          commands:
+            insert:
+                mode: SQL
+            update:
+                mode: SCALL
+                procedure:
+                    schema: dbo
+                    name: sp_MSupd_dboOrders
+            delete:
+                mode: XCALL
+                procedure:
+                    schema: dbo
+                    name: custom_del_Orders
+          fire_triggers_on_snapshot: false
+          identity_range_management: none
+      subscriptions:
+        - subscriber: REPLLAB
+          database: SalesSub
+          type: push
+          subscriber_type: sql_server
+          initialization: snapshot
+          loopback_detection: true
+          distribution_agent:
+            job_name: repllab-Sales-SalesPub-repllab-3
+            job_enabled: true
+            job_login: ""
+            profile: Default agent profile
+            run_as: ""
+            connection:
+                security: windows
+                login: ""
+            schedules:
+                - name: Replication agent schedule.
+                  enabled: true
+                  frequency: agent_start
+                  end_date: 99991231
+                  end_time: 235959
+            command: -Subscriber [repllab] -SubscriberDB [SalesSub] -Publisher [repllab] -Distributor [repllab] -DistributorSecurityMode 1 -Publication [SalesPub] -PublisherDB [Sales]    -Continuous
+            subscription_streams: 0
+            memory_optimized: false
+    - name: SalesRef
+      description: ""
+      type: transactional
+      status: active
+      sync_method: native
+      retention_hours: 336
+      independent_agent: false
+      immediate_sync: false
+      allow_push: true
+      allow_pull: false
+      allow_anonymous: false
+      allow_subscription_copy: false
+      allow_initialize_from_backup: false
+      replicate_ddl: true
+      allow_drop: false
+      allow_partition_switch: false
+      replicate_partition_switch: false
+      enabled_for_het_sub: false
+      snapshot:
+        in_default_folder: true
+        alt_folder: ""
+        compress: false
+        pre_script: ""
+        post_script: ""
+        enabled_for_internet: false
+      snapshot_agent:
+        job_name: REPLLAB-Sales-SalesRef-2
+        job_enabled: true
+        job_login: ""
+        distributor_connection:
+            security: windows
+        profile: Default agent profile
+        run_as: ""
+        connection:
+            security: windows
+            login: ""
+        schedules:
+            - name: Replication agent schedule.
+              enabled: true
+              frequency: daily
+              interval: 1
+              subday: minutes
+              subday_interval: 5
+              relative_interval: 1
+              end_date: 99991231
+              end_time: 235959
+        command: -Publisher [REPLLAB] -PublisherDB [Sales] -Distributor [REPLLAB] -Publication [SalesRef] -DistributorSecurityMode 1
+      articles:
+        - name: Product
+          type: logbased
+          source:
+            schema: dbo
+            name: Product
+          destination:
+            schema: dbo
+            name: Product
+          description: ""
+          pre_creation_cmd: drop
+          schema_options:
+            - object_creation
+            - custom_procedures
+            - clustered_index
+            - udt_to_base_types
+            - nonclustered_indexes
+            - check_constraints_not_for_replication
+            - foreign_keys_not_for_replication
+          creation_script: ""
+          insert_column_names: false
+          parameterized: true
+          commands:
+            insert:
+                mode: CALL
+                procedure:
+                    schema: dbo
+                    name: sp_MSins_dboProduct
+            update:
+                mode: SCALL
+                procedure:
+                    schema: dbo
+                    name: sp_MSupd_dboProduct
+            delete:
+                mode: CALL
+                procedure:
+                    schema: dbo
+                    name: sp_MSdel_dboProduct
+          fire_triggers_on_snapshot: false
+          identity_range_management: none
+        - name: vCustomerFR
+          type: view_schema_only
+          source:
+            schema: dbo
+            name: vCustomerFR
+          destination:
+            schema: dbo
+            name: vCustomerFR
+          description: ""
+          pre_creation_cmd: drop
+          schema_options:
+            - object_creation
+          creation_script: ""
+      subscriptions:
+        - subscriber: REPLLAB
+          database: SalesSub
+          type: push
+          subscriber_type: sql_server
+          initialization: snapshot
+          loopback_detection: true
+agent_profiles:
+    - name: lab-distrib
+      agent_type: distribution
+      description: lab profile
+      default: false
+      parameters:
+        -BcpBatchSize: "0"
+        -CommitBatchSize: "200"
+        -CommitBatchThreshold: "1000"
+        -HistoryVerboseLevel: "1"
+        -KeepAliveMessageInterval: "300"
+        -LoginTimeout: "15"
+        -MaxBcpThreads: "1"
+        -MaxDeliveredTransactions: "0"
+        -PollingInterval: "5"
+        -QueryTimeout: "1800"
+        -SkipErrors: ""
+        -TransactionsPerHistory: "100"

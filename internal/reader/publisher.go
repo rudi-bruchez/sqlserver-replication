@@ -444,7 +444,7 @@ func (e *exporter) readSubscriptions() error {
 		sort.Strings(s.articles)
 		if !slices.Equal(s.articles, e.articleNames[k.pubid]) {
 			sub.Articles = s.articles
-			if !subsetAllowed(p) {
+			if !p.SubsetAllowed() {
 				e.find(model.FindingIncomplete, model.Join(subscriptionPath(p.Name, k.subscriber, k.database), "articles"), "%s: lists %d of the %d articles of the publication, but a subset cannot exist with immediate_sync or sync_method concurrent, concurrent_c", label, len(s.articles), len(e.articleNames[k.pubid]))
 			}
 		}

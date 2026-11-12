@@ -18,6 +18,10 @@ func newFacts() *state.Facts {
 		Subscriptions: []state.SubscriptionFacts{},
 		Agents:        []state.AgentFacts{},
 		ProfileUses:   []state.ProfileUse{},
+
+		PublisherDatabases:        []state.PublisherDatabase{},
+		TemplateProfileParameters: []state.ProfileParameter{},
+		DefaultProfiles:           []state.DefaultProfile{},
 	}
 }
 
@@ -91,6 +95,8 @@ func (e *exporter) readFacts() error {
 		{"subscriptions", e.readSubscriptionFacts},
 		{"agent history", e.readAgentHistory},
 		{"profile uses", e.readProfileUses},
+		{"publisher databases", e.readPublisherDatabases},
+		{"profile templates", e.readProfileTemplates},
 	}
 	for _, s := range steps {
 		if err := s.fn(); err != nil {
@@ -290,38 +296,45 @@ func (e *exporter) readAgentHistory() error {
 	return nil
 }
 
-// readProfileUses reads the agents of every distribution database of the
-// distributor that use a user-defined profile.
-func (e *exporter) readProfileUses() error {
+// distributionDBs returns every distribution database of the distributor,
+// and decides whether they have MSreplservers. Every distribution database of
+// an instance has the same version, so whether one has MSreplservers stands
+// for all of them. The empty configuration of a publisher the distributor
+// does not know has not probed one yet.
+func (e *exporter) distributionDBs() ([]string, error) {
 	var dbs []string
 	rows, err := e.src.Distributor.QueryContext(e.ctx, qDistributionDBs)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	defer rows.Close()
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			rows.Close()
-			return err
+			return nil, err
 		}
 		dbs = append(dbs, name)
 	}
-	rows.Close()
 	if err := rows.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	if len(dbs) == 0 {
-		return nil
+		return nil, nil
 	}
-
-	// Every distribution database of an instance has the same version, so
-	// whether one has MSreplservers stands for all of them. The empty
-	// configuration of a publisher the distributor does not know has not
-	// probed one yet.
 	if err := e.probeReplServers(quoteName(dbs[0])); err != nil {
+		return nil, err
+	}
+	return dbs, nil
+}
+
+// readProfileUses reads the agents of every distribution database of the
+// distributor that use a user-defined profile.
+func (e *exporter) readProfileUses() error {
+	dbs, err := e.distributionDBs()
+	if err != nil || len(dbs) == 0 {
 		return err
 	}
-	rows, err = e.src.Distributor.QueryContext(e.ctx, profileUsesQuery(dbs, !e.replServers))
+	rows, err := e.src.Distributor.QueryContext(e.ctx, profileUsesQuery(dbs, !e.replServers))
 	if err != nil {
 		return err
 	}
@@ -353,4 +366,80 @@ func (e *exporter) readProfileUses() error {
 		return !a.Virtual && b.Virtual
 	})
 	return nil
+}
+
+// readPublisherDatabases reads every publication database registered in
+// every distribution database of the distributor.
+func (e *exporter) readPublisherDatabases() error {
+	dbs, err := e.distributionDBs()
+	if err != nil || len(dbs) == 0 {
+		return err
+	}
+	rows, err := e.src.Distributor.QueryContext(e.ctx, publisherDatabasesQuery(dbs, !e.replServers))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var i int
+		var d state.PublisherDatabase
+		if err := rows.Scan(&i, &d.Publisher, &d.Database); err != nil {
+			return err
+		}
+		d.DistributionDB = dbs[i]
+		e.facts.PublisherDatabases = append(e.facts.PublisherDatabases, d)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	sort.Slice(e.facts.PublisherDatabases, func(i, j int) bool {
+		a, b := e.facts.PublisherDatabases[i], e.facts.PublisherDatabases[j]
+		for _, c := range [][2]string{{a.DistributionDB, b.DistributionDB}, {a.Publisher, b.Publisher}, {a.Database, b.Database}} {
+			if c[0] != c[1] {
+				return c[0] < c[1]
+			}
+		}
+		return false
+	})
+	return nil
+}
+
+// readProfileTemplates reads, at the distributor, the parameters
+// sp_add_agent_profile copies into a new profile of each agent type, and the
+// default profile of each type.
+func (e *exporter) readProfileTemplates() error {
+	rows, err := e.src.Distributor.QueryContext(e.ctx, templateProfileParametersQuery)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var agentType int
+		var p state.ProfileParameter
+		if err := rows.Scan(&agentType, &p.Name, &p.Value); err != nil {
+			rows.Close()
+			return err
+		}
+		p.AgentType = decode.AgentType(agentType)
+		e.facts.TemplateProfileParameters = append(e.facts.TemplateProfileParameters, p)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	rows, err = e.src.Distributor.QueryContext(e.ctx, defaultProfilesQuery)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var agentType int
+		var d state.DefaultProfile
+		if err := rows.Scan(&agentType, &d.Name); err != nil {
+			return err
+		}
+		d.AgentType = decode.AgentType(agentType)
+		e.facts.DefaultProfiles = append(e.facts.DefaultProfiles, d)
+	}
+	return rows.Err()
 }

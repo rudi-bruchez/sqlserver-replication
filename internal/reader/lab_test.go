@@ -920,6 +920,68 @@ WHERE p.name = N'SalesRef' AND a.name = N'vCustomerFR'`).Scan(&schemaActive); er
 			t.Errorf("profile use %+v, want none for Sales", u)
 		}
 	}
+
+	master := labDB(t, "master")
+	var server string
+	if err := master.QueryRow(`SELECT @@SERVERNAME`).Scan(&server); err != nil {
+		t.Fatal(err)
+	}
+	salesDB := false
+	for _, d := range f.PublisherDatabases {
+		if d.DistributionDB == "distribution" && strings.EqualFold(d.Publisher, server) && d.Database == "Sales" {
+			salesDB = true
+		}
+	}
+	if !salesDB {
+		t.Errorf("publisher_databases = %+v, want {distribution %s Sales}", f.PublisherDatabases, server)
+	}
+
+	// The template sp_add_agent_profile copies, selected as its source does
+	// (sp_add_agent_profile.sql:82).
+	want := map[string]string{}
+	rows, err = master.Query(`
+SELECT parameter_name, ISNULL(value, N'') FROM msdb.dbo.MSagent_parameters
+WHERE profile_id = (SELECT MIN(profile_id) FROM msdb.dbo.MSagent_profiles WHERE agent_type = 3 AND type = 0)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			t.Fatal(err)
+		}
+		want[k] = v
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	n := 0
+	for _, p := range f.TemplateProfileParameters {
+		if p.AgentType == "distribution" {
+			n++
+			got[p.Name] = p.Value
+		}
+	}
+	if n != 12 || got["-CommitBatchSize"] != "100" || !reflect.DeepEqual(got, want) {
+		t.Errorf("distribution template parameters: %d rows %v, want 12 with -CommitBatchSize 100, equal to %v", n, got, want)
+	}
+
+	var def string
+	if err := master.QueryRow(`
+SELECT profile_name FROM msdb.dbo.MSagent_profiles WHERE agent_type = 3 AND def_profile = 1`).Scan(&def); err != nil {
+		t.Fatal(err)
+	}
+	var defaults []string
+	for _, d := range f.DefaultProfiles {
+		if d.AgentType == "distribution" {
+			defaults = append(defaults, d.Name)
+		}
+	}
+	if len(defaults) != 1 || defaults[0] != def {
+		t.Errorf("distribution default profiles = %q, want [%s]", defaults, def)
+	}
 }
 
 // TestReadLabNoFacts checks that a read without Source.Facts returns no facts.

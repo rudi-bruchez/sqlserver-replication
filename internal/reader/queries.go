@@ -147,6 +147,16 @@ SELECT a.pubid, a.name, a.status & 1 FROM dbo.sysschemaarticles AS a`
 	// Facts: the status of each article of each real subscription, at the
 	// publisher. Status 3 (active, the snapshot delivered) is only ever read
 	// in MSsubscriptions (O18).
+	// The servers of the pull subscriptions of the publication database: the
+	// planner opens them before the read, since a pull subscription is read
+	// and dropped at its subscriber. srvid -1 and -2 are the virtual
+	// subscribers.
+	pullSubscribersQuery = `
+SELECT DISTINCT s.srvname
+FROM dbo.syssubscriptions AS s
+WHERE s.subscription_type = 1 AND s.srvid >= 0 AND s.srvname IS NOT NULL AND s.srvname <> N''
+ORDER BY s.srvname`
+
 	qSubscriptionStatus = `
 SELECT a.pubid, a.name, s.srvname, s.dest_db, CAST(s.status AS int)
 FROM dbo.syssubscriptions AS s
@@ -356,7 +366,52 @@ WHERE sj.job_id = CONVERT(uniqueidentifier, @p1)`
 
 	// Facts: every distribution database of the distributor.
 	qDistributionDBs = `SELECT name FROM msdb.dbo.MSdistributiondbs ORDER BY name`
+
+	// Facts: for each agent type, the parameters of the profile
+	// sp_add_agent_profile copies into a new profile, its template: the
+	// system profile (type 0) of lowest profile_id of the type
+	// (sp_add_agent_profile.sql:82). It is not the def_profile = 1 profile,
+	// which a user profile can be (19-profiles PF.copy_after_user_default).
+	templateProfileParametersQuery = `
+SELECT mp.agent_type, ap.parameter_name, ISNULL(ap.value, N'')
+FROM msdb.dbo.MSagent_profiles AS mp
+JOIN msdb.dbo.MSagent_parameters AS ap ON ap.profile_id = mp.profile_id
+WHERE mp.profile_id = (SELECT MIN(t.profile_id) FROM msdb.dbo.MSagent_profiles AS t
+                       WHERE t.agent_type = mp.agent_type AND t.type = 0)
+ORDER BY mp.agent_type, ap.parameter_name`
+
+	// Facts: the default profile of each agent type.
+	defaultProfilesQuery = `
+SELECT agent_type, profile_name
+FROM msdb.dbo.MSagent_profiles
+WHERE def_profile = 1
+ORDER BY agent_type, profile_name`
 )
+
+// publisherDatabasesQuery builds the query of every row of
+// MSpublisher_databases of every distribution database of dbs, the publisher
+// named through that database's own MSreplservers (or, with useFallback,
+// fallbackServers), as profileUsesQuery does. The first column is the index
+// of the database in dbs.
+func publisherDatabasesQuery(dbs []string, useFallback bool) string {
+	const c = " COLLATE DATABASE_DEFAULT"
+	var b strings.Builder
+	for i, db := range dbs {
+		d := quoteName(db)
+		servers := d + ".dbo.MSreplservers"
+		if useFallback {
+			servers = fallbackServers
+		}
+		if i > 0 {
+			b.WriteString("\nUNION ALL")
+		}
+		fmt.Fprintf(&b, `
+SELECT %[1]d, ISNULL(ps.srvname, N'')%[2]s, pd.publisher_db%[2]s
+FROM %[3]s.dbo.MSpublisher_databases AS pd
+LEFT JOIN %[4]s AS ps ON ps.srvid = pd.publisher_id`, i, c, d, servers)
+	}
+	return b.String()
+}
 
 // profileUsesQuery builds the query of the agents that use a user-defined
 // profile (msdb.dbo.MSagent_profiles.type = 1) in every distribution database

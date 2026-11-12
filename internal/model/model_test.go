@@ -84,8 +84,8 @@ func fullConfig() *Config {
 			RunAs:      Ptr(""),
 			Connection: &Connection{Security: Ptr("windows"), Login: Ptr(""), PasswordSecret: Ptr("")},
 			Schedules: Ptr([]Schedule{
-				{Name: "s1", Enabled: true, Frequency: "daily", Interval: 1, Subday: "minutes", SubdayInterval: 5},
-				{Name: "s2", Frequency: "autostart"},
+				{Name: "s1", Enabled: Ptr(true), Frequency: "daily", Interval: 1, Subday: "minutes", SubdayInterval: 5},
+				{Name: "s2", Enabled: Ptr(false), Frequency: "autostart"},
 			}),
 			Command: Ptr("-Publisher [S]"),
 		}

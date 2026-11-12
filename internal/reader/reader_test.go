@@ -76,6 +76,8 @@ func TestQueriesParse(t *testing.T) {
 		"qLastGeneration":                qLastGeneration, "qLogReaderHistory": qLogReaderHistory,
 		"qSnapshotHistory": qSnapshotHistory, "qDistributionHistory": qDistributionHistory,
 		"qJobState": qJobState, "qDistributionDBs": qDistributionDBs,
+		"templateProfileParametersQuery": templateProfileParametersQuery,
+		"defaultProfilesQuery":           defaultProfilesQuery, "pullSubscribersQuery": pullSubscribersQuery,
 	}
 	ctx := context.Background()
 	// PARSEONLY only applies to the batches that follow it in the session,
@@ -114,6 +116,16 @@ func TestQueriesParse(t *testing.T) {
 		}
 		if _, err := conn.ExecContext(ctx, q); err != nil {
 			t.Errorf("profileUsesQuery (fallback %t): %v", fallback, err)
+		}
+	}
+	// publisherDatabasesQuery is built the same way.
+	for _, fallback := range []bool{false, true} {
+		q := publisherDatabasesQuery([]string{"distribution", "m dist]2"}, fallback)
+		if strings.Contains(q, "{") {
+			t.Errorf("publisherDatabasesQuery: unreplaced placeholder")
+		}
+		if _, err := conn.ExecContext(ctx, q); err != nil {
+			t.Errorf("publisherDatabasesQuery (fallback %t): %v", fallback, err)
 		}
 	}
 	// A syntax error must still be reported, or the test proves nothing.
@@ -505,22 +517,22 @@ func TestCheckSyncView(t *testing.T) {
 	}
 }
 
-func TestSubsetAllowed(t *testing.T) {
-	pub := func(method string, immediate bool) *model.Publication {
-		return &model.Publication{SyncMethod: model.Ptr(method), ImmediateSync: model.Ptr(immediate)}
-	}
-	if subsetAllowed(pub("native", true)) {
-		t.Error("immediate_sync: a subset cannot exist")
-	}
-	for _, m := range []string{"concurrent", "concurrent_c"} {
-		if subsetAllowed(pub(m, false)) {
-			t.Errorf("%s: a subset cannot exist", m)
+func TestPublisherDatabasesQuery(t *testing.T) {
+	q := publisherDatabasesQuery([]string{"distribution", "m dist]2"}, false)
+	for _, want := range []string{"[distribution].dbo.MSpublisher_databases", "[m dist]]2].dbo.MSpublisher_databases"} {
+		if !strings.Contains(q, want) {
+			t.Errorf("query lacks %s:\n%s", want, q)
 		}
 	}
-	for _, m := range []string{"native", "character", "database_snapshot", "database_snapshot_character"} {
-		if !subsetAllowed(pub(m, false)) {
-			t.Errorf("%s: a subset can exist", m)
-		}
+	if strings.Contains(q, "{") {
+		t.Errorf("unreplaced placeholder:\n%s", q)
+	}
+}
+
+func TestReadRefusesZeroProbe(t *testing.T) {
+	res, err := Read(context.Background(), Source{})
+	if err == nil || err.Error() != "reader: Source.Probe is not set" {
+		t.Errorf("Read with a zero probe: result %v, error %v; want the error reader: Source.Probe is not set", res, err)
 	}
 }
 

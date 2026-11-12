@@ -15,6 +15,39 @@ type Facts struct {
 	Subscriptions []SubscriptionFacts `json:"subscriptions"`
 	Agents        []AgentFacts        `json:"agents"`
 	ProfileUses   []ProfileUse        `json:"profile_uses"`
+	// PublisherDatabases is every row of MSpublisher_databases of every
+	// distribution database of the distributor.
+	PublisherDatabases []PublisherDatabase `json:"publisher_databases"`
+	// TemplateProfileParameters are, for each agent type, the parameters
+	// sp_add_agent_profile copies into a new profile: those of the system
+	// profile MIN(profile_id) of the type (sp_add_agent_profile.sql:82),
+	// which is not always the default profile.
+	TemplateProfileParameters []ProfileParameter `json:"template_profile_parameters"`
+	// DefaultProfiles is the profile with def_profile = 1 of each agent type,
+	// the one an agent without a profile uses.
+	DefaultProfiles []DefaultProfile `json:"default_profiles"`
+}
+
+// PublisherDatabase is a publication database registered in a distribution
+// database. Publisher is named through that database's own server table.
+type PublisherDatabase struct {
+	DistributionDB string `json:"distribution_db"`
+	Publisher      string `json:"publisher"`
+	Database       string `json:"database"`
+}
+
+// ProfileParameter is a parameter of an agent profile. AgentType is the name
+// the model uses (snapshot, logreader, distribution...).
+type ProfileParameter struct {
+	AgentType string `json:"agent_type"`
+	Name      string `json:"name"`
+	Value     string `json:"value"`
+}
+
+// DefaultProfile is the default profile of an agent type.
+type DefaultProfile struct {
+	AgentType string `json:"agent_type"`
+	Name      string `json:"name"`
 }
 
 // PublicationFacts is the snapshot state of a publication.

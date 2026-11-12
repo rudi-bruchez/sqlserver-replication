@@ -177,8 +177,10 @@ type Agent struct {
 // Schedule mirrors msdb.dbo.sysschedules. Dates are yyyymmdd and times
 // hhmmss, as stored.
 type Schedule struct {
-	Name             string `yaml:"name"`
-	Enabled          bool   `yaml:"enabled"`
+	Name string `yaml:"name"`
+	// Enabled is sysschedules.enabled. The export always sets it; omitted in
+	// a desired file, it is not compared (plan 3, R38).
+	Enabled          *bool  `yaml:"enabled,omitempty"`
 	Frequency        string `yaml:"frequency"`
 	Interval         int    `yaml:"interval,omitempty"`
 	Subday           string `yaml:"subday,omitempty"`

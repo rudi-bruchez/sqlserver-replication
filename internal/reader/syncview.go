@@ -4,24 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-
-	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
 )
-
-// subsetAllowed reports whether a subscription may list a subset of the
-// articles of the publication. A subset cannot exist when the publication
-// keeps its snapshot ready for new subscriptions (immediate_sync) or builds it
-// concurrently (sync_method concurrent, concurrent_c): the snapshot then
-// covers every article (spec "Subscriptions").
-func subsetAllowed(p *model.Publication) bool {
-	if p.ImmediateSync != nil && *p.ImmediateSync {
-		return false
-	}
-	if p.SyncMethod != nil && (*p.SyncMethod == "concurrent" || *p.SyncMethod == "concurrent_c") {
-		return false
-	}
-	return true
-}
 
 // checkSyncView compares the definition of an article's synchronization view
 // with the article's filter clause and published columns. generated is false

@@ -6,6 +6,7 @@ package reader
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -57,6 +58,30 @@ func subscriberConn(subs map[string]*sql.DB, name string) *sql.DB {
 // subscriberQuery returns qPullSubscription for a subscription database.
 func subscriberQuery(database string) string {
 	return strings.ReplaceAll(qPullSubscription, "{subdb}", quoteName(database))
+}
+
+// PullSubscribers returns the servers of the pull subscriptions of the
+// publication database pub is connected to, sorted. They are read at their
+// subscriber, so the caller opens them before Read.
+func PullSubscribers(ctx context.Context, pub *sql.DB) ([]string, error) {
+	rows, err := pub.QueryContext(ctx, pullSubscribersQuery)
+	if err != nil {
+		return nil, fmt.Errorf("reading the pull subscribers: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out = append(out, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // PublisherProbe is what the publisher says about itself and the publication
@@ -128,6 +153,11 @@ type Result struct {
 // Read reads the whole configuration of the publication database, or the
 // empty configuration when the probe says there is nothing to read.
 func Read(ctx context.Context, src Source) (*Result, error) {
+	// A zero probe would read as a database in no state at all; Start
+	// refuses it only after the first query.
+	if src.Probe.State == "" {
+		return nil, errors.New("reader: Source.Probe is not set")
+	}
 	if src.Probe.Name != "" {
 		src.Database = src.Probe.Name
 	}
@@ -242,7 +272,9 @@ func (e *exporter) run() error {
 			{"agent profile parameters", e.collectProfiles},
 		}
 		if e.src.Facts {
-			steps = append(steps, step{"profile uses", e.readProfileUses})
+			steps = append(steps, step{"profile uses", e.readProfileUses},
+				step{"publisher databases", e.readPublisherDatabases},
+				step{"profile templates", e.readProfileTemplates})
 		}
 		return runSteps(steps)
 	}
