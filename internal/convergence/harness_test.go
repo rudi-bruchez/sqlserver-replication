@@ -229,6 +229,14 @@ func (e *env) residue() ([]string, error) {
 // and lab-distrib must not be dropped.
 func (e *env) desired(t *testing.T, file string) *model.Config {
 	t.Helper()
+	des := e.load(t, file)
+	des.AgentProfiles = e.labProfiles(t)
+	return des
+}
+
+// load loads a test file as written, placeholders replaced.
+func (e *env) load(t *testing.T, file string) *model.Config {
+	t.Helper()
 	b, err := os.ReadFile("testdata/" + file)
 	if err != nil {
 		t.Fatal(err)
@@ -237,7 +245,6 @@ func (e *env) desired(t *testing.T, file string) *model.Config {
 	if err != nil {
 		t.Fatalf("%s: %v", file, err)
 	}
-	des.AgentProfiles = e.labProfiles(t)
 	return des
 }
 
@@ -259,10 +266,17 @@ func (e *env) labProfiles(t *testing.T) []model.AgentProfile {
 }
 
 // plan reads the database the file names, with the facts, runs the
-// prechecks and builds the plan, wired as cmd/sqlrepl's runPlan wires them:
-// every server of the file, the pull subscribers and the lab's
-// @@SERVERNAME are the one lab instance (carried decision 1).
+// prechecks and builds the plan (inputs).
 func (e *env) plan(t *testing.T, des *model.Config, opt plan.Options) *plan.Plan {
+	t.Helper()
+	return plan.Build(e.inputs(t, des), opt)
+}
+
+// inputs reads the database the file names, with the facts, and runs the
+// prechecks, wired as cmd/sqlrepl's runPlan wires them: every server of
+// the file, the pull subscribers and the lab's @@SERVERNAME are the one lab
+// instance (carried decision 1). Its Current is the export of the database.
+func (e *env) inputs(t *testing.T, des *model.Config) plan.Inputs {
 	t.Helper()
 	ctx := context.Background()
 	probe, err := reader.Probe(ctx, e.master, des.Publisher.Database)
@@ -308,11 +322,11 @@ func (e *env) plan(t *testing.T, des *model.Config, opt plan.Options) *plan.Plan
 	if err != nil {
 		t.Fatal(err)
 	}
-	return plan.Build(plan.Inputs{Desired: des, Current: res.Config, Facts: res.Facts, Checks: checks,
+	return plan.Inputs{Desired: des, Current: res.Config, Facts: res.Facts, Checks: checks,
 		SecretSet: func(name string) bool {
 			_, ok := os.LookupEnv(name)
 			return ok
-		}}, opt)
+		}}
 }
 
 func quoteName(s string) string { return "[" + strings.ReplaceAll(s, "]", "]]") + "]" }
@@ -381,21 +395,90 @@ func (e *env) run(t *testing.T, p *plan.Plan) {
 
 // startAndWait starts the snapshot agent of each snapshot ref of
 // AgentsToStart (sp_startpublication_snapshot, never sp_start_job: carried
-// decision 6), then waits for the deliveries the test expects. The
-// distribution refs are not started: the push agent runs on its own; the
-// tests assert AgentsToStart exactly (wantAgents), so a plan that forgets
-// the snapshot agent leaves the delivery undone.
+// decision 6), then the pull agents of its pull refs (startPull), then
+// waits for the deliveries the test expects. The push distribution refs
+// are not started: the push agent runs on its own; the tests assert
+// AgentsToStart exactly (wantAgents), so a plan that forgets the snapshot
+// agent or a pull agent leaves the delivery undone.
 func (e *env) startAndWait(t *testing.T, p *plan.Plan) {
 	t.Helper()
 	started := map[string]bool{}
+	pull := false
 	for _, a := range p.AgentsToStart {
-		if a.Kind != "snapshot" || started[a.Publication] {
-			continue
+		switch {
+		case a.Kind == "pull_distribution":
+			pull = true
+		case a.Kind != "snapshot" || started[a.Publication]:
+		default:
+			started[a.Publication] = true
+			e.startSnapshot(t, p.Database, a.Publication)
 		}
-		started[a.Publication] = true
-		e.startSnapshot(t, p.Database, a.Publication)
+	}
+	if pull {
+		e.startPull(t, p)
 	}
 	e.waitAll(t)
+}
+
+// startPull runs the plan's job_start statements of the pull agents, at
+// their subscriber, until the deliveries the test expects have arrived or
+// pollTimeout has passed. The pull agent job sp_addpullsubscription_agent
+// creates has no schedule, and a run started before the snapshot is
+// generated exits without delivering (carried decision 5), so the start is
+// repeated every few seconds; sp_start_job on a running job fails with
+// 22022, which means it runs already.
+func (e *env) startPull(t *testing.T, p *plan.Plan) {
+	t.Helper()
+	var starts []plan.Statement
+	for i, st := range p.Statements() {
+		if op := p.Operations[i]; op.Kind == "job_start" && strings.HasSuffix(op.Path, ".pull_agent") {
+			starts = append(starts, st)
+		}
+	}
+	if len(starts) == 0 {
+		t.Fatalf("a pull agent to start and no job_start of a pull agent\n%s", p.Summary())
+	}
+	ctx := context.Background()
+	conn, err := e.master.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	begin := time.Now()
+	deadline := begin.Add(pollTimeout)
+	starts22022, startsOK := 0, 0
+	for !e.delivered() && time.Now().Before(deadline) {
+		for _, st := range starts {
+			if _, err := conn.ExecContext(ctx, "USE "+quoteName(st.Database)); err != nil {
+				t.Fatalf("USE %s: %v", st.Database, err)
+			}
+			_, err := conn.ExecContext(ctx, st.Text)
+			var me mssql.Error
+			switch {
+			case err == nil:
+				startsOK++
+			case errors.As(err, &me) && me.Number == 22022:
+				starts22022++
+			default:
+				t.Fatalf("start of the pull agent at %s: %v\n%s", st.Server, err, st.Text)
+			}
+		}
+		time.Sleep(3 * time.Second)
+	}
+	t.Logf("pull agent: %d starts accepted, %d refused with 22022 (running), %s to the deliveries",
+		startsOK, starts22022, time.Since(begin).Round(time.Second))
+}
+
+// delivered tells whether every delivery the test expects has arrived.
+func (e *env) delivered() bool {
+	for _, d := range e.deliveries {
+		var n int
+		q := fmt.Sprintf("SELECT COUNT(*) FROM %s.dbo.%s", quoteName(e.sub), quoteName(d.table))
+		if e.master.QueryRow(q).Scan(&n) != nil || n != d.want {
+			return false
+		}
+	}
+	return true
 }
 
 // startSnapshot runs sp_startpublication_snapshot, again every second while

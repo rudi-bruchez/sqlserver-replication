@@ -1,0 +1,47 @@
+# create.yaml with the push distribution agent bound to the profile {prof},
+# declared below with the one parameter it changes from the template: the
+# test adds the template's other parameters (Facts.TemplateProfileParameters)
+# and the lab's own profiles (R6).
+# The snapshot agent's schedule never fires: the tests start it. The
+# distributor is the lab's, not compared (R4).
+version: 2
+publisher:
+  server: {server}
+  database: {db}
+publications:
+  - name: m_p
+    type: transactional
+    status: active
+    sync_method: native
+    independent_agent: true
+    immediate_sync: false
+    snapshot_agent:
+      schedules:
+        - frequency: once
+          start_date: 99991231
+    articles:
+      - name: m_t1
+        source:
+          schema: dbo
+          name: m_t1
+        filter:
+          clause: a > 0
+          procedure:
+            name: m_flt1
+      - name: m_t2
+        source:
+          schema: dbo
+          name: m_t2
+        columns: [id, a]
+    subscriptions:
+      - subscriber: {server}
+        database: {sub}
+        type: push
+        initialization: snapshot
+        distribution_agent:
+          profile: {prof}
+agent_profiles:
+  - name: {prof}
+    agent_type: distribution
+    parameters:
+      -CommitBatchSize: "200"

@@ -1,0 +1,43 @@
+# create.yaml with a description, retention_hours 100 and a snapshot
+# agent schedule of every 10 minutes, daily, that starts on 99991231 and so
+# never fires before the teardown.
+# The distributor is the lab's, not compared (R4).
+version: 2
+publisher:
+  server: {server}
+  database: {db}
+publications:
+  - name: m_p
+    description: m_p of the properties test
+    type: transactional
+    status: active
+    sync_method: native
+    independent_agent: true
+    immediate_sync: false
+    retention_hours: 100
+    snapshot_agent:
+      schedules:
+        - frequency: daily
+          interval: 1
+          subday: minutes
+          subday_interval: 10
+          start_date: 99991231
+    articles:
+      - name: m_t1
+        source:
+          schema: dbo
+          name: m_t1
+        filter:
+          clause: a > 0
+          procedure:
+            name: m_flt1
+      - name: m_t2
+        source:
+          schema: dbo
+          name: m_t2
+        columns: [id, a]
+    subscriptions:
+      - subscriber: {server}
+        database: {sub}
+        type: push
+        initialization: snapshot

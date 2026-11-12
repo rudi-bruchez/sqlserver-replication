@@ -1,0 +1,8 @@
+# {db} without any publication: the publication m_p of create.yaml and its
+# subscription are dropped; the database stays enabled for publishing (R27).
+# The distributor is the lab's, not compared (R4).
+version: 2
+publisher:
+  server: {server}
+  database: {db}
+publications: []

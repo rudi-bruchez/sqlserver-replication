@@ -1,0 +1,40 @@
+# imm-add.yaml with the nonclustered_indexes schema option added to m_t1.
+# The snapshot agent's schedule never fires: the tests start it. The
+# distributor is the lab's, not compared (R4).
+version: 2
+publisher:
+  server: {server}
+  database: {db}
+publications:
+  - name: m_pi
+    type: transactional
+    status: active
+    sync_method: native
+    independent_agent: true
+    immediate_sync: true
+    snapshot_agent:
+      schedules:
+        - frequency: once
+          start_date: 99991231
+    articles:
+      - name: m_t1
+        source:
+          schema: dbo
+          name: m_t1
+        schema_options:
+          - object_creation
+          - custom_procedures
+          - clustered_index
+          - udt_to_base_types
+          - check_constraints_not_for_replication
+          - foreign_keys_not_for_replication
+          - nonclustered_indexes
+      - name: m_t2
+        source:
+          schema: dbo
+          name: m_t2
+    subscriptions:
+      - subscriber: {server}
+        database: {sub}
+        type: push
+        initialization: snapshot
