@@ -452,6 +452,36 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Observed (by reading, not measured): `sp_MSadd_distribution_history` rewrites the agent's last history row in place, its comments, time and rowversion with it, when that row is updateable and the new message is idle, or both messages are idle or in progress. A row written before a mark can come back above it with a new text, and a "Delivered snapshot" row may be overwritten by the next message. The history cleanup keeps one row per agent.
 - Source: by reading, `[R] sp_MSadd_distribution_history`, `sp_MShistory_cleanup` (panel Claude), design "Deliveries owed" and "Inputs". Campaign item 14 is to measure it.
 
+### The Delivered snapshot line of a pull agent
+
+- Expected (spec "Deliveries owed", by reading): a pull agent runs at the subscriber and may keep its history there.
+- Observed: the pull agent of a pull subscription (its job on demand in the subscriber's msdb), started after the generation, writes its "Delivered snapshot from the 'unc\<folder>\<run>\' sub-folder" row to the distributor's `MSdistribution_history`, under its own `MSdistribution_agents` row (subscription type 1), within seconds; the line names the run just generated. A pull delivery is read where a push one is.
+- Source: measured, `21-deliveries DL.pull.delivered_line` (plan 4 Task 3, 2022 CU27, 2026-11-12).
+
+### Listing the snapshot folder with sys.dm_os_enumerate_filesystem
+
+- Expected (panel C): recursive, level 1 names without their parent, 0 rows for a missing folder.
+- Observed: the listing of `<working_directory>/unc` is recursive and its levels start at 0, not 1: level 0 holds the publication folders, level 1 the run folders, level 2 the files. `file_or_directory_name` never holds a path; `parent_directory` always ends with `/`, so a run folder's `parent_directory` is its publication folder's `full_filesystem_path` plus `/`. The argument with or without a trailing slash lists the same rows, and a folder that does not exist gives 0 rows and no error. Columns: `full_filesystem_path`, `parent_directory`, `file_or_directory_name`, `level`, `is_directory`, `is_read_only`, `is_system`, `is_hidden`, `has_integrity_stream`, `is_temporary`, `is_sparse`, `creation_time`, `last_access_time`, `last_write_time`, `size_in_bytes`.
+- Source: measured, `21-deliveries DL.listing` (plan 4 Task 3, 2022 CU27, Linux, 2026-11-12).
+
+### The run an S7 subscription receives
+
+- Expected: a subscription added after T receives a run generated after T.
+- Observed: a push subscription added to an `immediate_sync` publication whose snapshot was ready (status 2 right after the unit, the `S7` path), its snapshot scheduled every minute, received the run already listed when it was added (T 9 s past the minute, 6 s after the run started, delivered 8 s later, before the next run; three runs of the script gave the same outcome). One timing only; with a later activation the subscription can receive a later run (`O4`, "The window of a new subscription"), so either may be delivered.
+- Source: measured, `21-deliveries DL.s7_frequent` (plan 4 Task 3, 2022 CU27, 2026-11-12).
+
+### A subscription re-added on a shared agent
+
+- Expected (spec, by reading): the re-added subscription's lines are on the same shared agent as the earlier incarnation's, told apart only by the mark.
+- Observed: when the dropped subscription was the shared agent's last, the drop removed the agent row and its job (see "A shared distribution agent"), and the re-add created a new agent row; after the generation the new agent's "Delivered snapshot" line above the mark named the publication's folder and a run absent at the re-add. The earlier incarnation's lines are on another `agent_id`. A shared agent that keeps other subscriptions across the drop is not measured.
+- Source: measured, `21-deliveries DL.shared_readd` (plan 4 Task 3, 2022 CU27, 2026-11-12).
+
+### Printing a rowversion in hexadecimal
+
+- Expected: `CONVERT(varchar(20), MAX([timestamp]), 1)` gives `0x...` for the history's rowversion, as for a `binary` value.
+- Observed: style 1 is ignored for a `timestamp` value: the result is the 8 raw bytes as characters (`DATALENGTH` 8), which sqlcmd prints as nothing visible; `CONVERT(varchar(20), CONVERT(binary(8), MAX([timestamp])), 1)` gives `0x000000000001BD5D`. A mark read as text has to go through `binary(8)` first (go-mssqldb reads the column as bytes and is not concerned).
+- Source: measured while writing `21-deliveries.sh` (plan 4 Task 3, 2022 CU27, 2026-11-12).
+
 ### Virtual subscriber rows of MSsubscriptions
 
 - Expected: `MSsubscriptions` has one row per real subscribed article.
