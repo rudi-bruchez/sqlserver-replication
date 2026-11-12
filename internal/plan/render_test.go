@@ -165,7 +165,7 @@ func TestPlanJSONRoundTrip(t *testing.T) {
 		}
 	}
 	want := []string{"publisher", "database", "options", "operations", "refusals", "warnings", "notes", "secrets",
-		"preconditions", "agents_to_start", "totals", "owed_before", "distribution_db", "snapshot_roots", "snapshot_jobs"}
+		"preconditions", "agents_to_start", "totals", "owed_before", "distribution_db", "snapshot_roots", "snapshot_roots_before", "snapshot_jobs"}
 	if !reflect.DeepEqual(keys, want) {
 		t.Errorf("top-level keys %v, want %v", keys, want)
 	}

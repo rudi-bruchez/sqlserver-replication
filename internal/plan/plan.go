@@ -164,6 +164,16 @@ type Plan struct {
 	// written under: its alt_snapshot_folder when set, else the
 	// distributor's working_directory (R50, folder rule).
 	SnapshotRoots map[string]string `json:"snapshot_roots"`
+	// SnapshotRootsBefore is, by publication that exists before the plan,
+	// the folder its runs were written under then: its current
+	// alt_snapshot_folder when set, else the current distributor's
+	// working_directory. When it differs from SnapshotRoots (the plan
+	// changes the root), apply lists the publication's folder under both
+	// roots at T and refuses a run present in either, so that a run
+	// generated under the old root is never confirmed as new (controller's
+	// ruling, review of Task 4, Important 2). A publication the plan creates
+	// has no entry.
+	SnapshotRootsBefore map[string]string `json:"snapshot_roots_before"`
 	// SnapshotJobs is, by publication, the prologue that sets @job_id to its
 	// snapshot job, the lookup of its job operations (R62).
 	SnapshotJobs map[string]string `json:"snapshot_jobs"`

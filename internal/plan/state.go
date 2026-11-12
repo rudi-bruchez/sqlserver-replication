@@ -299,8 +299,16 @@ func (s *State) apply(op *Operation) {
 	}
 	if flagSet(op, paramReinit) {
 		// C.*.schema_option, C.native.sync_method: the operated article's
-		// rows, or every row for a Wide entry, go to 1.
+		// rows, or every row for a Wide entry, go to 1. A replication support
+		// only subscription keeps its rows at 2: measured on 2022 CU27 by the
+		// review of plan 4 Task 4, a reinit-flagged sp_changearticle leaves
+		// its status 2 and sp_reinitsubscription refuses it ("subscribed with
+		// the 'no sync' option"). Backup and lsn subscriptions are not
+		// measured and are marked as before.
 		for _, sub := range ps.Subs {
+			if !marksOnReinit(sub) {
+				continue
+			}
 			for a := range sub.Rows {
 				if e.Wide || a == art {
 					sub.Rows[a] = 1
@@ -433,6 +441,10 @@ func (s *State) extendSubscription(op *Operation, ps *PubState) {
 		}
 	}
 }
+
+// marksOnReinit tells a subscription whose rows a reinitialization sets to
+// 1: every one but a replication support only one (see apply).
+func marksOnReinit(sub *SubState) bool { return sub.Init != initRSO }
 
 // The scopes of a cost entry: what the operation must name in Affects.
 const (

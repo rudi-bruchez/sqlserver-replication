@@ -165,15 +165,35 @@ func Build(in Inputs, opt Options) *Plan {
 // applyParts fills the parts of the plan apply reads besides its
 // operations (R50, R62): the deliveries owed before the plan, the
 // distribution database, and for every publication of either side its
-// snapshot root and its snapshot job lookup.
+// snapshot root and its snapshot job lookup, and for every publication that
+// exists before the plan its snapshot root then.
 func (b *builder) applyParts(p *Plan, before *State) {
+	// A subscription the plan drops is not started, and one it drops and
+	// adds back is owed by its creation (setOwes): neither is owed before
+	// the plan (review of Task 4, Important 1).
+	created := map[string]bool{}
+	for _, op := range p.Operations {
+		if op.Kind == "subscription" && op.Action == "add" {
+			for _, k := range op.Affects.Subscriptions {
+				created[first(op.Affects.Publications)+sep+subKey(k)] = true
+			}
+		}
+	}
+	kept := func(pub, key string) bool {
+		if b.st == nil || created[pub+sep+subKey(key)] {
+			return false
+		}
+		ps := b.st.Pubs[pub]
+		return ps != nil && ps.Exists && ps.Subs[subKey(key)] != nil
+	}
+	p.OwedBefore = []Owed{}
 	for _, name := range sortedPubs(before) {
 		ps := before.Pubs[name]
 		if !ps.Exists {
 			continue
 		}
 		for _, sub := range sortedSubs(ps) {
-			if sub.Init == initSnapshot && owes(ps, sub) {
+			if sub.Init == initSnapshot && owes(ps, sub) && kept(name, sub.Key) {
 				p.OwedBefore = append(p.OwedBefore, Owed{Publication: name, Subscription: sub.Key})
 			}
 		}
@@ -198,6 +218,21 @@ func (b *builder) applyParts(p *Plan, before *State) {
 				p.SnapshotRoots[pub.Name] = root // the file's, read last, is the state after the plan
 			}
 			p.SnapshotJobs[pub.Name] = b.jobLookup(agentSlot{path: pubPath(pub.Name) + ".snapshot_agent", kind: agentSnapshot, pub: pub.Name})
+		}
+	}
+	curWD := ""
+	if d := b.cur.Distributor; d != nil && d.WorkingDirectory != nil {
+		curWD = *d.WorkingDirectory
+	}
+	p.SnapshotRootsBefore = map[string]string{}
+	for i := range b.cur.Publications {
+		pub := &b.cur.Publications[i]
+		root := curWD
+		if pub.Snapshot != nil && pub.Snapshot.AltFolder != nil && *pub.Snapshot.AltFolder != "" {
+			root = *pub.Snapshot.AltFolder
+		}
+		if root != "" {
+			p.SnapshotRootsBefore[pub.Name] = root
 		}
 	}
 }

@@ -234,6 +234,9 @@ func allRowsMarked(ps *PubState) bool {
 	}
 	rows := 0
 	for _, sub := range ps.Subs {
+		if !marksOnReinit(sub) {
+			continue // its rows stay at 2 (marksOnReinit)
+		}
 		for _, s := range sub.Rows {
 			if s != 1 {
 				return false
@@ -373,7 +376,7 @@ func flagsAndCosts(op *Operation, ps *PubState, keepsImm bool) []Cost {
 		}
 	case cost.SnapshotReinit:
 		if re {
-			op.Affects.Subscriptions = subsAt(ps, art, wide, 2)
+			op.Affects.Subscriptions = marked(ps, subsAt(ps, art, wide, 2))
 			return []Cost{CostReinitialization, CostNewSnapshot}
 		}
 		if rowsAt(ps, art, wide, 1) {
@@ -426,6 +429,18 @@ func finalImmediateSync(ops []Operation, st *State) map[string]bool {
 // status.
 func rowsAt(ps *PubState, art string, wide bool, status int) bool {
 	return len(subsAt(ps, art, wide, status)) > 0
+}
+
+// marked is the keys of keys whose subscription a reinitialization marks
+// (marksOnReinit): a replication support only one is not named.
+func marked(ps *PubState, keys []string) []string {
+	var out []string
+	for _, k := range keys {
+		if sub := ps.Subs[subKey(k)]; sub == nil || marksOnReinit(sub) {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // subsAt is the keys of the subscriptions with a row of the article, or any
