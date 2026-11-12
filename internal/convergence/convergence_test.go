@@ -289,3 +289,46 @@ func TestLabDropArticle(t *testing.T) {
 	}
 	e.converged(t, des)
 }
+
+// A renamed article is dropped and added back, and its subscriber table,
+// the same destination, is delivered again: pre_creation_cmd drop (the
+// default) drops and creates it, so a row held only at the subscriber is
+// lost. The plan says so (final review item 1, spec anti-goal 4).
+func TestLabRenameReplacesData(t *testing.T) {
+	e := labEnv(t, "rename")
+	createAndDeliver(t, e)
+	if _, err := e.master.Exec(e.replace("INSERT {sub}.dbo.m_t1 (id, a, b) VALUES (1000, 1, 1)")); err != nil {
+		t.Fatal(err)
+	}
+
+	des := e.desired(t, "create.yaml")
+	des.Publications[0].Articles[0].Name = "m_t1r"
+	p := e.plan(t, des, plan.Options{})
+	if len(p.Refusals) > 0 {
+		t.Fatalf("refused:\n%s", p.Summary())
+	}
+	dropSub, err := find(p, "sp_dropsubscription", map[string]string{"@article": "N'm_t1'"})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, p.Summary())
+	}
+	wantCosts(t, dropSub, plan.CostOnline)
+	dropArt, err := find(p, "sp_droparticle", map[string]string{"@article": "N'm_t1'"})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, p.Summary())
+	}
+	wantCosts(t, dropArt, plan.CostOnline)
+	ext, err := find(p, "sp_addsubscription", map[string]string{"@article": "N'm_t1r'"})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, p.Summary())
+	}
+	wantCosts(t, ext, plan.CostNewSnapshot, plan.CostSubscriberDataReplaced)
+	wantAgents(t, p, e.snapshotAndPush())
+
+	e.run(t, p)
+	e.deliveries = []delivery{{"m_t1", 10}}
+	e.startAndWait(t, p)
+	if n := e.count(t, "SELECT COUNT(*) FROM {sub}.dbo.m_t1 WHERE id = 1000"); n != 0 {
+		t.Errorf("the row held only at the subscriber is still there: the table was not replaced")
+	}
+	e.converged(t, des)
+}

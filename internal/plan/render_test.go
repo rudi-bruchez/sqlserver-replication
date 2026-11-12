@@ -116,6 +116,7 @@ func exportedOnly(p *Plan) {
 		op := &p.Operations[i]
 		op.Order, op.entry = "", nil
 		op.wideMarkCheck, op.replacesData, op.keepsRows, op.readd, op.namedExtensionCheck = false, false, nil, false, false
+		op.leaves, op.delivers = nil, nil
 	}
 }
 

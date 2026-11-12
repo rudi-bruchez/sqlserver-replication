@@ -203,6 +203,15 @@ func (b *builder) addArticle(pd, pc *model.Publication, a *model.Article) bool {
 	}
 	op.Affects = affects
 	op.wideMarkCheck = !created
+	if !created && boolOf(pd.ImmediateSync) && !b.deferred(pd.Name) {
+		// sp_addarticle subscribes the remaining subscriptions itself
+		// (C.*.addarticle): it delivers their tables.
+		for _, sp := range remaining(pd, pc) {
+			if covers(sp.Des, a.Name) {
+				op.delivers = append(op.delivers, tableOf(sp.Cur, a))
+			}
+		}
+	}
 	op.Reason = "the file declares an article that does not exist"
 	op.Sources = append(op.Sources, "spec Strategies (Articles)", "lab row 12")
 	b.add(op)
@@ -376,6 +385,11 @@ func (b *builder) extend(pd, pc *model.Publication, added []*model.Article) {
 				return
 			}
 			op.Affects = Affects{Publications: []string{pd.Name}, Articles: []string{first}, Subscriptions: []string{cur.Key()}}
+			for _, a := range added {
+				if covers(sp.Des, a.Name) && (all || a.Name == name) {
+					op.delivers = append(op.delivers, tableOf(cur, a))
+				}
+			}
 			op.namedExtensionCheck = !all
 			op.Reason = "the subscription is extended to the added articles " + strings.Join(arts, ", ")
 			op.Sources = append(op.Sources, "spec Strategies (Articles)", "R36")
@@ -392,9 +406,11 @@ func (b *builder) extend(pd, pc *model.Publication, added []*model.Article) {
 func (b *builder) dropArticle(pd, pc *model.Publication, a *model.Article) {
 	apath := pubPath(pc.Name) + ".articles" + model.Element(a.Name)
 	pubType := stringOr(pc.Type, "transactional")
-	subscribed := false
-	for _, s := range pc.Subscriptions {
-		subscribed = subscribed || covers(&s, a.Name)
+	var leaves []subscriberTable
+	for i := range pc.Subscriptions {
+		if s := &pc.Subscriptions[i]; covers(s, a.Name) {
+			leaves = append(leaves, tableOf(s, a))
+		}
 	}
 	for _, sp := range remaining(pd, pc) {
 		if !covers(sp.Cur, a.Name) || b.readdPublication(pd, pc) {
@@ -409,6 +425,7 @@ func (b *builder) dropArticle(pd, pc *model.Publication, a *model.Article) {
 		}
 		op.Affects = Affects{Publications: []string{pc.Name}, Articles: []string{a.Name}, Subscriptions: []string{sp.Cur.Key()}}
 		op.Costs = []Cost{CostSubscriberObjectLeft}
+		op.leaves = []subscriberTable{tableOf(sp.Cur, a)}
 		op.Reason = "the article is dropped: its subscriptions first (14046); the subscriber table is left in place"
 		op.Sources = append(op.Sources, "spec Strategies (Articles)")
 		b.add(op)
@@ -421,8 +438,9 @@ func (b *builder) dropArticle(pd, pc *model.Publication, a *model.Article) {
 		return
 	}
 	op.Affects = Affects{Publications: []string{pc.Name}, Articles: []string{a.Name}}
-	if subscribed {
+	if len(leaves) > 0 {
 		op.Costs = []Cost{CostSubscriberObjectLeft}
+		op.leaves = leaves
 	}
 	if w := dropViewWarning(a); w != "" {
 		op.Warnings = append(op.Warnings, w)

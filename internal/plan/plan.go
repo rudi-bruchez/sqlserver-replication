@@ -88,6 +88,10 @@ type Operation struct {
 	// publication whose every row a sync_method change of the plan marked
 	// (spec "Strategies", Articles).
 	namedExtensionCheck bool
+	// leaves is the subscriber tables a drop operation stops maintaining,
+	// delivers those an addition delivers by snapshot: redeliveriesStrategy
+	// reads both (redeliver.go).
+	leaves, delivers []subscriberTable
 }
 
 // PropertyChange is one property an operation changes.

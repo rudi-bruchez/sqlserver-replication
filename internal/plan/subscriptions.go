@@ -211,6 +211,7 @@ func (b *builder) addSubscription(pd *model.Publication, s *model.Subscription) 
 			return
 		}
 		op.Affects = affects(art)
+		op.delivers = tablesOf(pd, s, art)
 		op.Reason = "the file declares a subscription that does not exist"
 		op.Sources = append(op.Sources, "spec Strategies (Subscriptions)", "spec Order step 9")
 		if b.readd[pd.Name+sep+subKey(s.Key())] {
@@ -425,6 +426,7 @@ func (b *builder) dropSubscription(pc *model.Publication, s *model.Subscription,
 	}
 	op.Affects = affects
 	op.Costs = []Cost{CostSubscriberObjectLeft}
+	op.leaves = tablesOf(pc, s, "all")
 	op.Reason = reason
 	if b.dropped == nil {
 		b.dropped = map[string]bool{}
@@ -619,6 +621,9 @@ func (b *builder) subsetChanges(pd, pc *model.Publication, path string, d, c *mo
 		}
 		op.Affects = Affects{Publications: []string{pc.Name}, Articles: []string{art}, Subscriptions: []string{c.Key()}}
 		op.Costs = []Cost{CostSubscriberObjectLeft}
+		if a := articleNamed(pc, art); a != nil {
+			op.leaves = []subscriberTable{tableOf(c, a)}
+		}
 		op.Changes = []PropertyChange{{Path: path + ".articles", Before: art}}
 		op.Reason = "the file removes the article from the subscription; the subscriber table is left in place"
 		op.Sources = append(op.Sources, "spec Strategies (Subscriptions)")
@@ -643,6 +648,9 @@ func (b *builder) subsetChanges(pd, pc *model.Publication, path string, d, c *mo
 		}
 		op.Affects = Affects{Publications: []string{pd.Name}, Articles: []string{art}, Subscriptions: []string{c.Key()}}
 		op.namedExtensionCheck = true
+		if a := articleNamed(pd, art); a != nil {
+			op.delivers = []subscriberTable{tableOf(c, a)}
+		}
 		op.Changes = []PropertyChange{{Path: path + ".articles", After: art}}
 		op.Reason = "the file adds the article to the subscription"
 		op.Sources = append(op.Sources, "spec Strategies (Subscriptions)", "R36")

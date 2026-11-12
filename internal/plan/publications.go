@@ -204,6 +204,9 @@ func (b *builder) dropPublication(p *model.Publication) {
 	op.Affects.Publications = []string{p.Name}
 	if len(p.Subscriptions) > 0 {
 		op.Costs = []Cost{CostSubscriberObjectLeft}
+		for i := range p.Subscriptions {
+			op.leaves = append(op.leaves, tablesOf(p, &p.Subscriptions[i], "all")...)
+		}
 	}
 	for i := range p.Articles {
 		if w := dropViewWarning(&p.Articles[i]); w != "" {

@@ -28,8 +28,9 @@ var strategies []strategy
 // b.sharedPush). agentsStrategy comes before distributorStrategy, whose
 // profile drop of step 11 reads the bindings agentsStrategy plans
 // (b.rebound): an agent bound away from a profile frees it in the same plan
-// (TestProfileDropAfterRebinding).
-var lateStrategies = []strategy{agentsStrategy, distributorStrategy}
+// (TestProfileDropAfterRebinding). redeliveriesStrategy comes last: it reads
+// every drop and every addition of the plan.
+var lateStrategies = []strategy{agentsStrategy, distributorStrategy, redeliveriesStrategy}
 
 // builder is the state Build hands the strategies.
 type builder struct {

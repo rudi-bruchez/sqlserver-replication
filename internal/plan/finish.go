@@ -92,7 +92,10 @@ func finish(ops []Operation, st *State) ([]Operation, []Refusal) {
 		}
 		if hasCost(computed, CostReinitialization) {
 			for _, a := range op.keepsRows {
-				op.Warnings = append(op.Warnings, fmt.Sprintf(keepsRowsWarning, a))
+				// redeliveriesStrategy may have written it already.
+				if w := fmt.Sprintf(keepsRowsWarning, a); !hasString(op.Warnings, w) {
+					op.Warnings = append(op.Warnings, w)
+				}
 			}
 		}
 		op.Costs = mergeCosts(computed, op.Costs)
