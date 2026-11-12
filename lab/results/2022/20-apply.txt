@@ -2,21 +2,27 @@
 R|AP.perm.m_ap_oper.is_operator|1|
 R|AP.perm.m_ap_oper.prologue|229|on=sysjobs.msdb
 R|AP.perm.m_ap_oper.activity|229|on=syssessions.msdb
+R|AP.perm.m_ap_oper.jobactivity|229|on=sysjobactivity.msdb
 R|AP.perm.m_ap_oper.disable|ok|enabled_after=0
 R|AP.perm.m_ap_oper.start|ok|ran=yes
 R|AP.perm.m_ap_user.is_operator|0|
 R|AP.perm.m_ap_user.prologue|229|on=sysjobs.msdb
 R|AP.perm.m_ap_user.activity|229|on=syssessions.msdb
+R|AP.perm.m_ap_user.jobactivity|229|on=sysjobactivity.msdb
 R|AP.perm.m_ap_user.disable|14262|enabled_after=1
 R|AP.perm.m_ap_user.start|14262|ran=no
 R|AP.perm.m_ap_none.is_operator|0|
 R|AP.perm.m_ap_none.prologue|229|on=sysjobs.msdb
 R|AP.perm.m_ap_none.activity|229|on=syssessions.msdb
+R|AP.perm.m_ap_none.jobactivity|229|on=sysjobactivity.msdb
 R|AP.perm.m_ap_none.disable|229|on=sp_update_job.msdb enabled_after=1
 R|AP.perm.m_ap_none.start|229|on=sp_start_job.msdb ran=no
-R|AP.disabled_schedule|runs=0|job_starts=0 job_enabled=0 freq_type=4 subday_type=4 subday_interval=1 schedule_enabled=1 waited=150s
+R|AP.perm.sa.prologue|ok|
+R|AP.perm.sa.activity|ok|
+R|AP.enabled_schedule|runs=2|history_start_times=4 job_starts=1 job_enabled=1 freq_type=4 subday_type=4 subday_interval=1 schedule_enabled=1 waited=150s
+R|AP.disabled_schedule|runs=0|history_start_times=0 job_starts=0 job_enabled=0 freq_type=4 subday_type=4 subday_interval=1 schedule_enabled=1 waited=150s
 R|AP.lsn.restorehistory|equal|same_backupset_row=yes
 R|AP.lsn.backupset_database|db=yes server=yes|server_name_same_case=yes
 R|AP.lsn.log_end_format|yes|form=8:8:4 hex upper
 R|AP.lsn.no_backup_flag|18786|allow_initialize_from_backup=false roundtrip=equal not_beyond_log_end=yes drop=none
-R|TOTAL|20
+R|TOTAL|26

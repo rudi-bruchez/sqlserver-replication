@@ -22,17 +22,26 @@
 #   AP.perm.L.prologue     the job prologue plan prints (jobLookup in internal/plan/agents.go,
 #                          the snapshot agent of m_ap_p), run through EXEC.
 #   AP.perm.L.activity     the JobIdle read (internal/plan/lists.go) on that job.
+#   AP.perm.L.jobactivity  a SELECT of msdb.dbo.sysjobactivity alone (the JobIdle read
+#                          names only the first table refused, syssessions).
 #   AP.perm.L.disable      msdb.dbo.sp_update_job @job_id, @enabled = 0 on that job (owned
 #                          by sa); detail enabled_after (read as sa), then back to 1 as sa.
 #   AP.perm.L.start        msdb.dbo.sp_start_job @job_id; detail ran (a snapshot history
 #                          run started since the call); then wait idle as sa.
 #   A refused call's detail names the object of a permission error (on=object.database)
 #   and the Msg numbers printed outside the catch; never the message, which holds job ids.
-# AP.disabled_schedule  sp_changepublication_snapshot to every minute, starting today at
-#   00:00, then at once sp_update_job @enabled = 0 (both in one batch, at least 5 s after a
-#   minute boundary and 20 s before the next); wait 150 s; runs=<n> is the snapshot history
-#   runs started since the disable, detail the job's sysjobactivity starts since then and
-#   the schedule read back. Then the schedule goes back to never firing.
+# AP.perm.sa.prologue, AP.perm.sa.activity  the same two texts as sa: the controls that the
+#   texts run (asserted ok).
+# AP.enabled_schedule  the positive control, run first: sp_changepublication_snapshot to
+#   every minute, starting today at 00:00, the job left enabled; wait 150 s; runs=<n> as
+#   below (asserted above 0: a replay where the schedule never fires would otherwise print
+#   a credible runs=0 for the next row).
+# AP.disabled_schedule  the same change, then at once sp_update_job @enabled = 0 (both in
+#   one batch, at least 5 s after a minute boundary and 20 s before the next); wait 150 s;
+#   runs=<n> is the job outcomes (sysjobhistory step 0) of runs started since the batch,
+#   detail the distinct start times of the snapshot history (more than one per run), the
+#   job's sysjobactivity starts since then and the schedule read back. Then the schedule
+#   goes back to never firing.
 # AP.lsn.restorehistory    a COPY_ONLY backup of m_ap_db restored as m_ap_sub: the
 #   last_lsn of the backupset row msdb.dbo.restorehistory of destination m_ap_sub joins to,
 #   against the last_lsn of the backupset whose media family is the backup file (equal,
@@ -46,7 +55,8 @@
 #   N'initialize from lsn', @subscriptionlsn = the backup's last_lsn converted as
 #   10-init-modes.sh does and checked (round trip, not beyond the log end of m_ap_db)
 #   before the call: ok or the error number; when ok the subscription is dropped at once.
-# Asserted (exit 1 with the rows on stderr otherwise): 20 rows, the LSN checks pass,
+# Asserted (exit 1 with the rows on stderr otherwise): 26 rows, AP.enabled_schedule above
+# 0, both sa rows ok, the LSN checks pass,
 # msdb keeps no backup or restore history of m_ap_db or m_ap_sub after the cleanup, no
 # m_ap_ user is left in msdb or distribution (the residue guard counts no database user),
 # and MSreplservers has the same rows before and after.
@@ -252,6 +262,9 @@ for l in $logins; do
     v=$(as "$l" "EXEC sp_executesql N'DECLARE @idle int; SELECT @idle = CASE WHEN $(q "$jobidle") THEN 1 ELSE 0 END;', N'@job_id uniqueidentifier', @job_id = @job_id;")
     row "AP.perm.$l.activity" "$v"
 
+    v=$(as "$l" "EXEC (N'DECLARE @n int; SELECT @n = COUNT(*) FROM msdb.dbo.sysjobactivity AS ja WHERE ja.job_id = ''$jobid'';');")
+    row "AP.perm.$l.jobactivity" "$v"
+
     v=$(as "$l" "EXEC @rc = msdb.dbo.sp_update_job @job_id = @job_id, @enabled = 0; IF @rc <> 0 SET @res = CONCAT(N'rc', @rc);")
     en=$(enabled); need en
     sql -b -Q "SET NOCOUNT ON; EXEC msdb.dbo.sp_update_job @job_id = '$jobid', @enabled = 1;" </dev/null >&2
@@ -265,28 +278,61 @@ for l in $logins; do
     row "AP.perm.$l.start" "$v" " ran=$ran"
 done
 
-# The disabled schedule. The batch runs between 5 s and 40 s past a minute, so that no
-# minute boundary falls between the schedule change and the disable.
-while :; do
-    s=$(sql_value "SELECT DATEPART(second, GETDATE())")
-    [ "$s" -ge 5 ] && [ "$s" -le 40 ] && break
-    sleep 2
-done
-dmark=$(sql -d "$db" -b -h -1 -Q "SET NOCOUNT ON;
+# Controls of the two texts: as sa (sysadmin) both run, so that a 229 above is the
+# login's and not a broken text.
+v=$(as sa "EXEC (N'$(q "$prologue")');")
+row AP.perm.sa.prologue "$v"
+v=$(as sa "EXEC sp_executesql N'DECLARE @idle int; SELECT @idle = CASE WHEN $(q "$jobidle") THEN 1 ELSE 0 END;', N'@job_id uniqueidentifier', @job_id = @job_id;")
+row AP.perm.sa.activity "$v"
+
+# Runs of the snapshot job started at or after MARK: its job outcomes (sysjobhistory
+# step 0, dated by the run's start), and the distinct start times of the snapshot
+# history, which count more than one per run (fix round 1 review: 4 for 2 runs).
+job_runs() { sql_value "SELECT COUNT(*) FROM msdb.dbo.sysjobhistory WHERE job_id = '$jobid' AND step_id = 0 AND msdb.dbo.agent_datetime(run_date, run_time) >= DATEADD(second, -1, CONVERT(datetime, '$1'))"; }
+history_starts() { sql_value "SELECT COUNT(DISTINCT start_time) FROM distribution.dbo.MSsnapshot_history WHERE agent_id = $agentid AND start_time >= '$1'"; }
+job_starts() { sql_value "SELECT COUNT(*) FROM msdb.dbo.sysjobactivity WHERE job_id = '$jobid' AND (start_execution_date >= '$1' OR run_requested_date >= '$1')"; }
+schedule() { sql_value "SELECT CONVERT(nvarchar(4000), STRING_AGG(CONVERT(nvarchar(4000), CONCAT(N'freq_type=', s.freq_type, N' subday_type=', s.freq_subday_type, N' subday_interval=', s.freq_subday_interval, N' schedule_enabled=', s.enabled)), N';')) FROM msdb.dbo.sysjobschedules js JOIN msdb.dbo.sysschedules s ON s.schedule_id = js.schedule_id WHERE js.job_id = '$jobid'"; }
+# at_minute: waits until the distributor's clock is between 5 s and 40 s past a minute.
+at_minute() {
+    while :; do
+        s=$(sql_value "SELECT DATEPART(second, GETDATE())")
+        [ "$s" -ge 5 ] && [ "$s" -le 40 ] && break
+        sleep 2
+    done
+}
+# every_minute [DISABLE]: the schedule change of both schedule rows, then the disable when
+# asked, in one batch; prints the mark taken after them.
+every_minute() {
+    local out
+    out=$(sql -d "$db" -b -h -1 -Q "SET NOCOUNT ON;
 DECLARE @d int = CONVERT(int, CONVERT(char(8), GETDATE(), 112));
 EXEC sp_changepublication_snapshot @publication = N'$pub', @frequency_type = 4, @frequency_interval = 1,
      @frequency_subday = 4, @frequency_subday_interval = 1, @active_start_date = @d, @active_start_time_of_day = 0;
-EXEC msdb.dbo.sp_update_job @job_id = '$jobid', @enabled = 0;
-SELECT CONVERT(varchar(23), GETDATE(), 121)" </dev/null 2>&1) || { printf '20-apply: the schedule change and disable failed: %s\n' "$dmark" >&2; exit 1; }
-dmark=$(printf '%s\n' "$dmark" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -v '^$' | tail -n 1)
-[[ $dmark =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9:.]+$ ]] || { echo "20-apply: unexpected disable mark: $dmark" >&2; exit 1; }
+$1
+SELECT CONVERT(varchar(23), GETDATE(), 121)" </dev/null 2>&1) || { printf '20-apply: the schedule change failed: %s\n' "$out" >&2; exit 1; }
+    out=$(printf '%s\n' "$out" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -v '^$' | tail -n 1)
+    [[ $out =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9:.]+$ ]] || { echo "20-apply: unexpected schedule mark: $out" >&2; exit 1; }
+    printf '%s\n' "$out"
+}
+
+# The positive control, run first: the same schedule change with the job left enabled.
+# A replay where the schedule never fires must not print a credible runs=0 below.
+at_minute
+emark=$(every_minute "")
 sleep 150
-runs=$(sql_value "SELECT COUNT(DISTINCT start_time) FROM distribution.dbo.MSsnapshot_history WHERE agent_id = $agentid AND start_time >= '$dmark'")
-starts=$(sql_value "SELECT COUNT(*) FROM msdb.dbo.sysjobactivity WHERE job_id = '$jobid' AND (start_execution_date >= '$dmark' OR run_requested_date >= '$dmark')")
-sched=$(sql_value "SELECT CONVERT(nvarchar(4000), STRING_AGG(CONVERT(nvarchar(4000), CONCAT(N'freq_type=', s.freq_type, N' subday_type=', s.freq_subday_type, N' subday_interval=', s.freq_subday_interval, N' schedule_enabled=', s.enabled)), N';')) FROM msdb.dbo.sysjobschedules js JOIN msdb.dbo.sysschedules s ON s.schedule_id = js.schedule_id WHERE js.job_id = '$jobid'")
-en=$(enabled)
-need runs starts sched en
-r AP.disabled_schedule "runs=$runs" "job_starts=$starts job_enabled=$en $sched waited=150s"
+runs=$(job_runs "$emark"); hs=$(history_starts "$emark"); starts=$(job_starts "$emark"); sched=$(schedule); en=$(enabled)
+need runs hs starts sched en
+r AP.enabled_schedule "runs=$runs" "history_start_times=$hs job_starts=$starts job_enabled=$en $sched waited=150s"
+wait_idle
+
+# The disabled schedule. The batch runs between 5 s and 40 s past a minute, so that no
+# minute boundary falls between the schedule change and the disable.
+at_minute
+dmark=$(every_minute "EXEC msdb.dbo.sp_update_job @job_id = '$jobid', @enabled = 0;")
+sleep 150
+runs=$(job_runs "$dmark"); hs=$(history_starts "$dmark"); starts=$(job_starts "$dmark"); sched=$(schedule); en=$(enabled)
+need runs hs starts sched en
+r AP.disabled_schedule "runs=$runs" "history_start_times=$hs job_starts=$starts job_enabled=$en $sched waited=150s"
 back=$(try "EXEC sp_changepublication_snapshot @publication = N'$pub', @frequency_type = 1, @active_start_date = 99991231;")
 [ "$back" = ok ] || { echo "20-apply: the schedule of $pub could not go back to never firing: $back" >&2; exit 1; }
 
@@ -341,7 +387,14 @@ r AP.lsn.no_backup_flag "$res" "allow_initialize_from_backup=false roundtrip=$ro
 # Controls.
 bad=0
 control() { echo "20-apply: control failed: $*" >&2; bad=1; }
-[ "${#rows[@]}" = 20 ] || control "${#rows[@]} rows, expected 20"
+[ "${#rows[@]}" = 26 ] || control "${#rows[@]} rows, expected 26"
+field() { printf '%s\n' "${rows[@]}" | awk -F'|' -v id="$1" -v n="$2" '$2 == id { print $n }'; }
+er=$(field AP.enabled_schedule 3)
+[[ $er =~ ^runs=([0-9]+)$ ]] && [ "${BASH_REMATCH[1]}" -gt 0 ] \
+    || control "GUARD enabled_schedule: the every-minute schedule started no job run in 150 s ($er), so AP.disabled_schedule proves nothing"
+for id in AP.perm.sa.prologue AP.perm.sa.activity; do
+    [ "$(field "$id" 3)" = ok ] || control "GUARD $id: sa got $(field "$id" 3) $(field "$id" 4), the text itself is broken"
+done
 
 cleanup
 hist_after=$(msdb_history)

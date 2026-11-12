@@ -807,14 +807,14 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 ### Disabled jobs
 
 - Expected: disabling a job stops it and keeps it from starting.
-- Observed: a disabled job that is running keeps running, to its end; `sp_start_job` starts a disabled job (return code 0); `sp_startpublication_snapshot` also starts a disabled snapshot job (return code 0, `@@ERROR` 0, 12 history rows), and `sp_changepublication_snapshot` changes its schedule and leaves it disabled. A disabled snapshot job whose schedule fires every minute starts no run: none in 150 s, neither in the snapshot history nor in `sysjobactivity`, the schedule itself still enabled.
-- Source: measured, lab README "When the flags are needed" (`sp_stop_job` needed), `O20`, `O21`, `20-apply AP.disabled_schedule`.
+- Observed: a disabled job that is running keeps running, to its end; `sp_start_job` starts a disabled job (return code 0); `sp_startpublication_snapshot` also starts a disabled snapshot job (return code 0, `@@ERROR` 0, 12 history rows), and `sp_changepublication_snapshot` changes its schedule and leaves it disabled. A disabled snapshot job whose schedule fires every minute starts no run: no job outcome in 150 s, neither in the snapshot history nor in `sysjobactivity`, the schedule itself still enabled, while the same schedule with the job enabled ran it in the same time.
+- Source: measured, lab README "When the flags are needed" (`sp_stop_job` needed), `O20`, `O21`, `20-apply AP.disabled_schedule` and its control `AP.enabled_schedule`.
 
 ### The SQL Server Agent roles and a replication job
 
 - Expected: a login in `SQLAgentOperatorRole` can do in msdb what a tool needs to disable, find and start a replication agent's job.
-- Observed: on a snapshot job owned by `sa`, `SQLAgentOperatorRole` runs `sp_update_job @enabled = 0` and `sp_start_job` (the job runs), but a `SELECT` of `msdb.dbo.sysjobs` (to find the job from `MSsnapshot_agents`) and of `syssessions` with `sysjobactivity` (to know whether it is idle) fails with 229; the message names `syssessions`, the first table the predicate reads, so the refusal of `sysjobactivity` alone is not shown. `SQLAgentUserRole` gets the same 229 on both reads, and 14262 ("does not exist") from `sp_update_job` and `sp_start_job` on a job it does not own. An msdb user in no Agent role gets 229 on the two procedures themselves. Only `sysadmin` does all four.
-- Source: measured, `20-apply AP.perm.*` (logins with a distribution user granted `SELECT`, so that the refusals are msdb's).
+- Observed: on a snapshot job owned by `sa`, `SQLAgentOperatorRole` runs `sp_update_job @enabled = 0` and `sp_start_job` (the job runs), but a `SELECT` of `msdb.dbo.sysjobs` (to find the job from `MSsnapshot_agents`) and of `syssessions` with `sysjobactivity` (to know whether it is idle) fails with 229 (the message names `syssessions`, the first table the predicate reads; `sysjobactivity` read alone is 229 as well). `SQLAgentUserRole` gets the same 229 on both reads, and 14262 ("does not exist") from `sp_update_job` and `sp_start_job` on a job it does not own. An msdb user in no Agent role gets 229 on the two procedures themselves. The same texts run as `sa`. A tool that finds, checks and starts the job therefore needs `sysadmin`, or an operator granted `SELECT` on `sysjobs`, `sysjobactivity` and `syssessions` (the granted case is not measured; it is rule R55 of plan 4).
+- Source: measured, `20-apply AP.perm.*`, `AP.perm.sa.*` (logins with a distribution user granted `SELECT`, so that the refusals are msdb's).
 
 ### sp_stop_job on a job that has just ended
 
