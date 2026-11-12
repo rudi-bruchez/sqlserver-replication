@@ -1,4 +1,5 @@
 -- each operation below is a batch of its own: run them one at a time (sqlrepl apply does); the file does not run as one batch
+-- sqlrepl apply may run a job_start again when its job ended before the delivery it owes
 
 -- server repllab
 USE [msdb];
@@ -61,22 +62,38 @@ IF @agent_id IS NULL OR @profile_id IS NULL THROW 50000, N'the agent publication
 EXEC [distribution].dbo.sp_update_agent_profile @agent_type = 3, @agent_id = @agent_id, @profile_id = @profile_id;
 
 USE [msdb];
--- 15 restore job_restore publications[m_p].snapshot_agent: online
+-- 15 restore job_restore publications[SalesRef].snapshot_agent: online
+DECLARE @job_id uniqueidentifier;
+SELECT @job_id = sj.job_id FROM [distribution].dbo.MSsnapshot_agents AS a JOIN [distribution].dbo.MSreplservers AS ps ON ps.srvid = a.publisher_id JOIN msdb.dbo.sysjobs AS sj ON sj.job_id = CONVERT(uniqueidentifier, a.job_id) WHERE UPPER(ps.srvname) = UPPER(N'repllab') AND a.publisher_db = N'Sales' AND a.publication = N'SalesRef' AND a.local_job = 1;
+IF @job_id IS NOT NULL
+EXEC msdb.dbo.sp_update_job @job_id = @job_id, @enabled = 1;
+
+-- 16 restore job_restore publications[m_p].snapshot_agent: online
 DECLARE @job_id uniqueidentifier;
 SELECT @job_id = sj.job_id FROM [distribution].dbo.MSsnapshot_agents AS a JOIN [distribution].dbo.MSreplservers AS ps ON ps.srvid = a.publisher_id JOIN msdb.dbo.sysjobs AS sj ON sj.job_id = CONVERT(uniqueidentifier, a.job_id) WHERE UPPER(ps.srvname) = UPPER(N'repllab') AND a.publisher_db = N'Sales' AND a.publication = N'm_p' AND a.local_job = 1;
 IF @job_id IS NULL THROW 50000, N'the job of publications[m_p].snapshot_agent does not exist', 1;
 EXEC msdb.dbo.sp_update_job @job_id = @job_id, @enabled = 1;
 
--- 16 start job_start publications[m_p].snapshot_agent: online
+-- 17 start job_start publications[m_p].snapshot_agent: online
 DECLARE @job_id uniqueidentifier;
 SELECT @job_id = sj.job_id FROM [distribution].dbo.MSsnapshot_agents AS a JOIN [distribution].dbo.MSreplservers AS ps ON ps.srvid = a.publisher_id JOIN msdb.dbo.sysjobs AS sj ON sj.job_id = CONVERT(uniqueidentifier, a.job_id) WHERE UPPER(ps.srvname) = UPPER(N'repllab') AND a.publisher_db = N'Sales' AND a.publication = N'm_p' AND a.local_job = 1;
 IF @job_id IS NULL THROW 50000, N'the job of publications[m_p].snapshot_agent does not exist', 1;
+DECLARE @started bit = 0, @rc int;
 IF NOT EXISTS (SELECT 1 FROM msdb.dbo.sysjobactivity AS ja WHERE ja.job_id = @job_id AND ja.session_id = (SELECT MAX(ss.session_id) FROM msdb.dbo.syssessions AS ss) AND (ja.run_requested_date IS NOT NULL OR ja.start_execution_date IS NOT NULL) AND ja.stop_execution_date IS NULL)
-EXEC msdb.dbo.sp_start_job @job_id = @job_id;
+BEGIN
+EXEC @rc = msdb.dbo.sp_start_job @job_id = @job_id;
+SET @started = CASE WHEN @rc = 0 THEN 1 ELSE 0 END;
+END;
+SELECT @started AS started;
 
--- 17 start job_start publications[m_p].subscriptions[REPLLAB/m_sdb].distribution_agent: online
+-- 18 start job_start publications[m_p].subscriptions[REPLLAB/m_sdb].distribution_agent: online
 DECLARE @job_id uniqueidentifier;
 SELECT @job_id = sj.job_id FROM [distribution].dbo.MSdistribution_agents AS a JOIN [distribution].dbo.MSreplservers AS ps ON ps.srvid = a.publisher_id JOIN [distribution].dbo.MSreplservers AS rs ON rs.srvid = a.subscriber_id JOIN msdb.dbo.sysjobs AS sj ON sj.job_id = CONVERT(uniqueidentifier, a.job_id) WHERE UPPER(ps.srvname) = UPPER(N'repllab') AND a.publisher_db = N'Sales' AND a.publication = N'm_p' AND UPPER(rs.srvname) = UPPER(N'REPLLAB') AND a.subscriber_db = N'm_sdb' AND a.subscription_type = 0;
 IF @job_id IS NULL THROW 50000, N'the job of publications[m_p].subscriptions[REPLLAB/m_sdb].distribution_agent does not exist', 1;
+DECLARE @started bit = 0, @rc int;
 IF NOT EXISTS (SELECT 1 FROM msdb.dbo.sysjobactivity AS ja WHERE ja.job_id = @job_id AND ja.session_id = (SELECT MAX(ss.session_id) FROM msdb.dbo.syssessions AS ss) AND (ja.run_requested_date IS NOT NULL OR ja.start_execution_date IS NOT NULL) AND ja.stop_execution_date IS NULL)
-EXEC msdb.dbo.sp_start_job @job_id = @job_id;
+BEGIN
+EXEC @rc = msdb.dbo.sp_start_job @job_id = @job_id;
+SET @started = CASE WHEN @rc = 0 THEN 1 ELSE 0 END;
+END;
+SELECT @started AS started;

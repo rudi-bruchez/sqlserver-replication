@@ -3,6 +3,7 @@ package plan
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
@@ -153,11 +154,62 @@ func Build(in Inputs, opt Options) *Plan {
 		}
 	}
 	b.lists(p, before)
+	b.applyParts(p, before)
 	p.Refusals = b.refusals
 	p.Warnings = b.warnings
 	p.Notes = b.notes
 	p.Totals = totals(p.Operations)
 	return p
+}
+
+// applyParts fills the parts of the plan apply reads besides its
+// operations (R50, R62): the deliveries owed before the plan, the
+// distribution database, and for every publication of either side its
+// snapshot root and its snapshot job lookup.
+func (b *builder) applyParts(p *Plan, before *State) {
+	for _, name := range sortedPubs(before) {
+		ps := before.Pubs[name]
+		if !ps.Exists {
+			continue
+		}
+		for _, sub := range sortedSubs(ps) {
+			if sub.Init == initSnapshot && owes(ps, sub) {
+				p.OwedBefore = append(p.OwedBefore, Owed{Publication: name, Subscription: sub.Key})
+			}
+		}
+	}
+	p.DistributionDB = b.distributionDB()
+	wd := ""
+	for _, d := range []*model.Distributor{b.des.Distributor, b.cur.Distributor} {
+		if d != nil && d.WorkingDirectory != nil && *d.WorkingDirectory != "" {
+			wd = *d.WorkingDirectory
+			break
+		}
+	}
+	p.SnapshotRoots, p.SnapshotJobs = map[string]string{}, map[string]string{}
+	for _, c := range []*model.Config{b.cur, b.des} {
+		for i := range c.Publications {
+			pub := &c.Publications[i]
+			root := wd
+			if pub.Snapshot != nil && pub.Snapshot.AltFolder != nil && *pub.Snapshot.AltFolder != "" {
+				root = *pub.Snapshot.AltFolder
+			}
+			if root != "" {
+				p.SnapshotRoots[pub.Name] = root // the file's, read last, is the state after the plan
+			}
+			p.SnapshotJobs[pub.Name] = b.jobLookup(agentSlot{path: pubPath(pub.Name) + ".snapshot_agent", kind: agentSnapshot, pub: pub.Name})
+		}
+	}
+}
+
+// sortedPubs is the names of the publications of a state, sorted.
+func sortedPubs(st *State) []string {
+	names := make([]string, 0, len(st.Pubs))
+	for name := range st.Pubs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // identityBit removes identity_property from the schema options of a

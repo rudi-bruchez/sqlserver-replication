@@ -1,4 +1,4 @@
-Plan for repllab.Sales: 17 operations, 3 costly.
+Plan for repllab.Sales: 18 operations, 3 costly.
   1  disable job_disable publications[SalesRef].snapshot_agent: online
   2  add profile agent_profiles[distribution/m_prof]: online
   3  drop subscription publications[SalesRef].subscriptions[REPLLAB/SalesSub]: online, subscriber_object_left
@@ -13,10 +13,11 @@ Plan for repllab.Sales: 17 operations, 3 costly.
   12  add subscription publications[m_p].subscriptions[REPLLAB/m_sdb]: new_snapshot (subscriptions REPLLAB/m_sdb)
   13  add push_agent publications[m_p].subscriptions[REPLLAB/m_sdb].distribution_agent: online
   14  change agent_binding publications[m_p].subscriptions[REPLLAB/m_sdb].distribution_agent: online
-  15  restore job_restore publications[m_p].snapshot_agent: online
-  16  start job_start publications[m_p].snapshot_agent: online
-  17  start job_start publications[m_p].subscriptions[REPLLAB/m_sdb].distribution_agent: online
-Totals: online 16, new_snapshot 1, subscriber_object_left 2
+  15  restore job_restore publications[SalesRef].snapshot_agent: online
+  16  restore job_restore publications[m_p].snapshot_agent: online
+  17  start job_start publications[m_p].snapshot_agent: online
+  18  start job_start publications[m_p].subscriptions[REPLLAB/m_sdb].distribution_agent: online
+Totals: online 17, new_snapshot 1, subscriber_object_left 2
 Preconditions:
   unchecked server version repllab
   unchecked published table dbo.Customer

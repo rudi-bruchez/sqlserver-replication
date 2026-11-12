@@ -544,7 +544,14 @@ func (b *builder) changeArticle(pd *model.Publication, ppath string, ap pair[mod
 		ops = append(ops, op)
 	}
 	for i, col := range adds {
-		ops = append(ops, b.columnOp(7, fmt.Sprintf("%s3%s1%04d", key, sep, i), apath, pd.Name, d.Name, col, "add"))
+		op := b.columnOp(7, fmt.Sprintf("%s3%s1%04d", key, sep, i), apath, pd.Name, d.Name, col, "add")
+		switch stringOr(d.PreCreationCmd, "") {
+		case "delete", "truncate", "none":
+			// The snapshot does not create the subscriber table again
+			// (minor 7 of the plan 3 final review).
+			op.Warnings = append(op.Warnings, fmt.Sprintf(columnKeptWarning, d.Name))
+		}
+		ops = append(ops, op)
 	}
 	for i, col := range drops {
 		ops = append(ops, b.columnOp(7, fmt.Sprintf("%s3%s2%04d", key, sep, i), apath, pd.Name, d.Name, col, "drop"))
@@ -696,6 +703,12 @@ func directions(ch Change) []string {
 	return []string{"set", ""}
 }
 
+// The warnings of minors 7 and 11 of the plan 3 final review (R59).
+const (
+	columnKeptWarning      = "the subscriber table of %s keeps its columns: the delivery fails with Invalid column name until the column is added there"
+	destinationCaseWarning = "destination %s differs only in case: the subscriber table is dropped and created again"
+)
+
 // articleProperty is one sp_changearticle for one changed property (R2),
 // its entry from cost.Lookup, refused as not measured otherwise. A change
 // of pre_creation_cmd replaces subscriber data, and so does any
@@ -761,6 +774,10 @@ func (b *builder) articleProperty(pd *model.Publication, d *model.Article, ch Ch
 	op.keepsRows = keepsRowsOf(d)
 	if rel == "pre_creation_cmd" {
 		op.Costs = []Cost{CostSubscriberDataReplaced}
+	}
+	if b4, after := orEmpty(ch.Before), orEmpty(ch.After); strings.HasPrefix(rel, "destination.") && b4 != after && strings.EqualFold(b4, after) {
+		// Minor 11: the cost is kept, the call drops and creates the table.
+		op.Warnings = append(op.Warnings, fmt.Sprintf(destinationCaseWarning, after))
 	}
 	op.Reason = "the article's " + rel + " changes"
 	b.add(op)

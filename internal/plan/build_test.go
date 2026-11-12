@@ -365,7 +365,8 @@ func TestBuildJobOperations(t *testing.T) {
 		t.Errorf("restores:\n%s", opsString(r))
 	}
 
-	// A dropped publication: disabled, not restored.
+	// A dropped publication: disabled, and restored by a guarded batch that
+	// does nothing after the drop (R61, TestJobRestoreOfDroppedPublication).
 	ops = withJobs(t, buildFull(t, nil, nil, func(des, _ *model.Config) {
 		des.Publications = des.Publications[:1]
 		des.Publisher.SharedDistributionAgents = nil
@@ -373,8 +374,8 @@ func TestBuildJobOperations(t *testing.T) {
 	if d := ofKind(ops, "job_disable"); len(d) != 1 || first(d[0].Affects.Publications) != "SalesRef" || d[0].Step != 0 {
 		t.Errorf("disables:\n%s", opsString(ops))
 	}
-	if r := ofKind(ops, "job_restore"); len(r) != 0 {
-		t.Errorf("a dropped publication restored:\n%s", opsString(ops))
+	if r := ofKind(ops, "job_restore"); len(r) != 1 || first(r[0].Affects.Publications) != "SalesRef" || r[0].Call.Guard != "@job_id IS NOT NULL" {
+		t.Errorf("a dropped publication's restore:\n%s", opsString(ops))
 	}
 
 	// The repair of SalesRef's missing snapshot agent.

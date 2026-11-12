@@ -669,18 +669,22 @@ func (b *builder) jobEnabled(s agentSlot, ch Change) {
 // row there (internal/reader/agents.go).
 func (b *builder) jobLookup(s agentSlot) string {
 	missing := literal(fmt.Sprintf("the job of %s does not exist", s.path))
+	return b.jobFind(s) + "\nIF @job_id IS NULL THROW 50000, " + missing + ", 1;"
+}
+
+// jobFind is jobLookup without the THROW: @job_id stays NULL when the job
+// does not exist (R61's restore of a dropped publication's job).
+func (b *builder) jobFind(s agentSlot) string {
 	if s.kind == agentPull {
 		return "DECLARE @job_id uniqueidentifier;\n" +
 			"SELECT @job_id = sj.job_id FROM " + quoteName(s.database) + ".dbo.MSreplication_subscriptions AS rs" +
 			" JOIN msdb.dbo.sysjobs AS sj ON sj.job_id = CONVERT(uniqueidentifier, rs.agent_id)" +
 			" WHERE UPPER(rs.publisher) = UPPER(" + literal(b.des.Publisher.Server) + ") AND rs.publisher_db = " +
-			literal(b.pubDB()) + " AND rs.publication = " + literal(s.pub) + " AND rs.subscription_type = 1;\n" +
-			"IF @job_id IS NULL THROW 50000, " + missing + ", 1;"
+			literal(b.pubDB()) + " AND rs.publication = " + literal(s.pub) + " AND rs.subscription_type = 1;"
 	}
 	from, where := b.agentRow(s, quoteName(b.distributionDB()))
 	return "DECLARE @job_id uniqueidentifier;\n" +
-		"SELECT @job_id = sj.job_id " + from + " JOIN msdb.dbo.sysjobs AS sj ON sj.job_id = CONVERT(uniqueidentifier, a.job_id) WHERE " + where + ";\n" +
-		"IF @job_id IS NULL THROW 50000, " + missing + ", 1;"
+		"SELECT @job_id = sj.job_id " + from + " JOIN msdb.dbo.sysjobs AS sj ON sj.job_id = CONVERT(uniqueidentifier, a.job_id) WHERE " + where + ";"
 }
 
 // schedule plans the changes of an agent's schedule, its fields grouped

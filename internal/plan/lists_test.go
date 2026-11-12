@@ -632,3 +632,76 @@ func TestDropSubscriptionWithoutJob(t *testing.T) {
 	p = buildFull(t, nil, missing, func(_, cur *model.Config) { finding(cur) })
 	wantOnlyRefusal(t, p, msg+"; repair of this state is not measured")
 }
+
+// R62: every publication has its snapshot job lookup, the prologue of its
+// job operations; an unknown publication has none.
+func TestSnapshotJobLookup(t *testing.T) {
+	p := buildLab(t, nil, func(des, _ *model.Config) {
+		addTo(t, des, "SalesPub", newTable("m_t9"))
+		addTo(t, des, "SalesRef", newTable("m_t9"))
+	})
+	planned(t, p)
+	seen := map[string]bool{}
+	for _, op := range ofKind(p.Operations, "job_disable") {
+		pub := first(op.Affects.Publications)
+		got, ok := p.SnapshotJobLookup(pub)
+		if !ok || got != op.Call.Prologue {
+			t.Errorf("SnapshotJobLookup(%s) = %q, %v; want the job_disable's prologue %q", pub, got, ok, op.Call.Prologue)
+		}
+		seen[pub] = true
+	}
+	for _, pub := range []string{"SalesPub", "SalesRef"} {
+		if !seen[pub] {
+			t.Errorf("no job_disable of %s", pub)
+		}
+	}
+	if got, ok := p.SnapshotJobLookup("nope"); ok {
+		t.Errorf("SnapshotJobLookup(nope) = %q, true; want none", got)
+	}
+}
+
+// R61: a dropped publication's job is restored in step 12 to the value
+// found, by a batch that does nothing once the job is gone.
+func TestJobRestoreOfDroppedPublication(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		p := buildFull(t, nil, nil, func(des, cur *model.Config) {
+			pubOf(t, cur, "SalesRef").SnapshotAgent.JobEnabled = model.Ptr(enabled)
+			removePub(des, "SalesRef")
+		})
+		var restores []Operation
+		for _, op := range ofKind(p.Operations, "job_restore") {
+			if op.Path == "publications[SalesRef].snapshot_agent" {
+				restores = append(restores, op)
+			}
+		}
+		if len(restores) != 1 {
+			t.Fatalf("enabled %v: %d job_restore of SalesRef, want 1:\n%s", enabled, len(restores), opsString(p.Operations))
+		}
+		r := restores[0]
+		if r.Step != 12 {
+			t.Errorf("enabled %v: the restore is in step %d, want 12", enabled, r.Step)
+		}
+		if strings.Contains(r.Call.Prologue, "THROW") || !strings.Contains(r.Call.Prologue, "DECLARE @job_id uniqueidentifier;") {
+			t.Errorf("enabled %v: prologue %q, want the lookup without THROW", enabled, r.Call.Prologue)
+		}
+		if r.Call.Guard != "@job_id IS NOT NULL" {
+			t.Errorf("enabled %v: guard %q, want @job_id IS NOT NULL", enabled, r.Call.Guard)
+		}
+		want := "0"
+		if enabled {
+			want = "1"
+		}
+		wantParam(t, r, "@enabled", want)
+	}
+}
+
+// removePub drops the publication named name from c.
+func removePub(c *model.Config, name string) {
+	var keep []model.Publication
+	for _, p := range c.Publications {
+		if p.Name != name {
+			keep = append(keep, p)
+		}
+	}
+	c.Publications = keep
+}

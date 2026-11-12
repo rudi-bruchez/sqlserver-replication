@@ -852,3 +852,39 @@ func TestCreatedPublicationArticleState(t *testing.T) {
 		t.Errorf("rows %v, want m_t9 at 1", got)
 	}
 }
+
+// Minor 7: a column added to an article whose subscriber table keeps its
+// columns (pre_creation_cmd delete, truncate or none) warns; with drop the
+// table is created again with the column.
+func TestColumnAddWarnsPreCreation(t *testing.T) {
+	warning := "the subscriber table of Customer keeps its columns: the delivery fails with Invalid column name until the column is added there"
+	for _, cmd := range []string{"delete", "drop"} {
+		ops := plannedAlone(t, buildLab(t, customerChecks("Customer"), func(des, cur *model.Config) {
+			both(des, cur, func(c *model.Config) { articleOf(t, c, "SalesPub", "Customer").PreCreationCmd = str(cmd) })
+			a := articleOf(t, des, "SalesPub", "Customer")
+			a.Columns = append(a.Columns, "Notes")
+		}))
+		col := one(t, ops, "sp_articlecolumn")
+		if got := hasString(col.Warnings, warning); got != (cmd == "delete") {
+			t.Errorf("pre_creation_cmd %s: warnings %q, want the column warning %v", cmd, col.Warnings, cmd == "delete")
+		}
+	}
+}
+
+// Minor 11: a destination that differs only in case keeps its cost and
+// warns that the subscriber table is dropped and created again.
+func TestDestinationCaseOnlyWarns(t *testing.T) {
+	ops := plannedAlone(t, buildLab(t, nil, func(des, cur *model.Config) {
+		both(des, cur, func(c *model.Config) { articleOf(t, c, "SalesPub", "Customer").Destination.Name = str("t1") })
+		articleOf(t, des, "SalesPub", "Customer").Destination.Name = str("T1")
+	}))
+	op := one(t, ops, "sp_changearticle")
+	wantParam(t, op, "@property", "N'dest_table'")
+	if !hasCost(op.Costs, CostSubscriberDataReplaced) {
+		t.Errorf("costs %v, want subscriber_data_replaced kept", op.Costs)
+	}
+	want := "destination T1 differs only in case: the subscriber table is dropped and created again"
+	if !hasString(op.Warnings, want) {
+		t.Errorf("warnings %q, want %q", op.Warnings, want)
+	}
+}

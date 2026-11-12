@@ -316,7 +316,9 @@ func pubNamed(c *model.Config, name string) *model.Publication {
 // or right after its sp_addpublication_snapshot in step 8 when the plan
 // creates the agent (before that call MSsnapshot_agents has a row with
 // local_job 0 and a job_id of no job, 14262); a job_restore in step 12 for
-// each job disabled and not dropped, with the file's job_enabled (R23); then
+// each job disabled, with the file's job_enabled (R23), or for a dropped
+// publication the value found, guarded so that it does nothing once the
+// drop has deleted the job (R61); then
 // a job_start per agent to start, in step 12, or for an agent of a deferral
 // between its generate_and_wait and the restore of immediate_sync.
 func (b *builder) addJobOps(ops []Operation, refs []AgentRef) []Operation {
@@ -365,17 +367,22 @@ func (b *builder) addJobOps(ops []Operation, refs []AgentRef) []Operation {
 			jobs = append(jobs, b.jobOp(0, pub, "job_disable", cost.OpJobDisable, slot, "0"))
 		}
 		if dropped[pub] {
-			continue // sp_droppublication deletes the job
+			// sp_droppublication deletes the job, but a way out of apply
+			// before the drop must not leave it disabled: restored to the
+			// value found, by a batch that does nothing once the job is gone
+			// (R61).
+			op := b.jobOp(12, "1"+sep+pub, "job_restore", cost.OpJobRestore, slot, enabledLiteral(snapshotEnabled(cur)))
+			op.Call.Prologue, op.Call.Guard = b.jobFind(slot), "@job_id IS NOT NULL"
+			op.Reason = "the snapshot job of the dropped publication is restored to the value found on a way out of apply before the drop; after the drop the job is gone and the call does not run (R61)"
+			op.Sources = append(op.Sources, "R61")
+			jobs = append(jobs, op)
+			continue
 		}
 		on := snapshotEnabled(pubNamed(b.des, pub))
 		if pubNamed(b.des, pub) == nil {
 			on = snapshotEnabled(cur)
 		}
-		enabled := "0"
-		if on {
-			enabled = "1"
-		}
-		op := b.jobOp(12, "1"+sep+pub, "job_restore", cost.OpJobRestore, slot, enabled)
+		op := b.jobOp(12, "1"+sep+pub, "job_restore", cost.OpJobRestore, slot, enabledLiteral(on))
 		if !isNew && snapshotEnabled(cur) != on {
 			op.Changes = []PropertyChange{{Path: slot.path + ".job_enabled", Before: fmt.Sprint(snapshotEnabled(cur)), After: fmt.Sprint(on)}}
 			op.Reason = "the snapshot job is set to the file's job_enabled at the end of the plan (R23, R24)"
@@ -434,22 +441,32 @@ func (b *builder) addJobOps(ops []Operation, refs []AgentRef) []Operation {
 	return ops
 }
 
-// jobIdle is the guard of a job_start: the job has no run requested or
+// JobIdle is the guard of a job_start: the job has no run requested or
 // running in the current session of SQL Server Agent. sp_start_job refuses
-// to start a job that has one (22022, and 0x5606 in the messages): the push
-// distribution job that sp_addpushsubscription_agent has just created and
-// started, a continuous agent that runs. The printed batch is the executed
-// one (spec anti-goal 2), so the guard is in it; a run that starts between
-// the check and the start still fails with 22022, which plan 4's apply
-// retries. Measured on the lab by TestLabJobStartGuard (final review item
-// 4).
-const jobIdle = "NOT EXISTS (SELECT 1 FROM msdb.dbo.sysjobactivity AS ja" +
+// to start a job that has one: the push distribution job that
+// sp_addpushsubscription_agent has just created and started, a continuous
+// agent that runs. go-mssqldb returns that refusal as an mssql.Error of
+// number 22022, class 16 (the 0x5606 line is sqlcmd's print of it), and on
+// any 22022 the job_start batch returns no started row (lab/README.md,
+// "SQL Server Agent stopped"). The printed batch is the executed one (spec
+// anti-goal 2), so the guard is in it; a run that starts between the check
+// and the start still fails with 22022, which apply reads as running.
+// Measured on the lab by TestLabJobStartGuard (final review item 4).
+const JobIdle = "NOT EXISTS (SELECT 1 FROM msdb.dbo.sysjobactivity AS ja" +
 	" WHERE ja.job_id = @job_id AND ja.session_id = (SELECT MAX(ss.session_id) FROM msdb.dbo.syssessions AS ss)" +
 	" AND (ja.run_requested_date IS NOT NULL OR ja.start_execution_date IS NOT NULL) AND ja.stop_execution_date IS NULL)"
 
+// enabledLiteral is the @enabled value of sp_update_job.
+func enabledLiteral(on bool) string {
+	if on {
+		return "1"
+	}
+	return "0"
+}
+
 // jobOp is one of R24's operations on the job of s: msdb.dbo.sp_update_job
 // @job_id, @enabled (enabled not empty), or msdb.dbo.sp_start_job @job_id
-// under the jobIdle guard, the job found in the batch (jobLookup), at the
+// under the JobIdle guard, the job found in the batch (jobLookup), at the
 // distributor, or at the
 // subscriber for a pull agent; online.
 func (b *builder) jobOp(step int, order, kind, change string, s agentSlot, enabled string) Operation {
@@ -466,7 +483,7 @@ func (b *builder) jobOp(step int, order, kind, change string, s agentSlot, enabl
 	}
 	call := Call{Procedure: proc, Prologue: b.jobLookup(s), Params: params}
 	if kind == "job_start" {
-		call.Guard = jobIdle
+		call.Guard = JobIdle
 	}
 	op := b.distOp(step, order, kind, action, s.path, call)
 	if s.kind == agentPull {

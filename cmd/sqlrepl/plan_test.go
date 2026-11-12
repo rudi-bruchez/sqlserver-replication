@@ -520,3 +520,28 @@ func TestLabPlanCLIReadOnly(t *testing.T) {
 		t.Errorf("a plan printed for a read-only database:\n%s", stdout.String())
 	}
 }
+
+// R54: a secret variable set to the empty string is not set, and the plan
+// lists it so.
+func TestPlanSecretEmptyNotSet(t *testing.T) {
+	t.Setenv("SQLREPL_T4_EMPTY", "")
+	t.Setenv("SQLREPL_T4_FULL", "x")
+	r := newFakeRun(t, nil)
+	buildPlan = func(in plan.Inputs, opt plan.Options) *plan.Plan {
+		r.inputs = in
+		p := &plan.Plan{Publisher: in.Desired.Publisher.Server, Database: in.Desired.Publisher.Database, Options: opt}
+		for _, n := range []string{"SQLREPL_T4_EMPTY", "SQLREPL_T4_FULL"} {
+			p.Secrets = append(p.Secrets, plan.SecretUse{Name: n, Set: in.SecretSet(n)})
+		}
+		return p
+	}
+	var stdout, stderr bytes.Buffer
+	if err := runPlan([]string{"-f", planFile(t, smallFile), "-env", noEnv(t)}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"  SQLREPL_T4_EMPTY not set\n", "  SQLREPL_T4_FULL set\n"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, stdout.String())
+		}
+	}
+}

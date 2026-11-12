@@ -205,8 +205,9 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 		Facts:   res.Facts,
 		Checks:  checks,
 		SecretSet: func(name string) bool {
-			_, ok := os.LookupEnv(name)
-			return ok
+			// R54: an empty variable is not set.
+			v, ok := os.LookupEnv(name)
+			return ok && v != ""
 		},
 	}, opt)
 	return printPlan(stdout, p, f)

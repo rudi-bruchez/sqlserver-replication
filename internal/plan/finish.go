@@ -99,11 +99,117 @@ func finish(ops []Operation, st *State) ([]Operation, []Refusal) {
 			}
 		}
 		op.Costs = mergeCosts(computed, op.Costs)
+		created := createsSubscription(op, st)
 		st.apply(op)
+		setOwes(op, st, created)
 		op.Seq = i + 1
 	}
 	owedAtEnd(ops, st)
+	nameDeferredSubscriptions(ops)
 	return ops, refusals
+}
+
+// createsSubscription tells an sp_addsubscription that creates its
+// subscription in the predicted state (the first call of its unit, a
+// re-add after the drop of step 4 included), before the state moves past
+// it.
+func createsSubscription(op *Operation, st *State) bool {
+	if op.entry == nil || op.entry.Change != cost.OpAddSubscription {
+		return false
+	}
+	ps := st.Pubs[first(op.Affects.Publications)]
+	return ps != nil && ps.Subs[subKey(first(op.Affects.Subscriptions))] == nil
+}
+
+// setOwes marks the deliveries an operation owes (R50), from the state
+// after it: the creation of a snapshot-initialized subscription, before
+// its unit when push, after the publisher-side call when pull; an article
+// added to an immediate_sync publication, every snapshot-initialized
+// subscription it gives a row at 1, after; the extension of a
+// snapshot-initialized subscription, after; a reinitialization other than
+// a re-add (a re-add is a subscription creation), the subscriptions it
+// marks, which apply reads by their rows going from 2 to 1. A replication
+// support only, backup or lsn subscription is owed nothing: its rows are at
+// 2 and no snapshot is delivered to it.
+func setOwes(op *Operation, st *State, created bool) {
+	if op.entry == nil || op.Kind == "generate_and_wait" {
+		return
+	}
+	ps := st.Pubs[first(op.Affects.Publications)]
+	if ps == nil {
+		return
+	}
+	snapshotInit := func(key string) bool {
+		sub := ps.Subs[subKey(key)]
+		return sub != nil && sub.Init == initSnapshot
+	}
+	switch op.entry.Change {
+	case cost.OpAddSubscription:
+		if !created || syncTypeInit(op) != initSnapshot {
+			return
+		}
+		op.Owes, op.OwesAt = []string{first(op.Affects.Subscriptions)}, OwesBefore
+		if v, _ := paramString(op, "@subscription_type"); v == "pull" {
+			op.OwesAt = OwesAfter
+		}
+		return
+	case cost.OpExtendSubscription:
+		if key := first(op.Affects.Subscriptions); snapshotInit(key) {
+			op.Owes, op.OwesAt = []string{key}, OwesAfter
+		}
+		return
+	case cost.OpAddArticle:
+		if !ps.ImmediateSync {
+			return
+		}
+		art := first(op.Affects.Articles)
+		for _, sub := range sortedSubs(ps) {
+			if sub.Init == initSnapshot && sub.Rows[art] == 1 {
+				op.Owes = append(op.Owes, sub.Key)
+			}
+		}
+		if len(op.Owes) > 0 {
+			op.OwesAt = OwesAfter
+		}
+		return
+	}
+	if op.readd || !hasCost(op.Costs, CostReinitialization) {
+		return
+	}
+	for _, key := range op.Affects.Subscriptions {
+		if snapshotInit(key) {
+			op.Owes = append(op.Owes, key)
+		}
+	}
+	if len(op.Owes) > 0 {
+		op.OwesAt = OwesMarked
+	}
+}
+
+// nameDeferredSubscriptions gives each generate_and_wait the subscriptions
+// whose extension before it owes a delivery: those its run delivers to,
+// for which apply waits before the operations after it (R51). It owes
+// nothing itself.
+func nameDeferredSubscriptions(ops []Operation) {
+	for i := range ops {
+		if ops[i].Kind != "generate_and_wait" {
+			continue
+		}
+		pub := first(ops[i].Affects.Publications)
+		seen := map[string]bool{}
+		for j := 0; j < i; j++ {
+			op := &ops[j]
+			if op.Kind != "subscription_extension" || first(op.Affects.Publications) != pub {
+				continue
+			}
+			for _, k := range op.Owes {
+				if !seen[subKey(k)] {
+					seen[subKey(k)] = true
+					ops[i].Affects.Subscriptions = append(ops[i].Affects.Subscriptions, k)
+				}
+			}
+		}
+	}
 }
 
 // everyRowMarked tells an immediate_sync publication whose every
@@ -373,14 +479,15 @@ func mergeCosts(computed, carried []Cost) []Cost {
 }
 
 // totals counts the operations, the costly ones (any cost other than online
-// and shared_object_changed) and the operations per cost.
+// and shared_object_changed, and the drop of a shared object, minor 13) and
+// the operations per cost.
 func totals(ops []Operation) Totals {
 	t := Totals{Operations: len(ops), ByCost: map[Cost]int{}}
 	for _, op := range ops {
 		costly := false
 		for _, c := range op.Costs {
 			t.ByCost[c]++
-			if c != CostOnline && c != CostSharedObjectChanged {
+			if c != CostOnline && (c != CostSharedObjectChanged || op.Action == "drop") {
 				costly = true
 			}
 		}

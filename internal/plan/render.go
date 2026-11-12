@@ -35,6 +35,11 @@ const sqlHeader = "-- each operation below is a batch of its own: run them one a
 // immediate_sync would follow a generation the subscriptions have not read.
 const waitHeader = "-- a generate_and_wait operation starts the snapshot agent of the added articles: wait until every subscription has received them, its job_start operations starting the agents that deliver them, before running the operations after them (sqlrepl apply waits)"
 
+// startAgainHeader follows them in a plan with a job_start (R51): apply
+// runs a job_start of an agent once more when its job ended before the
+// delivery the plan owes, so the text it runs is still a printed statement.
+const startAgainHeader = "-- sqlrepl apply may run a job_start again when its job ended before the delivery it owes"
+
 // Statements is one statement per operation, in Seq order. A secret
 // parameter is rendered @<param> = @secret_<n> (R16), numbered once per
 // plan in Seq order of first use (then parameter order), a name keeping its
@@ -67,14 +72,27 @@ func (p *Plan) Statements() []Statement {
 			b.WriteString(strings.TrimRight(op.Call.Prologue, "\n"))
 			b.WriteString("\n")
 		}
-		if op.Call.Guard != "" {
-			b.WriteString("IF " + op.Call.Guard + "\n")
-		}
-		b.WriteString("EXEC " + op.Call.Procedure)
+		exec := "EXEC " + op.Call.Procedure
 		if len(args) > 0 {
-			b.WriteString(" " + strings.Join(args, ", "))
+			exec += " " + strings.Join(args, ", ")
 		}
-		b.WriteString(";")
+		exec += ";"
+		if op.Kind == "job_start" {
+			// R62: the batch reports whether it started the job, in one row
+			// apply reads; sqlcmd prints it harmlessly.
+			b.WriteString("DECLARE @started bit = 0, @rc int;\n")
+			if op.Call.Guard != "" {
+				b.WriteString("IF " + op.Call.Guard + "\n")
+			}
+			b.WriteString("BEGIN\n" + strings.Replace(exec, "EXEC ", "EXEC @rc = ", 1) + "\n")
+			b.WriteString("SET @started = CASE WHEN @rc = 0 THEN 1 ELSE 0 END;\nEND;\n")
+			b.WriteString("SELECT @started AS started;")
+		} else {
+			if op.Call.Guard != "" {
+				b.WriteString("IF " + op.Call.Guard + "\n")
+			}
+			b.WriteString(exec)
+		}
 		st.Text = b.String()
 		out = append(out, st)
 	}
@@ -99,7 +117,8 @@ func costList(cs []Cost) string {
 }
 
 // SQL is the statements laid out for -sql: sqlHeader (and waitHeader when
-// the plan has a generate_and_wait), then a "-- server"
+// the plan has a generate_and_wait, startAgainHeader when it has a
+// job_start), then a "-- server"
 // header whenever the server changes, a USE whenever the server or the
 // database changes (both compared without regard to case, R7), and for
 // each operation its header comment, its warnings, its secret comments
@@ -115,6 +134,12 @@ func (p *Plan) SQL() string {
 	for _, op := range p.Operations {
 		if op.Kind == "generate_and_wait" {
 			b.WriteString(waitHeader + "\n")
+			break
+		}
+	}
+	for _, op := range p.Operations {
+		if op.Kind == "job_start" {
+			b.WriteString(startAgainHeader + "\n")
 			break
 		}
 	}
@@ -166,6 +191,15 @@ func subscriptionsOf(op Operation) string {
 	return ""
 }
 
+// sharedWith names, after the cost list of an operation on a shared
+// object, the other publication databases it is shared with (minor 13).
+func sharedWith(op Operation) string {
+	if len(op.Shared) == 0 {
+		return ""
+	}
+	return " (shared with " + strings.Join(op.Shared, ", ") + ")"
+}
+
 // Summary is the human summary (R28), every interpolated text on one line
 // (oneLine). A refused plan prints its refusals and "Plan refused." only;
 // an empty section is not printed.
@@ -192,7 +226,7 @@ func (p *Plan) Summary() string {
 	} else {
 		line("Plan for %s.%s: %d operations, %d costly.", p.Publisher, p.Database, p.Totals.Operations, p.Totals.Costly)
 		for _, op := range p.Operations {
-			line("  %d  %s %s %s: %s%s", op.Seq, op.Action, op.Kind, op.Path, costList(op.Costs), subscriptionsOf(op))
+			line("  %d  %s %s %s: %s%s%s", op.Seq, op.Action, op.Kind, op.Path, costList(op.Costs), sharedWith(op), subscriptionsOf(op))
 			for _, w := range op.Warnings {
 				line("      warning: %s", w)
 			}

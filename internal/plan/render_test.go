@@ -165,7 +165,7 @@ func TestPlanJSONRoundTrip(t *testing.T) {
 		}
 	}
 	want := []string{"publisher", "database", "options", "operations", "refusals", "warnings", "notes", "secrets",
-		"preconditions", "agents_to_start", "totals"}
+		"preconditions", "agents_to_start", "totals", "owed_before", "distribution_db", "snapshot_roots", "snapshot_jobs"}
 	if !reflect.DeepEqual(keys, want) {
 		t.Errorf("top-level keys %v, want %v", keys, want)
 	}
@@ -300,5 +300,70 @@ func TestRenderEmptyForm(t *testing.T) {
 	}
 	if got := p.SQL(); got != "" {
 		t.Errorf("SQL() of an empty plan %q, want empty", got)
+	}
+}
+
+// R62: a job_start reports whether it started the job, in one row apply
+// reads, and the -sql header says that apply may run one again (R51).
+func TestJobStartReportsStarted(t *testing.T) {
+	p := orderStepsPlan(t)
+	stmts := p.Statements()
+	n := 0
+	for i, op := range p.Operations {
+		if op.Kind != "job_start" {
+			continue
+		}
+		n++
+		want := op.Call.Prologue + "\n" +
+			"DECLARE @started bit = 0, @rc int;\n" +
+			"IF " + op.Call.Guard + "\n" +
+			"BEGIN\n" +
+			"EXEC @rc = msdb.dbo.sp_start_job @job_id = @job_id;\n" +
+			"SET @started = CASE WHEN @rc = 0 THEN 1 ELSE 0 END;\n" +
+			"END;\n" +
+			"SELECT @started AS started;"
+		if op.Call.Guard != JobIdle {
+			t.Errorf("%s: guard %q, want JobIdle", op.Path, op.Call.Guard)
+		}
+		if stmts[i].Text != want {
+			t.Errorf("%s: statement\n%s\nwant\n%s", op.Path, stmts[i].Text, want)
+		}
+	}
+	if n == 0 {
+		t.Fatal("the plan has no job_start")
+	}
+	if !strings.Contains(p.SQL(), "\n"+startAgainHeader+"\n") {
+		t.Errorf("SQL() of a plan with a job_start lacks the header %q", startAgainHeader)
+	}
+	q := buildLab(t, nil, func(des, _ *model.Config) { pubOf(t, des, "SalesRef").Description = str("changed") })
+	if len(ofKind(q.Operations, "job_start")) != 0 || len(q.Operations) == 0 {
+		t.Fatalf("want a plan with operations and no job_start:\n%s", opsString(q.Operations))
+	}
+	if strings.Contains(q.SQL(), startAgainHeader) {
+		t.Errorf("SQL() of a plan without job_start has the header %q", startAgainHeader)
+	}
+}
+
+// Minor 13: an operation on a shared object names the other databases
+// after its costs, and the drop of a shared object counts as costly.
+func TestSummarySharedAndCostly(t *testing.T) {
+	ops := []Operation{
+		{Seq: 1, Kind: "profile", Action: "drop", Path: "agent_profiles[distribution/m_prof]",
+			Costs: []Cost{CostOnline, CostSharedObjectChanged}, Shared: []string{"X.Other"}},
+		{Seq: 2, Kind: "distributor_property", Action: "change", Path: "distributor.max_retention_hours",
+			Costs: []Cost{CostOnline, CostSharedObjectChanged}, Shared: []string{"X.Other"}},
+	}
+	p := &Plan{Publisher: "P", Database: "D", Operations: ops, Totals: totals(ops)}
+	if p.Totals.Costly != 1 {
+		t.Errorf("Totals.Costly %d, want 1 (the drop)", p.Totals.Costly)
+	}
+	s := p.Summary()
+	for _, want := range []string{
+		"  1  drop profile agent_profiles[distribution/m_prof]: online, shared_object_changed (shared with X.Other)\n",
+		"  2  change distributor_property distributor.max_retention_hours: online, shared_object_changed (shared with X.Other)\n",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("summary lacks %q:\n%s", want, s)
+		}
 	}
 }

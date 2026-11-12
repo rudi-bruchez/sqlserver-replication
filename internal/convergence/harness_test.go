@@ -324,8 +324,9 @@ func (e *env) inputs(t *testing.T, des *model.Config) plan.Inputs {
 	}
 	return plan.Inputs{Desired: des, Current: res.Config, Facts: res.Facts, Checks: checks,
 		SecretSet: func(name string) bool {
-			_, ok := os.LookupEnv(name)
-			return ok
+			// R54: an empty variable is not set.
+			v, ok := os.LookupEnv(name)
+			return ok && v != ""
 		}}
 }
 

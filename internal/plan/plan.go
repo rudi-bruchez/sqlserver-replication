@@ -36,6 +36,13 @@ const (
 	CostSharedObjectChanged    Cost = "shared_object_changed"
 )
 
+// The moments apply records a delivery owed at (R50, Operation.OwesAt).
+const (
+	OwesBefore = "before"
+	OwesAfter  = "after"
+	OwesMarked = "marked"
+)
+
 // Operation is one procedure call of the plan (R2).
 type Operation struct {
 	Seq  int `json:"seq"` // 1-based, after ordering
@@ -64,7 +71,12 @@ type Operation struct {
 	Sources  []string         `json:"sources"` // cite rows and spec sections
 	Shared   []string         `json:"shared"`  // other publication databases, "<publisher>.<database>"
 	Warnings []string         `json:"warnings"`
-	entry    *cost.Entry      // set by the strategy; the flags pass reads it
+	// Owes is the subscriptions (Subscription.Key()) the operation owes a
+	// delivery, OwesAt when apply records it: before, after or marked
+	// (R50). finish sets them from the predicted state.
+	Owes   []string    `json:"owes,omitempty"`
+	OwesAt string      `json:"owes_at,omitempty"`
+	entry  *cost.Entry // set by the strategy; the flags pass reads it
 	// wideMarkCheck marks an sp_addarticle that finish refuses on an
 	// immediate_sync publication whose every subscription row an earlier
 	// sync_method change of the plan marked (spec "Strategies", Articles).
@@ -143,6 +155,32 @@ type Plan struct {
 	Preconditions []Precondition `json:"preconditions"`
 	AgentsToStart []AgentRef     `json:"agents_to_start"`
 	Totals        Totals         `json:"totals"`
+	// OwedBefore is the deliveries pending before the plan: the
+	// subscriptions with a row at 1, or an inactive subscribed article
+	// without immediate_sync, in the state observed (R50).
+	OwedBefore     []Owed `json:"owed_before"`
+	DistributionDB string `json:"distribution_db"`
+	// SnapshotRoots is, by publication, the folder its snapshot runs are
+	// written under: its alt_snapshot_folder when set, else the
+	// distributor's working_directory (R50, folder rule).
+	SnapshotRoots map[string]string `json:"snapshot_roots"`
+	// SnapshotJobs is, by publication, the prologue that sets @job_id to its
+	// snapshot job, the lookup of its job operations (R62).
+	SnapshotJobs map[string]string `json:"snapshot_jobs"`
+}
+
+// Owed is a delivery a subscription of a publication awaits.
+type Owed struct {
+	Publication  string `json:"publication"`
+	Subscription string `json:"subscription"` // Subscription.Key()
+}
+
+// SnapshotJobLookup is the batch prologue that sets @job_id to the snapshot
+// job of a publication of the plan, the one its job operations use (R62),
+// so that every wait on the job has a batch that declares @job_id.
+func (p *Plan) SnapshotJobLookup(publication string) (string, bool) {
+	s, ok := p.SnapshotJobs[publication]
+	return s, ok
 }
 
 // Empty tells whether the plan has no operation, no refusal and no agent to
