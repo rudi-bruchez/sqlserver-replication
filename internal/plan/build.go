@@ -42,6 +42,13 @@ type builder struct {
 	// "<pub>\x00<lower-cased key>" (dropSubscription): sharedPushExists
 	// reads it.
 	dropped map[string]bool
+	// readd is the kept subscriptions this plan drops in step 4 and adds
+	// back in step 9 for a change of independent_agent, by
+	// "<pub>\x00<lower-cased key>" (readdSubscription): addSubscription
+	// costs their re-add.
+	readd map[string]bool
+	// deferrals memoizes deferred (defer.go), by publication name.
+	deferrals map[string]bool
 }
 
 func (b *builder) refuse(path, format string, args ...any) {

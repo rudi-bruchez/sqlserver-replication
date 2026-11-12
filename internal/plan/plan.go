@@ -74,6 +74,15 @@ type Operation struct {
 	// (spec anti-goal 4); finish adds subscriber_data_replaced when it
 	// costs the call reinitialization.
 	replacesData bool
+	// readd: the sp_addsubscription that adds back a subscription the plan
+	// dropped for a change of independent_agent (spec "Publication
+	// properties"); finish costs it reinitialization.
+	readd bool
+	// namedExtensionCheck marks a named sp_addsubscription on an existing
+	// subscription that finish refuses on a native or character
+	// publication whose every row a sync_method change of the plan marked
+	// (spec "Strategies", Articles).
+	namedExtensionCheck bool
 }
 
 // PropertyChange is one property an operation changes.

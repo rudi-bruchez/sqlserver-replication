@@ -100,6 +100,17 @@ func (b *builder) planSubscriptions(pp pair[model.Publication]) []*model.Subscri
 		// the drop needs no completion.
 		b.dropSubscription(pc, s, "the file omits the subscription; the subscriber tables are left in place")
 	}
+	if b.readdPublication(pd, pc) {
+		// independent_agent changes (properties.go): every kept subscription
+		// is dropped in step 4 and added back in step 9 as the file
+		// declares it, so none is changed.
+		for _, sp := range spairs {
+			if b.readdSubscription(pd, pc, sp) {
+				adds = append(adds, sp.Des)
+			}
+		}
+		return adds
+	}
 	for _, sp := range spairs {
 		b.changeSubscription(pd, pc, ppath, sp)
 	}
@@ -202,6 +213,17 @@ func (b *builder) addSubscription(pd *model.Publication, s *model.Subscription) 
 		op.Affects = affects(art)
 		op.Reason = "the file declares a subscription that does not exist"
 		op.Sources = append(op.Sources, "spec Strategies (Subscriptions)", "spec Order step 9")
+		if b.readd[pd.Name+sep+subKey(s.Key())] {
+			// Spec "Publication properties" and "Subscriptions": re-added
+			// with snapshot initialization, a reinitialization that replaces
+			// the data of the articles whose pre_creation_cmd is drop, delete
+			// or truncate.
+			op.readd = true
+			op.Costs = []Cost{CostDropAndReadd}
+			op.replacesData = subReplacesData(pd, s, art)
+			op.Reason = "the subscription is added back after the change of independent_agent"
+			op.Sources = append(op.Sources, "spec Strategies (Publication properties)", "02-matrix P26")
+		}
 		b.add(op)
 		if i == 0 && typ == "push" && !b.pushAgent(pd, s, path, key+"2") {
 			return
@@ -210,6 +232,19 @@ func (b *builder) addSubscription(pd *model.Publication, s *model.Subscription) 
 	if typ == "pull" {
 		b.pullSubscription(pd, s, path, key)
 	}
+}
+
+// subReplacesData tells a re-add call whose articles (art, or every
+// article the subscription covers for N'all') include one whose
+// pre_creation_cmd is drop, delete or truncate.
+func subReplacesData(pd *model.Publication, s *model.Subscription, art string) bool {
+	for i := range pd.Articles {
+		a := &pd.Articles[i]
+		if (art == "all" && covers(s, a.Name) || strings.EqualFold(a.Name, art)) && destructive(a.PreCreationCmd) {
+			return true
+		}
+	}
+	return false
 }
 
 // pushAgent is sp_addpushsubscription_agent, for the subscription's own
@@ -606,6 +641,7 @@ func (b *builder) subsetChanges(pd, pc *model.Publication, path string, d, c *mo
 			return
 		}
 		op.Affects = Affects{Publications: []string{pd.Name}, Articles: []string{art}, Subscriptions: []string{c.Key()}}
+		op.namedExtensionCheck = true
 		op.Changes = []PropertyChange{{Path: path + ".articles", After: art}}
 		op.Reason = "the file adds the article to the subscription"
 		op.Sources = append(op.Sources, "spec Strategies (Subscriptions)", "R36")

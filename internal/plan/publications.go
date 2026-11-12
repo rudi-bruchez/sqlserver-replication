@@ -158,6 +158,9 @@ func (b *builder) addPublication(p *model.Publication) {
 	}
 	op := b.newOp(8, p.Name+sep+"1", "publication", "add", path, call)
 	op.Affects.Publications = []string{p.Name}
+	if hasSnapshotScript(p) {
+		op.Warnings = append(op.Warnings, snapshotScriptWarning)
+	}
 	op.Reason = "the file declares a publication that does not exist"
 	op.Sources = append(op.Sources, "spec Order step 8")
 	b.add(op)

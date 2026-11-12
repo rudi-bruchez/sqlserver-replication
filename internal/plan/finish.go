@@ -40,6 +40,13 @@ func finish(ops []Operation, st *State) ([]Operation, []Refusal) {
 			// 15; O7 measured only that the call is accepted).
 			refusals = append(refusals, Refusal{Path: op.Path, Reason: "cost of the snapshot after sp_addarticle on a publication reinitialization not measured"})
 		}
+		if op.namedExtensionCheck && namedOnMarked(st.Pubs[first(op.Affects.Publications)]) {
+			// Spec "Strategies", Articles: a named extension on a native or
+			// character publication whose every row a sync_method change of
+			// this plan marked is accepted (O7), but no seat ran the snapshot
+			// and delivery that follow (campaign item 15).
+			refusals = append(refusals, Refusal{Path: op.Path, Reason: "cost of the snapshot after an extension on a publication reinitialization not measured: change sync_method in one plan and add the articles in another"})
+		}
 		var computed []Cost
 		switch {
 		case op.Kind == "publication" && op.Action == "add":
@@ -49,6 +56,12 @@ func finish(ops []Operation, st *State) ([]Operation, []Refusal) {
 			computed = []Cost{CostNewSnapshot} // R25, R34
 		case op.entry != nil && scopeOf(op.entry) != scopeNone:
 			computed = flagsAndCosts(op, st.resolve(op), finalImm[first(op.Affects.Publications)])
+		}
+		if op.readd {
+			// A subscription added back after its drop for a drop_readd
+			// property: the plan announces a reinitialization (spec
+			// "Subscriptions").
+			computed = append([]Cost{CostReinitialization}, computed...)
 		}
 		if len(computed) == 0 {
 			// Every operation has a cost (spec "What a plan is"): the
@@ -71,7 +84,20 @@ func finish(ops []Operation, st *State) ([]Operation, []Refusal) {
 // subscription row is at 1 after a publication-wide reinitialization of
 // this plan (a sync_method change from or to concurrent or concurrent_c).
 func everyRowMarked(ps *PubState) bool {
-	if ps == nil || !ps.ImmediateSync || !ps.wideMarked {
+	return ps != nil && ps.ImmediateSync && allRowsMarked(ps)
+}
+
+// namedOnMarked tells a native or character publication whose every
+// subscription row is at 1 after a publication-wide reinitialization of
+// this plan: the state a named extension is refused in.
+func namedOnMarked(ps *PubState) bool {
+	return ps != nil && (ps.SyncMethod == "native" || ps.SyncMethod == "character") && allRowsMarked(ps)
+}
+
+// allRowsMarked tells a publication whose every subscription row is at 1,
+// at least one, after a publication-wide reinitialization of this plan.
+func allRowsMarked(ps *PubState) bool {
+	if !ps.wideMarked {
 		return false
 	}
 	rows := 0

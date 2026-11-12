@@ -175,7 +175,7 @@ func (b *builder) addArticle(pd, pc *model.Publication, a *model.Article) bool {
 		return false
 	}
 	pubType := stringOr(pd.Type, "transactional")
-	if boolOf(pd.ImmediateSync) {
+	if boolOf(pd.ImmediateSync) && !b.deferred(pd.Name) {
 		// R34: sp_addarticle subscribes such a subscription by itself,
 		// which no row measured.
 		for _, sp := range remaining(pd, pc) {
@@ -327,7 +327,7 @@ func (b *builder) columnOp(step int, order, apath, pub, art, column, operation s
 }
 
 // extend subscribes the remaining subscriptions to the added articles on a
-// publication without immediate_sync (step 9): by name under native,
+// publication without immediate_sync, or one the plan defers (step 9): by name under native,
 // character and database snapshot, one call with @article = N'all' per
 // subscription under concurrent and concurrent_c, a named one being 14100
 // (spec "Strategies", Articles). Every call passes @subscription_type and
@@ -335,7 +335,14 @@ func (b *builder) columnOp(step int, order, apath, pub, art, column, operation s
 // subscribed them (C.*.addarticle), and an extension is refused (14058,
 // 14122).
 func (b *builder) extend(pd, pc *model.Publication, added []*model.Article) {
-	if len(added) == 0 || boolOf(pd.ImmediateSync) {
+	if len(added) == 0 || boolOf(pd.ImmediateSync) && !b.deferred(pd.Name) {
+		// Under -defer-full-snapshot immediate_sync is off from step 6 to
+		// the end of step 9 (defer.go): the rules without it apply.
+		return
+	}
+	if b.readdPublication(pd, pc) {
+		// The subscriptions are dropped and added back with the file's
+		// article list (properties.go): the re-add covers the new articles.
 		return
 	}
 	pubType := stringOr(pd.Type, "transactional")
@@ -373,6 +380,7 @@ func (b *builder) extend(pd, pc *model.Publication, added []*model.Article) {
 				return
 			}
 			op.Affects = Affects{Publications: []string{pd.Name}, Articles: []string{first}, Subscriptions: []string{cur.Key()}}
+			op.namedExtensionCheck = !all
 			op.Reason = "the subscription is extended to the added articles " + strings.Join(arts, ", ")
 			op.Sources = append(op.Sources, "spec Strategies (Articles)", "R36")
 			b.add(op)
@@ -393,7 +401,9 @@ func (b *builder) dropArticle(pd, pc *model.Publication, a *model.Article) {
 		subscribed = subscribed || covers(&s, a.Name)
 	}
 	for _, sp := range remaining(pd, pc) {
-		if !covers(sp.Cur, a.Name) {
+		if !covers(sp.Cur, a.Name) || b.readdPublication(pd, pc) {
+			// A subscription dropped whole in step 4 for a change of
+			// independent_agent (properties.go) needs no drop of the article.
 			continue
 		}
 		op := b.newOp(4, pc.Name+sep+a.Name+sep+subKey(sp.Cur.Key()), "subscription_article_drop", "drop", subPath(pc.Name, sp.Cur),
