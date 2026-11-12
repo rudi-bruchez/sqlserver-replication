@@ -903,6 +903,7 @@ var valueEncoders = map[[2]string]encoder{
 	{"sp_changepublication", "sync_method"}:                  encSyncMethod,                                                          // 09-snapshot-pub-matrix.sql ('*', N'sync_method', N'database snapshot')
 	{"sp_changepublication", "immediate_sync"}:               chgBool,                                                                // (N'SalesPub', N'immediate_sync', N'false')
 	{"sp_changepublication", "independent_agent"}:            chgBool,                                                                // (N'SalesRef', N'independent_agent', N'true')
+	{"sp_changepublication", "enabled_for_het_sub"}:          chgBool,                                                                // N'true' accepted (panel 3 Mistral, every boolean of sp_changepublication but replicate_ddl)
 	{"sp_changepublication", "allow_anonymous"}:              chgBool,                                                                // (N'SalesPub', N'allow_anonymous', N'true')
 	{"sp_changepublication", "alt_snapshot_folder"}:          chgString,                                                              // (N'SalesPub', N'alt_snapshot_folder', N'/var/opt/mssql/data/ReplAlt')
 	{"sp_changepublication", "snapshot_in_defaultfolder"}:    chgBool,                                                                // (N'SalesPub', N'snapshot_in_defaultfolder', N'false')

@@ -245,6 +245,7 @@ func TestEncodeValues(t *testing.T) {
 		{"sp_changepublication", "sync_method", str("database_snapshot"), "N'database snapshot'"}, // 09-snapshot-pub-matrix.sql
 		{"sp_changepublication", "immediate_sync", model.Ptr(false), "N'false'"},
 		{"sp_changepublication", "independent_agent", model.Ptr(true), "N'true'"},
+		{"sp_changepublication", "enabled_for_het_sub", model.Ptr(true), "N'true'"},
 		{"sp_changepublication", "allow_anonymous", model.Ptr(true), "N'true'"},
 		{"sp_changepublication", "alt_snapshot_folder", str("/var/opt/mssql/data/ReplAlt"), "N'/var/opt/mssql/data/ReplAlt'"},
 		{"sp_changepublication", "snapshot_in_defaultfolder", model.Ptr(false), "N'false'"},
