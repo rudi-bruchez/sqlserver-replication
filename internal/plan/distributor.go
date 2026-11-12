@@ -13,10 +13,8 @@ import (
 	"github.com/rudi-bruchez/sqlserver-replication/internal/state"
 )
 
-// Registered after agentsStrategy (Go runs the init functions of a package
-// in file name order, agents.go before distributor.go): a profile's drop
-// reads the bindings agentsStrategy plans (b.rebound).
-func init() { lateStrategies = append(lateStrategies, distributorStrategy) }
+// distributorStrategy is listed in lateStrategies (build.go), after
+// agentsStrategy.
 
 // The refusals of the distributor and the profiles (R6, R17, spec
 // "Non-goals").

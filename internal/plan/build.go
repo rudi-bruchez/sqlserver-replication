@@ -23,12 +23,13 @@ type strategy func(b *builder)
 
 var strategies []strategy
 
-// lateStrategies run after every strategy of strategies: they read what the
-// others planned (b.ops, b.dropped, b.readd, b.sharedPush). The distributor
-// and agents strategies of Task 14 are late, since a profile's last use, an
-// agent created by the plan and the log reader the publications strategy
-// adds are known only then.
-var lateStrategies []strategy
+// lateStrategies run after every strategy of strategies, in this order:
+// they read what the others planned (b.ops, b.dropped, b.readd,
+// b.sharedPush). agentsStrategy comes before distributorStrategy, whose
+// profile drop of step 11 reads the bindings agentsStrategy plans
+// (b.rebound): an agent bound away from a profile frees it in the same plan
+// (TestProfileDropAfterRebinding).
+var lateStrategies = []strategy{agentsStrategy, distributorStrategy}
 
 // builder is the state Build hands the strategies.
 type builder struct {

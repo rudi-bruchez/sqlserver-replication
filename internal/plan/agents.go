@@ -11,7 +11,8 @@ import (
 	"github.com/rudi-bruchez/sqlserver-replication/internal/normalize"
 )
 
-func init() { lateStrategies = append(lateStrategies, agentsStrategy) }
+// agentsStrategy is listed in lateStrategies (build.go), before
+// distributorStrategy.
 
 // The refusals of the shared agents (carried decision of the Task 12 and 13
 // reviews): an agent declared in the place it will not be after this plan.
