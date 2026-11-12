@@ -90,6 +90,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: a snapshot publication behaves like a transactional one for the properties they share.
 - Observed: changing `ins_cmd`, `upd_cmd` or `del_cmd` needs a reinitialization on a snapshot publication, and both flags when the snapshot is ready, while the same changes are online on a transactional twin. `allow_initialize_from_backup` is refused with 18787. `concurrent` sync is refused with 22547, while `database snapshot` and `database snapshot character` are accepted.
+- Also observed: a snapshot publication accepts `sp_addarticle`, `sp_articlefilter`, `sp_articlecolumn` drop and `sp_articleview @view_name`; the snapshot delivers only the filtered rows and the declared columns. Source: plan 3 task 11 review, measured (2026-11-12).
 - Source: measured, `09-snapshot-pub SNAP.A06` to `A09`, `SNAPI.A06` to `A09`, `TWIN.A01` to `A04`, `SNAP.P06`, `SNAP.P12`; panel 3 GLM (both database snapshot methods accepted at creation).
 
 ### Commands stored schema-qualified
@@ -128,6 +129,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: `sysarticles.type` 3, 5 or 7 (manual filter, manual view) tells an article whose filter procedure or synchronization view the user named.
 - Observed: `sp_articlefilter` and `sp_articleview` with names keep type 1. A filter procedure is always named by the user, since `sp_articlefilter` without `@filter_name` is refused (14043). A generated view is named `syncobj_0x<hex>`, and `sp_articleview` without `@view_name` generates one.
+- Also observed: `sp_articleview` without `@view_name` on an article whose view is generated drops the old `syncobj_0x...` view and creates one with a new generated name; nothing is left behind. Source: plan 3 task 9 review, measured (2026-11-12).
 - Source: measured, `01-articles A5`, `A7`; `internal/reader/publisher.go:226-231`; panel 3 Opus for `sp_articleview` without `@view_name`.
 
 ### A filter clause given to sp_addarticle
@@ -152,6 +154,8 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: changing the clause changes what the article filters, snapshot included.
 - Observed: it rewrites the filter procedure and `sysarticles.filter_clause` and leaves the synchronization view on the old clause, in every subscription state. With a NULL clause it drops the procedure and also leaves the view. The snapshot then reads the old view while the log reader applies the new filter, until `sp_articleview` is called again.
+- Also observed: `sp_articlefilter` with a new `@filter_name` drops the old filter procedure, and `@filter_clause = NULL` drops the procedure. Source: plan 3 task 9 review, measured (2026-11-12).
+- Also observed: with `@force_reinit_subscription = 1` on a publication whose log reader runs, `sp_articlefilter` printed Msg 18752 from `sys.sp_repldone` in two of five tries; the call completed (return code 0, `@@TRANCOUNT` 0, the filter stored). A client that stops on severity 16 (`sqlcmd -b`) would stop between `sp_articlefilter` and `sp_articleview` and leave the view out of step with the filter. Source: plan 3 task 9 review, measured (2026-11-12).
 - Source: measured, `14-filter-view F2b`, `F2bs`, `F2bu`, `F3`.
 
 ### sp_articleview without a clause
@@ -159,6 +163,36 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected: `sp_articleview` without `@filter_clause` rebuilds the view and leaves the article's filter alone.
 - Observed: it rebuilds the view unfiltered and sets `sysarticles.filter_clause` to NULL, while the filter procedure keeps filtering the changes: the snapshot is unfiltered, the changes are filtered, and the configuration shows no filter. On an article without a filter procedure, though, the same call is the one that builds the view of a column filter: after `sp_articlecolumn` the article has no view of its own (its `sync_objid` names the table) until `sp_articleview` is called.
 - Source: measured, `14-filter-view F4`; panel 3 GLM, verified item 6.
+
+### The view of an article added without sync_object
+
+- Expected: an article added without `@sync_object` keeps the table as its synchronization object, and a view named later is an extra object.
+- Observed: `sp_addarticle` without `@sync_object`, then `sp_articlefilter`, then `sp_articleview @view_name = N'x', @filter_clause = ...` makes `dbo.x` the article's view (`sysarticles.sync_objid`), on a new publication and on a subscribed one; no generated view is left behind.
+- Source: measured, plan 3 task 9 review (2026-11-12).
+
+### The view named by sp_articleview and an existing user view
+
+- Expected: `sp_articleview @view_name` naming a view that exists keeps the user's definition and only points the article at it.
+- Observed: it replaces the definition with the generated form: every published column and the clause, with `HAS_PERMS_BY_NAME`. The user's own column list and `WHERE` are lost.
+- Source: measured, plan 3 task 9 review (2026-11-12).
+
+### sp_droparticle and the synchronization view
+
+- Expected: `sp_droparticle` leaves objects the user created.
+- Observed: it drops the article's synchronization view, whether `sp_articleview` made it or the user created it and passed it with `sp_addarticle @sync_object`. A drop and re-add of such an article therefore fails at the re-add with 14027 ("... does not exist in the current database"), the view being gone.
+- Source: measured, plan 3 task 9 review (2026-11-12).
+
+### A user view narrower than the article
+
+- Expected: the snapshot copies the published columns of the table.
+- Observed: a user view with fewer columns than the article and its own `WHERE`, passed by `sp_addarticle @sync_object`, gave a subscription at status 2 with an empty subscriber table: the snapshot copies through the view.
+- Source: measured, plan 3 task 9 review (2026-11-12).
+
+### sp_articlecolumn on a column the filter uses
+
+- Expected: dropping a column that the row filter uses is refused, or rewrites the filter.
+- Observed: it is accepted, and the view and the filter procedure keep the clause. Dropping the primary key column is refused with 21250 ("Primary key column ... cannot be excluded from a vertical partition") and leaves `@@TRANCOUNT` at 0.
+- Source: measured, plan 3 task 9 review (2026-11-12).
 
 ### sp_articlecolumn and an existing view
 
@@ -200,6 +234,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: `sp_changearticle @property = N'sync_object'` finds a view by its name.
 - Observed: with the unqualified name of a view in a schema other than `dbo`, it fails with 15001 ("Object ... does not exist") and leaves `@@TRANCOUNT` at 1. The qualified name `N'[s].[v]'` is accepted.
+- Also observed: naming a view that does not exist fails with 15001 as well, with `@@TRANCOUNT` at 0. Naming an existing view on a subscribed article (status 2) of a native publication without `immediate_sync` is accepted with no reinitialization, and the old view is left in place. Source: plan 3 task 9 review, measured (2026-11-12).
 - Source: measured, plan 3 task 8 review (2026-11-12).
 
 ### Identity range management
@@ -215,6 +250,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: `@force_invalidate_snapshot` is asked whenever a change invalidates an existing snapshot.
 - Observed: it is asked exactly when `immediate_sync_ready = 1`, and only an `immediate_sync` publication ever asks it. An `immediate_sync` publication whose snapshot was never generated, or was invalidated, never asks it, whatever snapshot files are on disk. On a publication without `immediate_sync`, a change that only affects the snapshot needs no flag.
+- Also observed: on a ready publication with `immediate_sync` and no subscription, `sp_changepublication` `sync_method` (to `native`), `sp_changearticle` `schema_option` and `sp_addarticle` are refused with 20607 without `@force_invalidate_snapshot = 1` and accepted with it, whatever `@force_reinit_subscription`. After the accepted call `immediate_sync_ready` reads 0 inside the transaction. Without subscriptions the reinitialization flag is not needed. Source: plan 3 task 9 review, measured (2026-11-12).
 - Source: measured, `05-snapshot-flag` states `S1`, `S2`, `S5`, `S6`, `S7`; `02-matrix` (only `SalesPub` raised 20607); `06-structural C2.*` for `sp_droparticle`.
 
 ### When the reinitialization flag is asked
@@ -546,6 +582,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: `sp_dropsubscription @article = NULL` drops the whole subscription.
 - Observed: refused with 14043; `@article = N'all'` is the call, which drops the subscription, its agent row and its job with no flag.
+- Also observed: `sp_dropsubscription` of a single article on a `concurrent` publication without `immediate_sync` is accepted. Source: plan 3 task 11 review, measured (2026-11-12).
 - Source: measured, the panel (design "Subscriptions"); `06-structural C1.*`.
 
 ### A shared distribution agent
@@ -1018,6 +1055,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: dropping a publication either succeeds or fails.
 - Observed: the drop of the last publication of a database, which drops its log reader, can print Msg 18752 ("only one Log Reader Agent or log-related procedure") once or twice from `sys.sp_replcmds` while the log reader runs, and still complete: return code 0, `@@TRANCOUNT` 0, publication and log reader gone. Of eight publications of one database dropped in turn, only the last raised it. Under load it came with the log reader blocked for over 200 s. Ten idle create and drop cycles of `13-transient` saw none. It was also seen during `sp_replicationdboption @value = N'false'`. Dropping the last publication with no subscription left prints no 18752 in one attempt (`06-structural C5`). On 2019 and 2025 not measured.
+- Also observed: `sp_droppublication` of a database's last publication printed two Msg 18752 from `sys.sp_replcmds` and completed. `sp_articlefilter` with `@force_reinit_subscription = 1` printed it from `sys.sp_repldone` in two of five tries, with the log reader running, and completed (see "sp_articlefilter with a new clause"). Source: plan 3 task 9 review, measured (2026-11-12).
 - Source: measured, `O14` (Claude, controller, fix review), `O21`, panel 3 Opus; `13-transient T01` to `T10`; `06-structural C5.*`.
 
 ### Deadlock during subscription drops
@@ -1141,7 +1179,7 @@ The numbers met, with their meaning in this context. The agent messages met in t
 | 8114 | `sp_addpublication @replicate_ddl = N'false'` | conversion of nvarchar to int, client-side; the parameter is int at creation |
 | 14005 | `sp_droppublication` | subscriptions remain |
 | 14013 | publication procedures | the current database is not enabled for publication |
-| 14027 | `sp_addarticle @filter` | the filter procedure does not exist yet |
+| 14027 | `sp_addarticle @filter`, `sp_addarticle @sync_object` | the filter procedure or the synchronization view does not exist (yet, or any more after `sp_droparticle`) |
 | 14041 | `sp_changesubscription` | heterogeneous property on a publication not enabled for it |
 | 14043 | `sp_articlefilter`, `sp_dropsubscription`, `sp_addsubscription` | a NULL parameter (`@filter_name`, `@article`, `@subscriber`) |
 | 14046 | `sp_droparticle` | the article is subscribed |
@@ -1159,10 +1197,10 @@ The numbers met, with their meaning in this context. The agent messages met in t
 | 14278 | `sp_changepublication_snapshot` | `frequency_type` without the interval it needs |
 | 14288 | `sp_changepublication_snapshot` | end date before start date |
 | 14529 | `job_login` changes | not a valid Windows account |
-| 15001 | `sp_changearticle sync_object` | the unqualified name of a view outside `dbo`; leaves `@@TRANCOUNT` at 1 |
+| 15001 | `sp_changearticle sync_object` | the unqualified name of a view outside `dbo` (leaves `@@TRANCOUNT` at 1), or a view that does not exist (leaves it at 0) |
 | 15002 | `sp_addsubscription` | cannot run inside a transaction |
 | 15251 | `sp_addarticle`, `sp_changearticle` | `upd_cmd = 'SCALL'` without a procedure name; `ins_cmd N'XCALL ...'` (leaves `@@TRANCOUNT` at 0) |
-| 18752 | publication drops | another log reader or log-related procedure; the drop may still complete |
+| 18752 | publication drops, `sp_articlefilter` | another log reader or log-related procedure (`sp_replcmds`, `sp_repldone`); the call may still complete |
 | 18757 | `sp_addpublication_snapshot` | the database is not published |
 | 18787 | `sp_changepublication` | initialization from backup on a snapshot publication |
 | 20011 | `sp_changepublication` | `allow_anonymous` without `immediate_sync` |
@@ -1172,7 +1210,7 @@ The numbers met, with their meaning in this context. The agent messages met in t
 | 20017 | `sp_addpullsubscription_agent` | the subscription does not exist at the subscriber |
 | 20026 | `sp_articlefilter` in `distribution`, inside 14027 | the publication does not exist |
 | 20067 | `sp_add_agent_parameter` | the parameter exists (copied from the default profile) |
-| 20607 | `sp_change*`, `sp_addarticle`, `sp_droparticle` | needs `@force_invalidate_snapshot = 1` (ready `immediate_sync` snapshot) |
+| 20607 | `sp_change*`, `sp_addarticle`, `sp_droparticle` | needs `@force_invalidate_snapshot = 1` (ready `immediate_sync` snapshot, with or without subscriptions) |
 | 20608 | `sp_change*` | needs `@force_reinit_subscription = 1` (a row at status 2) |
 | 20640 | `sp_changepublication` | `enabled_for_het_sub` while subscriptions exist |
 | 21000 | `sp_addsubscription` | subscription on an inactive publication |
@@ -1187,6 +1225,7 @@ The numbers met, with their meaning in this context. The agent messages met in t
 | 21193 | `sp_addarticle` | `auto` identity range without the range parameters |
 | 21210 | `sp_changepublication` | `allow_subscription_copy` without `immediate_sync` |
 | 21231 | `sp_addarticle` | `auto` identity range without updating subscribers |
+| 21250 | `sp_articlecolumn` | the primary key column cannot be excluded from a vertical partition; leaves `@@TRANCOUNT` at 0 |
 | 21481 | `sp_addpullsubscription` | in `master` |
 | 21482 | `msdb.dbo.sp_update_agent_profile` | not run in the distribution database |
 | 21678 | `sp_addpublication` | `replicate_partition_switch` without `allow_partition_switch` |
