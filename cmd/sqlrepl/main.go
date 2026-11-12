@@ -168,25 +168,78 @@ func runExport(args []string, stdout io.Writer) error {
 	for _, f := range cfg.Findings {
 		fmt.Fprintf(os.Stderr, "finding: %s: %s: %s\n", f.Kind, f.Path, f.Message)
 	}
-	if *output == "" {
-		_, err = stdout.Write(out)
-	} else {
-		err = os.WriteFile(*output, out, 0o644)
+	var facts []byte
+	if *factsPath != "" {
+		// The observed runtime facts, as indented JSON: what the planner
+		// needs beside the configuration, never part of it.
+		b, err := json.MarshalIndent(res.Facts, "", "  ")
+		if err != nil {
+			return err
+		}
+		facts = append(b, '\n')
 	}
-	if err != nil || *factsPath == "" {
-		return err
-	}
-	return writeFacts(*factsPath, res)
+	return writeOutputs(stdout, *output, out, *factsPath, facts)
 }
 
-// writeFacts writes the observed runtime facts as indented JSON. They are
-// what the planner needs beside the configuration, never part of it.
-func writeFacts(path string, res *reader.Result) error {
-	b, err := json.MarshalIndent(res.Facts, "", "  ")
-	if err != nil {
-		return err
+// writeOutputs writes the YAML to output (stdout when empty) and the facts
+// to factsPath when it is set. Both files are opened before either is
+// written, so that a path that cannot be written fails the export before it
+// writes anything: a file opened for nothing is closed untouched, and
+// removed when the export created it.
+func writeOutputs(stdout io.Writer, output string, yaml []byte, factsPath string, facts []byte) error {
+	type target struct {
+		path    string
+		data    []byte
+		f       *os.File
+		created bool
 	}
-	return os.WriteFile(path, append(b, '\n'), 0o644)
+	var ts []*target
+	if output != "" {
+		ts = append(ts, &target{path: output, data: yaml})
+	}
+	if factsPath != "" {
+		ts = append(ts, &target{path: factsPath, data: facts})
+	}
+	release := func() {
+		for _, t := range ts {
+			if t.f != nil {
+				t.f.Close()
+				if t.created {
+					os.Remove(t.path)
+				}
+			}
+		}
+	}
+	for _, t := range ts {
+		_, statErr := os.Stat(t.path)
+		f, err := os.OpenFile(t.path, os.O_WRONLY|os.O_CREATE, 0o644)
+		if err != nil {
+			release()
+			return err
+		}
+		t.f, t.created = f, os.IsNotExist(statErr)
+	}
+	if output == "" {
+		if _, err := stdout.Write(yaml); err != nil {
+			release()
+			return err
+		}
+	}
+	var first error
+	for _, t := range ts {
+		err := t.f.Truncate(0)
+		if err == nil {
+			_, err = t.f.Write(t.data)
+		}
+		if cerr := t.f.Close(); err == nil {
+			err = cerr
+		}
+		t.f = nil
+		if err != nil && first == nil {
+			first = fmt.Errorf("writing %s: %w", t.path, err)
+		}
+	}
+	return first
 }
 
 func open(ctx context.Context, server, database string, cp connParams) (*sql.DB, error) {
