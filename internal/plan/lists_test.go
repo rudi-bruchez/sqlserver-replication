@@ -540,6 +540,12 @@ func TestListsServerNameAnswered(t *testing.T) {
 	if p := buildFull(t, checks, nil, nil); len(p.Refusals) != 0 {
 		t.Errorf("case only: refusals %+v", p.Refusals)
 	}
+	// A NULL @@SERVERNAME (sp_dropserver without sp_addserver) reads "":
+	// not compared.
+	checks.Servers[0].ServerName = ""
+	if p := buildFull(t, checks, nil, nil); len(p.Refusals) != 0 {
+		t.Errorf("no server name: refusals %+v", p.Refusals)
+	}
 	checks.Servers[0].ServerName = "OTHERSRV"
 	p := buildFull(t, checks, nil, nil)
 	wantOnlyRefusal(t, p, "server repllab answers as OTHERSRV: check -server")

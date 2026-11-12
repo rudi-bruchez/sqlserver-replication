@@ -47,12 +47,15 @@ func Run(ctx context.Context, c Conns, desired *model.Config) (*state.Checks, er
 	// regard to case), read through the connection of its first role, which
 	// then serves its other roles.
 	reached := map[string]*sql.DB{}
-	seen := map[string]bool{}
+	index := map[string]int{} // lower-cased name to its ServerCheck
 	server := func(name string, db *sql.DB) error {
-		if name == "" || seen[strings.ToLower(name)] {
+		if name == "" {
 			return nil
 		}
-		seen[strings.ToLower(name)] = true
+		if i, ok := index[strings.ToLower(name)]; ok {
+			return ownServer(ctx, &out.Servers[i], reached[strings.ToLower(name)], db)
+		}
+		index[strings.ToLower(name)] = len(out.Servers)
 		sc := state.ServerCheck{Name: name}
 		if e, ok := unreachable(c.Unreachable, name); ok {
 			sc.Error = e
@@ -169,11 +172,33 @@ func Run(ctx context.Context, c Conns, desired *model.Config) (*state.Checks, er
 	return out, nil
 }
 
+// ownServer reads the server again through the subscriber's own
+// connection own, when the server was reached through another role's
+// connection (the subscriber databases are read through own): when own
+// answers another @@SERVERNAME than the file's name, the check keeps that
+// answer, so that Build refuses it (Task 17 fix round 2, C).
+func ownServer(ctx context.Context, sc *state.ServerCheck, reachedBy, own *sql.DB) error {
+	if own == nil || reachedBy == nil || own == reachedBy {
+		return nil
+	}
+	other := state.ServerCheck{Name: sc.Name}
+	if err := readServer(ctx, own, &other); err != nil {
+		return err
+	}
+	if other.ServerName != "" && !strings.EqualFold(other.ServerName, sc.Name) {
+		sc.ServerName = other.ServerName
+	}
+	return nil
+}
+
+// readServer reads a server; ServerName stays "" when @@SERVERNAME is NULL
+// (sp_dropserver without sp_addserver), which Build does not compare.
 func readServer(ctx context.Context, db *sql.DB, sc *state.ServerCheck) error {
-	var major sql.NullString
-	if err := db.QueryRowContext(ctx, qServer).Scan(&sc.ServerName, &sc.Version, &major, &sc.Edition); err != nil {
+	var name, major sql.NullString
+	if err := db.QueryRowContext(ctx, qServer).Scan(&name, &sc.Version, &major, &sc.Edition); err != nil {
 		return fmt.Errorf("%s: server: %w", sc.Name, err)
 	}
+	sc.ServerName = name.String
 	m, err := strconv.Atoi(major.String)
 	if err != nil {
 		return fmt.Errorf("%s: ProductMajorVersion %q: %w", sc.Name, major.String, err)

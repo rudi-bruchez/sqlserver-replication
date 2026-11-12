@@ -220,11 +220,18 @@ func TestLabPrecheckRestrictedTables(t *testing.T) {
 			" GRANT VIEW DEFINITION TO [rv_t17fix_deny];" +
 			" DENY VIEW DEFINITION ON SCHEMA::[rv_t17fix_s2] TO [rv_t17fix_deny];" +
 			" DENY VIEW DEFINITION ON OBJECT::[dbo].[rv_t17fix_comp] TO [rv_t17fix_deny]"})
+	// SELECT granted, VIEW DEFINITION denied: OBJECT_ID is NULL and the
+	// probe succeeds (Task 17 fix round 2, A).
+	dvd := labLogin(t, "rv_t17fix_dvd", []string{"Sales"},
+		[2]string{"Sales", "ALTER ROLE db_datareader DROP MEMBER [rv_t17fix_dvd];" +
+			" GRANT SELECT ON OBJECT::[dbo].[rv_t17fix_comp] TO [rv_t17fix_dvd];" +
+			" DENY VIEW DEFINITION ON OBJECT::[dbo].[rv_t17fix_comp] TO [rv_t17fix_dvd]"})
 	for _, tc := range []struct {
 		login string
 		open  func(string) *sql.DB
 		table string
 	}{
+		{"dvd", dvd, "dbo.rv_t17fix_comp"},
 		{"none", none, "dbo.rv_t17fix_comp"},
 		{"deny", deny, "rv_t17fix_s2.rv_t17fix_t"},
 		{"deny", deny, "dbo.rv_t17fix_comp"},
