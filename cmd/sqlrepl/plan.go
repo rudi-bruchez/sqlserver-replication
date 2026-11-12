@@ -65,7 +65,7 @@ func parsePlanFlags(args []string, stderr io.Writer) (*planFlags, error) {
 	fs.BoolVar(&f.json, "json", false, "print the plan as JSON only")
 	fs.BoolVar(&f.deferFull, "defer-full-snapshot", false, "defer the full snapshot of a publication whose added articles would make one")
 	fs.DurationVar(&f.wait, "wait", 30*time.Minute, "how long the generate and wait step of -defer-full-snapshot waits")
-	fs.DurationVar(&f.timeout, "timeout", 2*time.Minute, "overall timeout")
+	fs.DurationVar(&f.timeout, "timeout", 2*time.Minute, "timeout of each connection and of the read that follows them")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -218,7 +218,8 @@ func planConnParams(f *planFlags) connParams {
 	set := false
 	for k, v := range f.params {
 		extra[k] = v
-		if strings.EqualFold(strings.TrimSpace(k), "connection timeout") {
+		// The driver ignores a key with spaces around it, so does this test.
+		if strings.EqualFold(k, "connection timeout") {
 			set = true
 		}
 	}
