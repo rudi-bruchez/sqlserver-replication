@@ -21,6 +21,12 @@ func labChecks() *state.Checks {
 	c.Servers = []state.ServerCheck{{Name: "repllab", Version: "16.0.4275.1", Edition: "Developer Edition (64-bit)", Reachable: true, Major: 16}}
 	c.SubscriberDatabases = []state.DatabaseCheck{{Server: "REPLLAB", Database: "SalesSub", Checked: true, Exists: true}}
 	c.Folders = []state.FolderCheck{{Server: "repllab", Path: "/var/opt/mssql/data/ReplData", Checked: true, Exists: true}}
+	// The lab's profiles, as TestLabPrecheck reads them (in part).
+	for _, t := range []string{"snapshot", "logreader", "distribution"} {
+		c.Profiles = append(c.Profiles, state.ProfileCheck{Name: "Default agent profile", AgentType: t})
+	}
+	c.Profiles = append(c.Profiles, state.ProfileCheck{Name: "Verbose history agent profile.", AgentType: "distribution"},
+		state.ProfileCheck{Name: "lab-distrib", AgentType: "distribution"})
 	return c
 }
 

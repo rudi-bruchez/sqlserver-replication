@@ -138,13 +138,17 @@ type ProfileUse struct {
 
 // Checks is what the precondition checks read, beside the facts: the
 // servers of the file, the source tables, the subscriber databases and the
-// folders the configuration names. The planner reads them; a nil Checks
-// leaves every precondition unchecked.
+// folders the configuration names, and the agent profiles at the
+// distributor. The planner reads them; a nil Checks leaves every
+// precondition unchecked.
 type Checks struct {
 	Servers             []ServerCheck   `json:"servers"`
 	Tables              []TableCheck    `json:"tables"`
 	SubscriberDatabases []DatabaseCheck `json:"subscriber_databases"`
 	Folders             []FolderCheck   `json:"folders"`
+	// Profiles is every row of msdb.dbo.MSagent_profiles at the
+	// distributor, system profiles included; empty when it was not read.
+	Profiles []ProfileCheck `json:"profiles"`
 }
 
 // ServerCheck is a server of the file, as it was reached.
@@ -164,6 +168,9 @@ type TableCheck struct {
 	Exists        bool     `json:"exists"`
 	HasPrimaryKey bool     `json:"has_primary_key"`
 	Columns       []string `json:"columns"` // in column_id order
+	// KeyColumns is the columns of its primary key, in key order: a column
+	// subset cannot leave one out (21250, measured).
+	KeyColumns []string `json:"key_columns"`
 }
 
 // DatabaseCheck is a subscriber database; Checked is false when its server
@@ -173,6 +180,13 @@ type DatabaseCheck struct {
 	Database string `json:"database"`
 	Checked  bool   `json:"checked"`
 	Exists   bool   `json:"exists"`
+}
+
+// ProfileCheck is an agent profile at the distributor; AgentType is a
+// decode.AgentType name (snapshot, logreader, distribution...).
+type ProfileCheck struct {
+	Name      string `json:"name"`
+	AgentType string `json:"agent_type"`
 }
 
 // FolderCheck is a folder the configuration names on a server; Checked is

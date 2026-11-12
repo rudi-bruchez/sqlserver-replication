@@ -344,7 +344,7 @@ func customerChecks(names ...string) *state.Checks {
 	c := &state.Checks{}
 	for _, n := range names {
 		c.Tables = append(c.Tables, state.TableCheck{Schema: "dbo", Name: n, Exists: true, HasPrimaryKey: true,
-			Columns: []string{"CustomerID", "Name", "Country", "Notes"}})
+			Columns: []string{"CustomerID", "Name", "Country", "Notes"}, KeyColumns: []string{"CustomerID"}})
 	}
 	return c
 }

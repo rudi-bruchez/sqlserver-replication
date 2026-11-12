@@ -463,3 +463,71 @@ func TestListsSecretsSorted(t *testing.T) {
 		t.Errorf("secrets %+v", p.Secrets)
 	}
 }
+
+// Task 17: the checks the planner reviews found missing.
+
+func TestListsKeyColumnExcluded(t *testing.T) {
+	dropKey := func(des, _ *model.Config) {
+		articleOf(t, des, "SalesPub", "Customer").Columns = []string{"Name", "Country"}
+	}
+	wantRefusal(t, buildFull(t, labChecks(), nil, dropKey), "publications[SalesPub].articles[Customer].columns",
+		"column CustomerID of dbo.Customer is part of its primary key and cannot be excluded (21250, measured)")
+	// The key kept, its name in another case: planned.
+	p := buildFull(t, labChecks(), nil, func(des, _ *model.Config) {
+		articleOf(t, des, "SalesPub", "Customer").Columns = []string{"customerid", "Name"}
+	})
+	if len(p.Refusals) != 0 {
+		t.Errorf("key kept: refusals %+v", p.Refusals)
+	}
+	// The table's key not read: unchecked.
+	checks := labChecks()
+	checks.Tables[0].KeyColumns = nil
+	if p := buildFull(t, checks, nil, dropKey); hasRefusal(p, "publications[SalesPub].articles[Customer].columns",
+		"column CustomerID of dbo.Customer is part of its primary key and cannot be excluded (21250, measured)") {
+		t.Errorf("key not read: refusals %+v", p.Refusals)
+	}
+	if p := buildFull(t, nil, nil, dropKey); hasRefusal(p, "publications[SalesPub].articles[Customer].columns",
+		"column CustomerID of dbo.Customer is part of its primary key and cannot be excluded (21250, measured)") {
+		t.Errorf("without checks: refusals %+v", p.Refusals)
+	}
+}
+
+func TestListsProfileNotFound(t *testing.T) {
+	named := func(name string) func(des, _ *model.Config) {
+		return func(des, _ *model.Config) { des.Publisher.LogReaderAgent.Profile = str(name) }
+	}
+	wantRefusal(t, buildFull(t, labChecks(), nil, named("m_none")), "publisher.log_reader_agent.profile",
+		"profile m_none (logreader) exists neither in the file nor at the distributor")
+	// A profile of another agent type does not match.
+	wantRefusal(t, buildFull(t, labChecks(), nil, named("lab-distrib")), "publisher.log_reader_agent.profile",
+		"profile lab-distrib (logreader) exists neither in the file nor at the distributor")
+	// At the distributor, in another case: no refusal of the name.
+	p := buildFull(t, labChecks(), nil, func(des, _ *model.Config) {
+		des.Publisher.SharedDistributionAgents[0].DistributionAgent.Profile = str("LAB-DISTRIB")
+	})
+	for _, r := range p.Refusals {
+		if strings.Contains(r.Reason, "exists neither") {
+			t.Errorf("LAB-DISTRIB: %+v", r)
+		}
+	}
+	// A profile of the file, unknown at the distributor: no refusal.
+	p = buildFull(t, labChecks(), nil, func(des, _ *model.Config) {
+		des.AgentProfiles = append(des.AgentProfiles, model.AgentProfile{Name: "m_lr", AgentType: "logreader", Parameters: labTemplate(t, "logreader")})
+		des.Publisher.LogReaderAgent.Profile = str("M_LR")
+	})
+	for _, r := range p.Refusals {
+		if strings.Contains(r.Reason, "exists neither") {
+			t.Errorf("profile of the file: %+v", r)
+		}
+	}
+	// Unchecked without checks, or when the profiles were not read.
+	checks := labChecks()
+	checks.Profiles = nil
+	for _, c := range []*state.Checks{nil, checks} {
+		for _, r := range buildFull(t, c, nil, named("m_none")).Refusals {
+			if strings.Contains(r.Reason, "exists neither") {
+				t.Errorf("unchecked: %+v", r)
+			}
+		}
+	}
+}

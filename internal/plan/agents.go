@@ -321,34 +321,37 @@ func (b *builder) repairSnapshotAgent(pd *model.Publication) {
 	b.add(op)
 }
 
-// agentProfile is a profile an agent of the file names.
-type agentProfile struct{ agentType, profile string }
+// agentProfile is a profile an agent of the file names, with the agent's
+// path.
+type agentProfile struct{ agentType, profile, path string }
 
 // agentProfiles is every profile an agent of c names.
 func agentProfiles(c *model.Config) []agentProfile {
 	var out []agentProfile
-	add := func(t string, a *model.Agent) {
+	add := func(t, path string, a *model.Agent) {
 		if a != nil && a.Profile != nil && *a.Profile != "" {
-			out = append(out, agentProfile{t, *a.Profile})
+			out = append(out, agentProfile{t, *a.Profile, path})
 		}
 	}
-	add("logreader", c.Publisher.LogReaderAgent)
+	add("logreader", "publisher.log_reader_agent", c.Publisher.LogReaderAgent)
 	for i := range c.Publisher.SharedDistributionAgents {
-		add("distribution", &c.Publisher.SharedDistributionAgents[i].DistributionAgent.Agent)
+		a := &c.Publisher.SharedDistributionAgents[i]
+		add("distribution", "publisher.shared_distribution_agents"+model.Element(a.Key())+".distribution_agent", &a.DistributionAgent.Agent)
 	}
 	for i := range c.Publisher.SharedPullAgents {
-		add("distribution", &c.Publisher.SharedPullAgents[i].PullAgent.Agent)
+		a := &c.Publisher.SharedPullAgents[i]
+		add("distribution", "publisher.shared_pull_agents"+model.Element(a.Key()), &a.PullAgent.Agent)
 	}
 	for i := range c.Publications {
 		p := &c.Publications[i]
-		add("snapshot", p.SnapshotAgent)
+		add("snapshot", pubPath(p.Name)+".snapshot_agent", p.SnapshotAgent)
 		for j := range p.Subscriptions {
 			s := &p.Subscriptions[j]
 			if s.DistributionAgent != nil {
-				add("distribution", &s.DistributionAgent.Agent)
+				add("distribution", subPath(p.Name, s)+".distribution_agent", &s.DistributionAgent.Agent)
 			}
 			if s.PullAgent != nil {
-				add("distribution", &s.PullAgent.Agent)
+				add("distribution", subPath(p.Name, s)+".pull_agent", &s.PullAgent.Agent)
 			}
 		}
 	}

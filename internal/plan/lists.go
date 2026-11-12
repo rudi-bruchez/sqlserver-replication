@@ -24,6 +24,8 @@ const (
 	tableMissing     = "table %s does not exist in %s: plan does not create published tables (spec Non-goals)"
 	tableNoKey       = "table %s has no primary key: a table article of a transactional publication needs one (error 14088)"
 	subDBMissing     = "subscriber database %s does not exist at %s: plan does not create subscriber databases (spec Non-goals)"
+	keyColumnOut     = "column %s of %s is part of its primary key and cannot be excluded (21250, measured)"
+	profileMissing   = "profile %s (%s) exists neither in the file nor at the distributor"
 	editionNeeded    = "sync_method %s needs the Enterprise or Developer edition of the publisher; %s runs %s"
 	folderWarning    = "snapshot folder %s does not exist at %s: the snapshot agent cannot write there until it is created (plan does not create it, spec Non-goals)"
 	lockWarning      = "publication %s uses %s, which locks the published tables for most of each generation; moving to concurrent costs %s; concurrent and concurrent_c still lock the tables briefly near the start and the end of each run; the cost of a move to database snapshot is not measured"
@@ -407,8 +409,9 @@ func (b *builder) jobOp(step int, order, kind, change string, s agentSlot, enabl
 
 // preconditions lists the checks the plan depends on and refuses the plan
 // on those that refuse it: the servers' versions (R18), the published
-// tables and their keys (14088), the subscriber databases of the
-// subscriptions the plan creates, the snapshot folders (a warning), the
+// tables and their keys (14088), the primary key columns a column subset
+// keeps (21250), the profiles the agents name, the subscriber databases of
+// the subscriptions the plan creates, the snapshot folders (a warning), the
 // edition a database snapshot sync_method needs, and the msdb permission of
 // the job operations (plan 4 checks it).
 func (b *builder) preconditions(ops []Operation) []Precondition {
@@ -481,6 +484,8 @@ func (b *builder) preconditions(ops []Operation) []Precondition {
 		}
 		out = append(out, pc)
 	}
+	b.keyColumns(checks)
+	b.namedProfiles(checks)
 
 	creates := b.createdSubscriptions()
 	seenDB := map[string]bool{}
@@ -601,6 +606,57 @@ func (b *builder) unreachable(ops []Operation) {
 		}
 		seen[k] = true
 		b.refuse(op.Path, r29Unreachable, op.Call.Procedure, op.Server, sc.Error)
+	}
+}
+
+// keyColumns refuses an article whose column subset leaves out a column of
+// its table's primary key: sp_articlecolumn refuses the drop with 21250,
+// after the operations before it ran (measured, Task 11 review). A table
+// the checks did not read is not checked. Empty columns are every column.
+func (b *builder) keyColumns(checks *state.Checks) {
+	for _, p := range b.des.Publications {
+		for _, a := range p.Articles {
+			if len(a.Columns) == 0 {
+				continue
+			}
+			object := a.Source.Schema + "." + a.Source.Name
+			tc := tableCheck(checks, object)
+			if tc == nil || !tc.Exists {
+				continue
+			}
+			for _, k := range tc.KeyColumns {
+				if !hasFold(a.Columns, k) {
+					b.refuse(pubPath(p.Name)+".articles"+model.Element(a.Name)+".columns", keyColumnOut, k, object)
+				}
+			}
+		}
+	}
+}
+
+// namedProfiles refuses an agent of the file whose profile is neither a
+// profile of the file nor one at the distributor, of the agent's type and
+// without regard to case (R7): otherwise only the THROW of the binding's
+// prologue stops it, mid-plan (Task 14 review). Unchecked without checks,
+// or when the profiles were not read (a distributor always has its system
+// profiles).
+func (b *builder) namedProfiles(checks *state.Checks) {
+	if checks == nil || len(checks.Profiles) == 0 {
+		return
+	}
+	for _, ap := range agentProfiles(b.des) {
+		if b.userProfile(b.des, ap.agentType, ap.profile) {
+			continue
+		}
+		found := false
+		for _, pc := range checks.Profiles {
+			if pc.AgentType == ap.agentType && strings.EqualFold(pc.Name, ap.profile) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			b.refuse(ap.path+".profile", profileMissing, ap.profile, ap.agentType)
+		}
 	}
 }
 
