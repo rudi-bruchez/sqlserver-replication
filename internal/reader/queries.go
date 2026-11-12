@@ -144,9 +144,6 @@ SELECT a.pubid, a.name, a.status & 1 FROM dbo.sysarticles AS a
 UNION ALL
 SELECT a.pubid, a.name, a.status & 1 FROM dbo.sysschemaarticles AS a`
 
-	// Facts: the status of each article of each real subscription, at the
-	// publisher. Status 3 (active, the snapshot delivered) is only ever read
-	// in MSsubscriptions (O18).
 	// The servers of the pull subscriptions of the publication database: the
 	// planner opens them before the read, since a pull subscription is read
 	// and dropped at its subscriber. srvid -1 and -2 are the virtual
@@ -157,6 +154,9 @@ FROM dbo.syssubscriptions AS s
 WHERE s.subscription_type = 1 AND s.srvid >= 0 AND s.srvname IS NOT NULL AND s.srvname <> N''
 ORDER BY s.srvname`
 
+	// Facts: the status of each article of each real subscription, at the
+	// publisher. Status 3 (active, the snapshot delivered) is only ever read
+	// in MSsubscriptions (O18).
 	qSubscriptionStatus = `
 SELECT a.pubid, a.name, s.srvname, s.dest_db, CAST(s.status AS int)
 FROM dbo.syssubscriptions AS s

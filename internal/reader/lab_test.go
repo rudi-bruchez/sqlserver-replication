@@ -221,6 +221,39 @@ func TestReadLabUnpublishedDatabase(t *testing.T) {
 	}
 }
 
+// A database never published has no dbo.syssubscriptions: PullSubscribers
+// reads error 208 as no pull subscription, since plan opens the pull
+// subscribers of an unpublished database before it reads anything (carried
+// to Task 18).
+func TestReadLabPullSubscribersUnpublished(t *testing.T) {
+	ctx := context.Background()
+	master := labDB(t, "master")
+	if _, err := master.ExecContext(ctx, "CREATE DATABASE rv_t18_unpub"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		master.ExecContext(ctx, "ALTER DATABASE rv_t18_unpub SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
+		if _, err := master.ExecContext(ctx, "DROP DATABASE rv_t18_unpub"); err != nil {
+			t.Errorf("dropping rv_t18_unpub: %v", err)
+		}
+	})
+	db := labDB(t, "rv_t18_unpub")
+	got, err := PullSubscribers(ctx, db)
+	if err != nil || len(got) != 0 {
+		t.Errorf("unpublished database: PullSubscribers = %q, %v; want none, nil", got, err)
+	}
+	// The table is indeed missing: the query itself fails with 208.
+	_, qerr := db.ExecContext(ctx, pullSubscribersQuery)
+	if errorNumber(qerr) != 208 {
+		t.Errorf("the query on an unpublished database: %v, want error 208", qerr)
+	}
+	db.Close()
+	// A published database reads without error.
+	if _, err := PullSubscribers(ctx, labDB(t, "Sales")); err != nil {
+		t.Errorf("Sales: %v", err)
+	}
+}
+
 func TestReadLabDistributorAndPublications(t *testing.T) {
 	cfg := labRead(t).Config
 	d := cfg.Distributor
