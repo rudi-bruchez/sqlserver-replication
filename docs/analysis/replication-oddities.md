@@ -580,6 +580,18 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Observed: it was accepted silently and wrote `MSrepl_transactions` rows that moved the watermark of every idle distribution agent of the publisher database: every subscription of `Sales` stopped without an error, and dropping the subscription did not repair it. The lab was recreated.
 - Source: measured during the development of `10-init-modes`, `lab/README.md` "Initialization without a snapshot", `lab/campaign/10-init-modes.sh:52-55`.
 
+### Initialization from an LSN and allow_initialize_from_backup
+
+- Expected: `initialize from lsn` takes an LSN and needs no backup, so it does not depend on `allow_initialize_from_backup`.
+- Observed: on a publication with `allow_initialize_from_backup` false, `sp_addsubscription @sync_type = N'initialize from lsn'` with a checked LSN is refused with 18786 ("does not allow subscriptions to be initialized from a backup").
+- Source: measured, `20-apply AP.lsn.no_backup_flag`.
+
+### Where the LSN of a restored subscriber database is read
+
+- Expected: the LSN a database restored from a backup starts from has to be read from the backup file.
+- Observed: the `msdb.dbo.restorehistory` row of the restored database, joined to `backupset`, gives the backup's `last_lsn` (the same `backupset` row as the backup file's media family); that row's `database_name` is the source database and its `server_name` equals `@@SERVERNAME`, in the same case. `sys.dm_db_log_stats(...).log_end_lsn` is text of the form `XXXXXXXX:XXXXXXXX:XXXX`, upper-case hexadecimal.
+- Source: measured, `20-apply AP.lsn.restorehistory`, `AP.lsn.backupset_database`, `AP.lsn.log_end_format`. A backup restored on another instance is not measured.
+
 ### Converting an LSN
 
 - Expected: `CAST(lsn / 1e15 AS binary(4)) + ...` gives the binary LSN.
@@ -795,8 +807,14 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 ### Disabled jobs
 
 - Expected: disabling a job stops it and keeps it from starting.
-- Observed: a disabled job that is running keeps running, to its end; `sp_start_job` starts a disabled job (return code 0); `sp_startpublication_snapshot` also starts a disabled snapshot job (return code 0, `@@ERROR` 0, 12 history rows), and `sp_changepublication_snapshot` changes its schedule and leaves it disabled. Whether a disabled job's schedule starts a run is not measured.
-- Source: measured, lab README "When the flags are needed" (`sp_stop_job` needed), `O20`, `O21`.
+- Observed: a disabled job that is running keeps running, to its end; `sp_start_job` starts a disabled job (return code 0); `sp_startpublication_snapshot` also starts a disabled snapshot job (return code 0, `@@ERROR` 0, 12 history rows), and `sp_changepublication_snapshot` changes its schedule and leaves it disabled. A disabled snapshot job whose schedule fires every minute starts no run: none in 150 s, neither in the snapshot history nor in `sysjobactivity`, the schedule itself still enabled.
+- Source: measured, lab README "When the flags are needed" (`sp_stop_job` needed), `O20`, `O21`, `20-apply AP.disabled_schedule`.
+
+### The SQL Server Agent roles and a replication job
+
+- Expected: a login in `SQLAgentOperatorRole` can do in msdb what a tool needs to disable, find and start a replication agent's job.
+- Observed: on a snapshot job owned by `sa`, `SQLAgentOperatorRole` runs `sp_update_job @enabled = 0` and `sp_start_job` (the job runs), but a `SELECT` of `msdb.dbo.sysjobs` (to find the job from `MSsnapshot_agents`) and of `syssessions` with `sysjobactivity` (to know whether it is idle) fails with 229; the message names `syssessions`, the first table the predicate reads, so the refusal of `sysjobactivity` alone is not shown. `SQLAgentUserRole` gets the same 229 on both reads, and 14262 ("does not exist") from `sp_update_job` and `sp_start_job` on a job it does not own. An msdb user in no Agent role gets 229 on the two procedures themselves. Only `sysadmin` does all four.
+- Source: measured, `20-apply AP.perm.*` (logins with a distribution user granted `SELECT`, so that the refusals are msdb's).
 
 ### sp_stop_job on a job that has just ended
 
@@ -1285,7 +1303,7 @@ The numbers met, with their meaning in this context. The agent messages met in t
 | 134 | a batch of several replication calls | `DECLARE` of the same variable twice in one batch; nothing executes |
 | 201 | `sp_addpullsubscription_agent` | a required parameter (`@publisher_db`, `@publication`) not passed |
 | 208 | a `SELECT`, `sp_articlefilter` in `master` | the table does not exist, or its schema (the reliable absence probe, a compile error to run as its own batch); `syspublications` not found outside a publication database |
-| 229 | a `SELECT` | the login is denied the table, which `OBJECT_ID` hides as NULL |
+| 229 | a `SELECT`; `msdb.dbo.sp_update_job`, `sp_start_job` | the login is denied the table, which `OBJECT_ID` hides as NULL; `msdb.dbo.sysjobs` and `syssessions` even for `SQLAgentOperatorRole`; the job procedures for an msdb user in no Agent role |
 | 245 | `sp_changepublication replicate_ddl` | `N'false'` converted to int; leaves the transaction open |
 | 300 | `sys.dm_os_waiting_tasks` | `VIEW SERVER PERFORMANCE STATE` missing |
 | 1205 | subscription drops | deadlock, met once by the panel, not reproduced |
@@ -1317,7 +1335,7 @@ The numbers met, with their meaning in this context. The agent messages met in t
 | 14107 | `sp_changedistributiondb` | `max_distretention` below `min_distretention`, or `min_distretention` above `max_distretention`; equal values are accepted |
 | 14124 | `sp_addsubscription` | refused (no article); leaves the subscriber registered |
 | 14151 | distribution agent | "agent ... failed", the wrapper of an agent failure |
-| 14262 | `msdb.dbo.sp_update_job` | the `@job_id` names no job (a snapshot agent never added) |
+| 14262 | `msdb.dbo.sp_update_job`, `sp_start_job` | the `@job_id` names no job (a snapshot agent never added), or a job the `SQLAgentUserRole` login does not own |
 | 14278 | `sp_changepublication_snapshot` | `frequency_type` without the interval it needs |
 | 14288 | `sp_changepublication_snapshot` | end date before start date |
 | 14529 | `job_login` changes | not a valid Windows account |
@@ -1327,6 +1345,7 @@ The numbers met, with their meaning in this context. The agent messages met in t
 | 15251 | `sp_addarticle`, `sp_changearticle` | `upd_cmd = 'SCALL'` without a procedure name; `ins_cmd N'XCALL ...'` (leaves `@@TRANCOUNT` at 0) |
 | 18752 | publication drops, `sp_articlefilter`, `sp_replicationdboption` | another log reader or log-related procedure (`sp_replcmds`, `sp_repldone`); the call may still complete, but under `sqlcmd -b` the script stops; `sp_replicationdboption false` right after the last drop fails until a retry; also `sp_changepublication sync_method` to `concurrent` with the reinitialization flag, the change being stored |
 | 18757 | `sp_addpublication_snapshot` | the database is not published |
+| 18786 | `sp_addsubscription` | `initialize from lsn` on a publication without `allow_initialize_from_backup` |
 | 18787 | `sp_changepublication` | initialization from backup on a snapshot publication |
 | 20011 | `sp_changepublication` | `allow_anonymous` without `immediate_sync`, or `immediate_sync` false while `allow_anonymous` is true |
 | 20012 | `sp_changepublication`, `sp_addsubscription` | `allow_push` or `allow_pull` needed or refused, message with `(null)` |
