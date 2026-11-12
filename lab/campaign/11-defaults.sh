@@ -26,6 +26,8 @@
 #   sp_addpublication_snapshot  transactional: on m_dp_tran, the only snapshot agent
 #                           created with the default schedule (every 5 minutes); its job is
 #                           disabled in the same batch, before anything else runs.
+#   sp_addpublication_snapshot  snapshot-pub: on m_dp_snap, created with the default
+#                           schedule and disabled in the same batch, as the transactional one.
 #   sp_addarticle           table.native (m_pa_nat, @sync_method native), table.concurrent
 #                           (m_pa_con), table.character (m_pa_chr), table.snapshot-pub
 #                           (m_pa_snp, @repl_freq snapshot): article m_a1 on dbo.m_t;
@@ -33,11 +35,32 @@
 #                           @source_owner = m_s and the unqualified @ins_cmd = CALL m_ins;
 #                           view-schema-only, proc-schema-only, func-schema-only: m_a3,
 #                           m_a4, m_a5 on dbo.m_v, dbo.m_p, dbo.m_f in m_pa_nat.
+#                           <kind>.nondbo.<method>: the article kinds table, view-schema-only,
+#                           proc-schema-only, func-schema-only on m_s.m_t, m_s.m_v, m_s.m_p,
+#                           m_s.m_f (@source_owner = m_s), in m_pa_<method>, a transactional
+#                           publication per sync method (native, character, concurrent,
+#                           concurrent_c, dbsnap = database snapshot, dbsnap_c = database
+#                           snapshot character); <kind>.nondbo.snapshot-pub.<method>: the same
+#                           in m_ps_<method>, a snapshot publication, for the four methods a
+#                           snapshot publication takes (concurrent is refused, 22547).
 #   sp_articlefilter, sp_articleview, sp_articlecolumn  table: on the articles m_af, m_av,
 #                           m_ac of m_pa_nat (tables m_tf, m_tv, m_tc), added with
 #                           required parameters only before the call.
 #   sp_addsubscription      push (to m_dsub1), pull (@subscription_type pull, to m_dsub2),
 #                           on m_ps (status active, allow_pull, article m_a on dbo.m_t)
+#   sp_addsubscription, single rows (not a context: no full parameter list):
+#                           push.fresh-subscriber.@subscriber_type: a push subscription of m_ps
+#                           to m_freshsub (database m_dsub5), a subscriber name registered
+#                           nowhere before the call; the result is MSsubscriber_info.type, or
+#                           the error number when the call is refused. push.rso.@status,
+#                           extend.pull.@status, .@subscription_type, .agents and
+#                           extend.rso.@status: on m_pa_ext (native, independent agent,
+#                           allow_pull, status active, article m_x1 on dbo.m_tx1), a push
+#                           replication support only subscription to m_dsub3 and a pull
+#                           subscription registered at the publisher for m_dsub4; then the
+#                           article m_x2 (dbo.m_tx2) added and each subscription extended to it
+#                           by sp_addsubscription @article = N'm_x2' with @subscription_type
+#                           and @sync_type passed (R36). The rows read the m_x2 rows.
 #   sp_addpushsubscription_agent  push: the subscription to m_dsub1
 #   sp_addpullsubscription, sp_addpullsubscription_agent  pull: in m_dsub2
 #   sp_replicationdboption  publish: m_pubdb enabled for publishing
@@ -45,8 +68,10 @@
 #   sp_add_agent_profile    agent-type-3: m_prof, a distribution agent profile, from msdb
 # Every publication other than m_dp_tran gets a snapshot agent whose schedule never fires.
 #
-# Asserted, exit 1 otherwise (rows on stderr as "row: ..."): every call is ok; 22
-# contexts; TOTAL equals the sum of the per-context counts printed as "count ..."; the
+# Asserted, exit 1 otherwise (rows on stderr as "row: ..."): every call is ok (the
+# sp_addsubscription calls of the single rows excepted: their result is the row); 63
+# contexts; TOTAL equals the sum of the per-context counts printed as "count ...", plus the
+# single rows; the
 # values of the brief: table.native @schema_option 0x0000000000030073, table.snapshot-pub
 # @schema_option 0x0000000000030071, table.non-dbo-schema @destination_owner m_s and
 # @ins_cmd CALL [dbo].[m_ins]; the agent contexts found their job (no no-job in the
@@ -58,7 +83,10 @@ here=$(cd "$(dirname "$0")" && pwd)
 DEF_SCRIPT=11-defaults
 . "$here/../defaults-lib.sh"
 
-EXPECTED_CONTEXTS=22
+EXPECTED_CONTEXTS=63
+# The sync methods of the nondbo contexts: the name in the row, the @sync_method value.
+METHODS=(native:native character:character concurrent:concurrent concurrent_c:concurrent_c "dbsnap:database snapshot" "dbsnap_c:database snapshot character")
+SNAP_METHODS=(native:native character:character "dbsnap:database snapshot" "dbsnap_c:database snapshot character")
 
 # Preambles: the catalog rows of the object a context created, in #tables.
 jobs_of() { # SOURCE_TABLE: the agent job of the agent row(s) in SOURCE_TABLE, its schedule and step
@@ -439,11 +467,20 @@ BEGIN
 END;
 CLOSE c; DEALLOCATE c;
 GO
+-- m_freshsub: sp_addsubscription registered it (or left it registered after a refusal);
+-- sp_dropsubscriber leaves its sys.servers row, so both drops run, each in its own TRY.
+USE master;
+BEGIN TRY EXEC sp_dropsubscriber @subscriber = N'm_freshsub'; END TRY BEGIN CATCH END CATCH;
+WHILE @@TRANCOUNT > 0 ROLLBACK;
+BEGIN TRY EXEC sp_dropserver @server = N'm_freshsub'; END TRY BEGIN CATCH END CATCH;
+WHILE @@TRANCOUNT > 0 ROLLBACK;
+GO
 USE Sales;
-DROP TABLE IF EXISTS dbo.m_t, dbo.m_tf, dbo.m_tv, dbo.m_tc, m_s.m_t;
-DROP VIEW IF EXISTS dbo.m_v;
-DROP PROCEDURE IF EXISTS dbo.m_p;
-DROP FUNCTION IF EXISTS dbo.m_f;
+DROP TABLE IF EXISTS dbo.m_t, dbo.m_tf, dbo.m_tv, dbo.m_tc, dbo.m_tx1, dbo.m_tx2;
+DROP VIEW IF EXISTS dbo.m_v, m_s.m_v;
+DROP PROCEDURE IF EXISTS dbo.m_p, m_s.m_p;
+DROP FUNCTION IF EXISTS dbo.m_f, m_s.m_f;
+DROP TABLE IF EXISTS m_s.m_t;
 IF SCHEMA_ID(N'm_s') IS NOT NULL DROP SCHEMA m_s;
 GO
 -- m_pubdb: a publication added and dropped removes the MSpublisher_databases row that
@@ -466,7 +503,7 @@ END;
 GO
 -- A log reader that was just dropped can still hold its database for a few seconds.
 DECLARE @d sysname, @i int, @s nvarchar(400);
-DECLARE c CURSOR LOCAL FOR SELECT name FROM sys.databases WHERE name IN (N'm_dsub1', N'm_dsub2', N'm_pubdb');
+DECLARE c CURSOR LOCAL FOR SELECT name FROM sys.databases WHERE name IN (N'm_dsub1', N'm_dsub2', N'm_dsub3', N'm_pubdb');
 OPEN c; FETCH NEXT FROM c INTO @d;
 WHILE @@FETCH_STATUS = 0
 BEGIN
@@ -487,7 +524,7 @@ SQL
 trap cleanup EXIT
 
 # Leftovers of an earlier run fail this run; the trap removes them.
-left=$(sql_value "SELECT (SELECT COUNT(*) FROM Sales.dbo.syspublications WHERE name LIKE N'm\_%' ESCAPE N'\') + (SELECT COUNT(*) FROM sys.databases WHERE name LIKE N'm\_%' ESCAPE N'\') + (SELECT COUNT(*) FROM Sales.sys.objects WHERE name LIKE N'm\_%' ESCAPE N'\') + (SELECT COUNT(*) FROM Sales.sys.schemas WHERE name LIKE N'm\_%' ESCAPE N'\') + (SELECT COUNT(*) FROM msdb.dbo.MSagent_profiles WHERE profile_name LIKE N'm\_%' ESCAPE N'\') + (SELECT COUNT(*) FROM distribution.dbo.MSpublisher_databases WHERE publisher_db LIKE N'm\_%' ESCAPE N'\')")
+left=$(sql_value "SELECT (SELECT COUNT(*) FROM Sales.dbo.syspublications WHERE name LIKE N'm\_%' ESCAPE N'\') + (SELECT COUNT(*) FROM sys.databases WHERE name LIKE N'm\_%' ESCAPE N'\') + (SELECT COUNT(*) FROM Sales.sys.objects WHERE name LIKE N'm\_%' ESCAPE N'\') + (SELECT COUNT(*) FROM Sales.sys.schemas WHERE name LIKE N'm\_%' ESCAPE N'\') + (SELECT COUNT(*) FROM msdb.dbo.MSagent_profiles WHERE profile_name LIKE N'm\_%' ESCAPE N'\') + (SELECT COUNT(*) FROM distribution.dbo.MSpublisher_databases WHERE publisher_db LIKE N'm\_%' ESCAPE N'\') + (SELECT COUNT(*) FROM sys.servers WHERE name LIKE N'm\_%' ESCAPE N'\')")
 if [ "$left" != 0 ]; then
     echo "11-defaults: leftovers of an earlier run ($left); removing them and failing" >&2
     exit 1
@@ -495,17 +532,25 @@ fi
 
 sql -b <<'SQL' >&2
 SET NOCOUNT ON;
-CREATE DATABASE m_dsub1; CREATE DATABASE m_dsub2; CREATE DATABASE m_pubdb;
+CREATE DATABASE m_dsub1; CREATE DATABASE m_dsub2; CREATE DATABASE m_dsub3; CREATE DATABASE m_pubdb;
 GO
 USE Sales;
 CREATE TABLE dbo.m_t (id int PRIMARY KEY, a nvarchar(20));
 CREATE TABLE dbo.m_tf (id int PRIMARY KEY, a nvarchar(20));
 CREATE TABLE dbo.m_tv (id int PRIMARY KEY, a nvarchar(20));
 CREATE TABLE dbo.m_tc (id int PRIMARY KEY, a nvarchar(20));
+CREATE TABLE dbo.m_tx1 (id int PRIMARY KEY, a nvarchar(20));
+CREATE TABLE dbo.m_tx2 (id int PRIMARY KEY, a nvarchar(20));
 GO
 CREATE SCHEMA m_s;
 GO
 CREATE TABLE m_s.m_t (id int PRIMARY KEY, a nvarchar(20));
+GO
+CREATE VIEW m_s.m_v AS SELECT id, a FROM m_s.m_t;
+GO
+CREATE PROCEDURE m_s.m_p AS SELECT 1;
+GO
+CREATE FUNCTION m_s.m_f (@x int) RETURNS int AS BEGIN RETURN @x; END;
 GO
 CREATE VIEW dbo.m_v AS SELECT id, a FROM dbo.m_t;
 GO
@@ -533,7 +578,10 @@ IF @sj IS NOT NULL EXEC msdb.dbo.sp_update_job @job_id = @sj, @enabled = 0;"
 measure sp_addpublication_snapshot transactional "$MAP_SNAP" "$PRE_SNAP" "$TRY_RESULT" "" m_dp_tran
 call pub.snap Sales "EXEC @rc = sp_addpublication @publication = N'm_dp_snap', @repl_freq = N'snapshot';"
 measure sp_addpublication snapshot "$MAP_PUB" "$PRE_PUB" "$TRY_RESULT" "@repl_freq" m_dp_snap
-never_fires m_dp_snap
+call snap.snap Sales "EXEC @rc = sp_addpublication_snapshot @publication = N'm_dp_snap';
+DECLARE @sj uniqueidentifier = (SELECT CONVERT(uniqueidentifier, job_id) FROM distribution.dbo.MSsnapshot_agents WHERE publisher_db = N'Sales' AND publication = N'm_dp_snap' AND local_job = 1);
+IF @sj IS NOT NULL EXEC msdb.dbo.sp_update_job @job_id = @sj, @enabled = 0;"
+measure sp_addpublication_snapshot snapshot-pub "$MAP_SNAP" "$PRE_SNAP" "$TRY_RESULT" "" m_dp_snap
 
 # Publications that host the articles.
 sql -b <<'SQL' >&2
@@ -564,6 +612,26 @@ article view-schema-only m_pa_nat m_a3 schema "@source_object @type" "@source_ob
 article proc-schema-only m_pa_nat m_a4 schema "@source_object @type" "@source_object = N'm_p', @type = N'proc schema only'"
 article func-schema-only m_pa_nat m_a5 schema "@source_object @type" "@source_object = N'm_f', @type = N'func schema only'"
 
+# The article kinds on a source in m_s, per sync method, transactional then snapshot.
+nondbo() { # CONTEXT_SUFFIX PUB
+    article "table.nondbo.$1" "$2" m_n1 table "@source_owner @source_object" "@source_owner = N'm_s', @source_object = N'm_t'"
+    article "view-schema-only.nondbo.$1" "$2" m_n3 schema "@source_owner @source_object @type" "@source_owner = N'm_s', @source_object = N'm_v', @type = N'view schema only'"
+    article "proc-schema-only.nondbo.$1" "$2" m_n4 schema "@source_owner @source_object @type" "@source_owner = N'm_s', @source_object = N'm_p', @type = N'proc schema only'"
+    article "func-schema-only.nondbo.$1" "$2" m_n5 schema "@source_owner @source_object @type" "@source_owner = N'm_s', @source_object = N'm_f', @type = N'func schema only'"
+}
+for m in "${METHODS[@]}"; do
+    name=${m%%:*}; method=${m#*:}
+    sql -b -Q "SET NOCOUNT ON; USE Sales; EXEC sp_addpublication @publication = N'm_pa_$name', @sync_method = N'$method';" </dev/null >&2
+    never_fires "m_pa_$name"
+    nondbo "$name" "m_pa_$name"
+done
+for m in "${SNAP_METHODS[@]}"; do
+    name=${m%%:*}; method=${m#*:}
+    sql -b -Q "SET NOCOUNT ON; USE Sales; EXEC sp_addpublication @publication = N'm_ps_$name', @repl_freq = N'snapshot', @sync_method = N'$method';" </dev/null >&2
+    never_fires "m_ps_$name"
+    nondbo "snapshot-pub.$name" "m_ps_$name"
+done
+
 # sp_articlefilter, sp_articleview, sp_articlecolumn, each on its own table article.
 sql -b <<'SQL' >&2
 SET NOCOUNT ON;
@@ -592,6 +660,67 @@ measure sp_addpullsubscription pull "$MAP_PULLSUB" "$PRE_PULLSUB" "$TRY_RESULT" 
 call pullagent.pull m_dsub2 "DECLARE @srv sysname = @@SERVERNAME; EXEC @rc = sp_addpullsubscription_agent @publisher = @srv, @publisher_db = N'Sales', @publication = N'm_ps';"
 measure sp_addpullsubscription_agent pull "$MAP_PULLAGENT" "$PRE_PULLAGENT" "$TRY_RESULT" "@publisher_db" m_ps "" m_dsub2
 
+# Single rows of sp_addsubscription. Their calls are not in calls[]: a refusal is the
+# measured result, recorded in the row.
+EXTRA_ROWS=0
+single() { # ID RESULT DETAIL
+    r "$1" "$2" "$3"
+    EXTRA_ROWS=$((EXTRA_ROWS + 1))
+}
+optional_params sp_addsubscription
+decl_subtype=null
+for i in "${!OPT_NAMES[@]}"; do [ "${OPT_NAMES[$i]}" = @subscriber_type ] && decl_subtype=${OPT_DEFAULTS[$i]}; done
+# A subscriber name registered nowhere before the call.
+pre=$(sql_value "SELECT CONCAT((SELECT COUNT(*) FROM sys.servers WHERE name = N'm_freshsub'), N'/', (SELECT COUNT(*) FROM distribution.dbo.MSsubscriber_info WHERE subscriber = N'm_freshsub'))")
+[ "$pre" = 0/0 ] || def_fail "m_freshsub is registered before the call (sys.servers/MSsubscriber_info: $pre)"
+try_in Sales "EXEC @rc = sp_addsubscription @publication = N'm_ps', @subscriber = N'm_freshsub', @destination_db = N'm_dsub5';"
+fresh_call=$TRY_RESULT; fresh_msg=$TRY_MSG
+fresh=$(sql_value "SELECT CONCAT(N'servers=', (SELECT COUNT(*) FROM sys.servers WHERE name = N'm_freshsub'), N' subscriber_info=', ISNULL((SELECT TOP (1) CONVERT(nvarchar(10), type) FROM distribution.dbo.MSsubscriber_info WHERE UPPER(subscriber) = N'M_FRESHSUB'), N'no-row'), N' subscription_rows=', (SELECT COUNT(*) FROM Sales.dbo.syssubscriptions WHERE srvname = N'm_freshsub' AND srvid >= 0))")
+fresh_type=$(sql_value "SELECT ISNULL((SELECT TOP (1) CONVERT(nvarchar(10), type) FROM distribution.dbo.MSsubscriber_info WHERE UPPER(subscriber) = N'M_FRESHSUB'), N'no-row')")
+[ "$fresh_call" = ok ] || fresh_type=$fresh_call
+single D.sp_addsubscription.push.fresh-subscriber.@subscriber_type "$fresh_type" \
+    "column=distribution.dbo.MSsubscriber_info.type of (publisher, m_freshsub) (0 SQL Server), m_freshsub registered nowhere before the call; after the call: $fresh declared=$decl_subtype call=$fresh_call${fresh_msg:+ ($fresh_msg)}"
+
+# The statuses of R10 and R36 on m_pa_ext.
+sql -b <<'SQL' >&2
+SET NOCOUNT ON;
+USE Sales;
+EXEC sp_addpublication @publication = N'm_pa_ext', @sync_method = N'native', @independent_agent = N'true', @allow_pull = N'true', @status = N'active';
+SQL
+never_fires m_pa_ext
+sql -b -Q "SET NOCOUNT ON; USE Sales; EXEC sp_addarticle @publication = N'm_pa_ext', @article = N'm_x1', @source_object = N'm_tx1';" </dev/null >&2
+# sub_rows DB ARTICLE: status, subscription_type and sync_type of the subscription rows of
+# ARTICLE in m_pa_ext for DB, distinct values joined by /, no-row when none.
+sub_col() { # COLUMN DB ARTICLE
+    sql_value "SELECT ISNULL((SELECT STRING_AGG(CONVERT(nvarchar(10), v), N'/') WITHIN GROUP (ORDER BY v) FROM (SELECT DISTINCT s.$1 AS v FROM Sales.dbo.syssubscriptions s JOIN Sales.dbo.sysarticles a ON a.artid = s.artid JOIN Sales.dbo.syspublications p ON p.pubid = a.pubid WHERE p.name = N'm_pa_ext' AND a.name = N'$3' AND s.dest_db = N'$2' AND s.srvid >= 0) x), N'no-row')"
+}
+SS="column=syssubscriptions.status (0 inactive, 1 subscribed, 2 active)"
+try_in Sales "EXEC @rc = sp_addsubscription @publication = N'm_pa_ext', @subscriber = @@SERVERNAME, @destination_db = N'm_dsub3', @sync_type = N'replication support only';"
+rso_call=$TRY_RESULT; rso_msg=$TRY_MSG
+v=$(sub_col status m_dsub3 m_x1); [ "$rso_call" = ok ] || v=$rso_call
+single D.sp_addsubscription.push.rso.@status "$v" \
+    "$SS of a push subscription created with @sync_type = replication support only (sync_type=$(sub_col sync_type m_dsub3 m_x1)), m_pa_ext m_x1 to m_dsub3 call=$rso_call${rso_msg:+ ($rso_msg)}"
+try_in Sales "EXEC @rc = sp_addsubscription @publication = N'm_pa_ext', @subscriber = @@SERVERNAME, @destination_db = N'm_dsub4', @subscription_type = N'pull';"
+pull_call=$TRY_RESULT
+[ "$pull_call" = ok ] || def_fail "the pull subscription of m_pa_ext to m_dsub4 was refused: $TRY_RESULT $TRY_MSG"
+sql -b -Q "SET NOCOUNT ON; USE Sales; EXEC sp_addarticle @publication = N'm_pa_ext', @article = N'm_x2', @source_object = N'm_tx2';" </dev/null >&2
+try_in Sales "EXEC @rc = sp_addsubscription @publication = N'm_pa_ext', @subscriber = @@SERVERNAME, @destination_db = N'm_dsub4', @article = N'm_x2', @subscription_type = N'pull', @sync_type = N'automatic';"
+ext_call=$TRY_RESULT; ext_msg=$TRY_MSG
+v=$(sub_col status m_dsub4 m_x2); [ "$ext_call" = ok ] || v=$ext_call
+single D.sp_addsubscription.extend.pull.@status "$v" \
+    "$SS of the m_x2 row of the pull subscription of m_pa_ext to m_dsub4 (m_x1 row: $(sub_col status m_dsub4 m_x1)), extended by sp_addsubscription @article = m_x2, @subscription_type = pull, @sync_type = automatic call=$ext_call${ext_msg:+ ($ext_msg)}"
+v=$(sub_col subscription_type m_dsub4 m_x2); [ "$ext_call" = ok ] || v=$ext_call
+single D.sp_addsubscription.extend.pull.@subscription_type "$v" \
+    "column=syssubscriptions.subscription_type (0 push, 1 pull) of the m_x2 row of the same extension (m_x1 row: $(sub_col subscription_type m_dsub4 m_x1)) call=$ext_call"
+v=$(sql_value "SELECT COUNT(*) FROM distribution.dbo.MSdistribution_agents WHERE publisher_db = N'Sales' AND publication = N'm_pa_ext' AND subscriber_db = N'm_dsub4' AND subscriber_id >= 0")
+single D.sp_addsubscription.extend.pull.agents "$v" \
+    "column=count of distribution.dbo.MSdistribution_agents rows of m_pa_ext for m_dsub4 after the extension (subscription_type of the rows: $(sql_value "SELECT ISNULL(STRING_AGG(CONVERT(nvarchar(10), subscription_type), N'/'), N'none') FROM distribution.dbo.MSdistribution_agents WHERE publisher_db = N'Sales' AND publication = N'm_pa_ext' AND subscriber_db = N'm_dsub4' AND subscriber_id >= 0")) call=$ext_call"
+try_in Sales "EXEC @rc = sp_addsubscription @publication = N'm_pa_ext', @subscriber = @@SERVERNAME, @destination_db = N'm_dsub3', @article = N'm_x2', @subscription_type = N'push', @sync_type = N'replication support only';"
+rext_call=$TRY_RESULT; rext_msg=$TRY_MSG
+v=$(sub_col status m_dsub3 m_x2); [ "$rext_call" = ok ] || v=$rext_call
+single D.sp_addsubscription.extend.rso.@status "$v" \
+    "$SS of the m_x2 row of the replication support only subscription of m_pa_ext to m_dsub3 (m_x1 row: $(sub_col status m_dsub3 m_x1); sync_type of the m_x2 row: $(sub_col sync_type m_dsub3 m_x2)), extended by sp_addsubscription @article = m_x2, @subscription_type = push, @sync_type = replication support only call=$rext_call${rext_msg:+ ($rext_msg)}"
+
 # The log reader of a newly published database, and the publish option itself.
 call rdbo.publish master "EXEC @rc = sp_replicationdboption @dbname = N'm_pubdb', @optname = N'publish', @value = N'true';"
 measure sp_replicationdboption publish "$MAP_RDBO" "$PRE_NONE" "$TRY_RESULT" ""
@@ -609,7 +738,7 @@ for c in "${calls[@]}"; do
     [[ $c == *=ok ]] || control "call not ok: $c"
 done
 [ "${#COUNTS[@]}" = "$EXPECTED_CONTEXTS" ] || control "${#COUNTS[@]} contexts, expected $EXPECTED_CONTEXTS"
-[ "$COUNT_SUM" = "${#rows[@]}" ] || control "the per-context counts add up to $COUNT_SUM, the script built ${#rows[@]} rows"
+[ "$((COUNT_SUM + EXTRA_ROWS))" = "${#rows[@]}" ] || control "the per-context counts add up to $COUNT_SUM and the single rows to $EXTRA_ROWS, the script built ${#rows[@]} rows"
 expect() { # ID VALUE
     local v; v=$(value "$1")
     [ "$v" = "$2" ] || control "$1 is '$v', expected '$2'"
@@ -628,7 +757,7 @@ cleanup
 pubdbs=$(sql_value "SELECT COUNT(*) FROM distribution.dbo.MSpublisher_databases WHERE publisher_db LIKE N'm\_%' ESCAPE N'\'")
 [ "$pubdbs" = 0 ] || control "distribution keeps $pubdbs MSpublisher_databases rows for m_ databases after the cleanup"
 for c in "${COUNTS[@]}"; do echo "count $c"; done
-echo "count sum: $COUNT_SUM"
+echo "count sum: $COUNT_SUM, single rows: $EXTRA_ROWS"
 if [ "$bad" != 0 ]; then
     for c in "${calls[@]}"; do echo "call: $c" >&2; done
     for row in "${rows[@]}"; do echo "row: $row" >&2; done

@@ -116,6 +116,27 @@ R|D.sp_addpublication.snapshot.@allow_partition_switch|options=0|column=syspubli
 R|D.sp_addpublication.snapshot.@replicate_partition_switch|options=0|column=syspublications.options, bit not documented: whole value declared=NULL call=ok
 R|D.sp_addpublication.snapshot.@allow_drop|options=0|column=syspublications.options, bit not documented: whole value declared=N'false' call=ok
 R|D.sp_addpublication.snapshot.@p2p_conflictdetection_policy|0|column=syspublications.options bit 0x100 (Learn: lastwriter) declared=N'originatorid' call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@frequency_type|4|column=msdb.dbo.sysschedules.freq_type of the agent job declared=4 call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@frequency_interval|1|column=msdb.dbo.sysschedules.freq_interval of the agent job declared=1 call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@frequency_subday|4|column=msdb.dbo.sysschedules.freq_subday_type of the agent job declared=4 call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@frequency_subday_interval|5|column=msdb.dbo.sysschedules.freq_subday_interval of the agent job declared=5 call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@frequency_relative_interval|1|column=msdb.dbo.sysschedules.freq_relative_interval of the agent job declared=1 call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@frequency_recurrence_factor|0|column=msdb.dbo.sysschedules.freq_recurrence_factor of the agent job declared=0 call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@active_start_date|today|column=msdb.dbo.sysschedules.active_start_date of the agent job (today = the day of the run) declared=0 call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@active_end_date|99991231|column=msdb.dbo.sysschedules.active_end_date of the agent job declared=99991231 call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@active_start_time_of_day|0|column=msdb.dbo.sysschedules.active_start_time of the agent job declared=0 call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@active_end_time_of_day|235959|column=msdb.dbo.sysschedules.active_end_time of the agent job declared=235959 call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@snapshot_job_name|REPLLAB-Sales-m_dp_snap-<id>|column=msdb.dbo.sysjobs.name of the agent job (distribution.dbo.MSsnapshot_agents.job_id) declared=NULL call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@publisher_security_mode|1|column=distribution.dbo.MSsnapshot_agents.publisher_security_mode declared=NULL call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@publisher_login|''|column=distribution.dbo.MSsnapshot_agents.publisher_login declared=NULL call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@publisher_password|pre-existing(set)|column=distribution.dbo.MSsnapshot_agents.publisher_password (secret); pre-existing: sp_addpublication wrote it before this call, so this is not a default of sp_addpublication_snapshot declared=NULL call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@job_login|null|column=distribution.dbo.MSsnapshot_agents.job_login declared=NULL call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@job_password|null|column=distribution.dbo.MSsnapshot_agents.job_password (secret) declared=NULL call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@publisher|repllab|column=distribution.dbo.MSsnapshot_agents.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@distributor_security_mode|1|column=msdb.dbo.sysjobsteps.command of the snapshot agent job, switch -DistributorSecurityMode declared=NULL call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@distributor_login|absent|column=msdb.dbo.sysjobsteps.command of the snapshot agent job, switch -DistributorLogin declared=NULL call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@distributor_password|absent|column=msdb.dbo.sysjobsteps.command of the snapshot agent job, switch -DistributorPassword (secret) declared=NULL call=ok
+R|D.sp_addpublication_snapshot.snapshot-pub.@job_security_mode|no-column|column=no-column: Managed Instance only (refused with 41989 elsewhere, 07-changes) declared=NULL call=ok
 R|D.sp_addarticle.table.native.@source_table|dbo.m_t|column=Sales.dbo.sysarticles.objid (schema.name) declared=NULL call=ok
 R|D.sp_addarticle.table.native.@destination_table|m_t|column=sysarticles.dest_table declared=NULL call=ok
 R|D.sp_addarticle.table.native.@vertical_partition|2/2|column=Sales.dbo.sysarticlecolumns rows of the article / columns of the table declared=N'false' call=ok
@@ -356,6 +377,1206 @@ R|D.sp_addarticle.func-schema-only.@use_default_datatypes|no-column|column=no-co
 R|D.sp_addarticle.func-schema-only.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
 R|D.sp_addarticle.func-schema-only.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
 R|D.sp_addarticle.func-schema-only.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.table.nondbo.native.@source_table|m_s.m_t|column=Sales.dbo.sysarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@destination_table|m_t|column=sysarticles.dest_table declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@vertical_partition|2/2|column=Sales.dbo.sysarticlecolumns rows of the article / columns of the table declared=N'false' call=ok
+R|D.sp_addarticle.table.nondbo.native.@type|1|column=sysarticles.type (1 logbased) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@filter|0|column=sysarticles.filter (object id of the filter procedure, 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@sync_object|syncobj_0x<hex>|column=sysarticles.sync_objid (the generated view) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@ins_cmd|CALL [dbo].[sp_MSins_m_sm_t]|column=sysarticles.ins_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@del_cmd|CALL [dbo].[sp_MSdel_m_sm_t]|column=sysarticles.del_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@upd_cmd|SCALL [dbo].[sp_MSupd_m_sm_t]|column=sysarticles.upd_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@creation_script|null|column=sysarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@description|null|column=sysarticles.description declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@pre_creation_cmd|1|column=sysarticles.pre_creation_cmd (0 none, 1 drop, 2 delete, 3 truncate) declared=N'drop' call=ok
+R|D.sp_addarticle.table.nondbo.native.@filter_clause|null|column=sysarticles.filter_clause declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@schema_option|0x0000000000030073|column=sysarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@destination_owner|m_s|column=sysarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@status|16|column=sysarticles.status declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@source_owner|m_s|column=sysarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.table.nondbo.native.@sync_object_owner|dbo|column=sysarticles.sync_objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@filter_owner|0|column=sysarticles.filter (schema; 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@source_object|m_t|column=sysarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.table.nondbo.native.@artid|assigned|column=sysarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@auto_identity_range|no-row|column=distribution.dbo.MSrepl_identity_range.identity_support declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@pub_identity_range|no-row|column=MSrepl_identity_range.pub_range declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@identity_range|no-row|column=MSrepl_identity_range.range declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@threshold|no-row|column=MSrepl_identity_range.threshold declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.table.nondbo.native.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers, not stored for a SQL Server one declared=1 call=ok
+R|D.sp_addarticle.table.nondbo.native.@identityrangemanagementoption|no-row|column=MSrepl_identity_range.identity_support (no row: not managed) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.native.@fire_triggers_on_snapshot|0|column=sysarticles.fire_triggers_on_snapshot declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@source_table|m_s.m_v|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@destination_table|m_v|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@type|64|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@source_object|m_v|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.native.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@source_table|m_s.m_p|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@destination_table|m_p|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@type|32|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@source_object|m_p|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.native.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@source_table|m_s.m_f|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@destination_table|m_f|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@type|128|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@source_object|m_f|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.native.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.table.nondbo.character.@source_table|m_s.m_t|column=Sales.dbo.sysarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@destination_table|m_t|column=sysarticles.dest_table declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@vertical_partition|2/2|column=Sales.dbo.sysarticlecolumns rows of the article / columns of the table declared=N'false' call=ok
+R|D.sp_addarticle.table.nondbo.character.@type|1|column=sysarticles.type (1 logbased) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@filter|0|column=sysarticles.filter (object id of the filter procedure, 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@sync_object|syncobj_0x<hex>|column=sysarticles.sync_objid (the generated view) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@ins_cmd|SQL|column=sysarticles.ins_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@del_cmd|SQL|column=sysarticles.del_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@upd_cmd|SQL|column=sysarticles.upd_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@creation_script|null|column=sysarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@description|null|column=sysarticles.description declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@pre_creation_cmd|1|column=sysarticles.pre_creation_cmd (0 none, 1 drop, 2 delete, 3 truncate) declared=N'drop' call=ok
+R|D.sp_addarticle.table.nondbo.character.@filter_clause|null|column=sysarticles.filter_clause declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@schema_option|0x0000000000030073|column=sysarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@destination_owner|null|column=sysarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@status|16|column=sysarticles.status declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@source_owner|m_s|column=sysarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.table.nondbo.character.@sync_object_owner|dbo|column=sysarticles.sync_objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@filter_owner|0|column=sysarticles.filter (schema; 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@source_object|m_t|column=sysarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.table.nondbo.character.@artid|assigned|column=sysarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@auto_identity_range|no-row|column=distribution.dbo.MSrepl_identity_range.identity_support declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@pub_identity_range|no-row|column=MSrepl_identity_range.pub_range declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@identity_range|no-row|column=MSrepl_identity_range.range declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@threshold|no-row|column=MSrepl_identity_range.threshold declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.table.nondbo.character.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers, not stored for a SQL Server one declared=1 call=ok
+R|D.sp_addarticle.table.nondbo.character.@identityrangemanagementoption|no-row|column=MSrepl_identity_range.identity_support (no row: not managed) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.character.@fire_triggers_on_snapshot|0|column=sysarticles.fire_triggers_on_snapshot declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@source_table|m_s.m_v|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@destination_table|m_v|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@type|64|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@destination_owner|null|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@source_object|m_v|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.character.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@source_table|m_s.m_p|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@destination_table|m_p|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@type|32|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@destination_owner|null|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@source_object|m_p|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.character.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@source_table|m_s.m_f|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@destination_table|m_f|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@type|128|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@destination_owner|null|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@source_object|m_f|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.character.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@source_table|m_s.m_t|column=Sales.dbo.sysarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@destination_table|m_t|column=sysarticles.dest_table declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@vertical_partition|2/2|column=Sales.dbo.sysarticlecolumns rows of the article / columns of the table declared=N'false' call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@type|1|column=sysarticles.type (1 logbased) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@filter|0|column=sysarticles.filter (object id of the filter procedure, 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@sync_object|syncobj_0x<hex>|column=sysarticles.sync_objid (the generated view) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@ins_cmd|CALL [dbo].[sp_MSins_m_sm_t]|column=sysarticles.ins_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@del_cmd|CALL [dbo].[sp_MSdel_m_sm_t]|column=sysarticles.del_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@upd_cmd|SCALL [dbo].[sp_MSupd_m_sm_t]|column=sysarticles.upd_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@creation_script|null|column=sysarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@description|null|column=sysarticles.description declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@pre_creation_cmd|1|column=sysarticles.pre_creation_cmd (0 none, 1 drop, 2 delete, 3 truncate) declared=N'drop' call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@filter_clause|null|column=sysarticles.filter_clause declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@schema_option|0x0000000000030073|column=sysarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@destination_owner|m_s|column=sysarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@status|16|column=sysarticles.status declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@source_owner|m_s|column=sysarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@sync_object_owner|dbo|column=sysarticles.sync_objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@filter_owner|0|column=sysarticles.filter (schema; 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@source_object|m_t|column=sysarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@artid|assigned|column=sysarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@auto_identity_range|no-row|column=distribution.dbo.MSrepl_identity_range.identity_support declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@pub_identity_range|no-row|column=MSrepl_identity_range.pub_range declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@identity_range|no-row|column=MSrepl_identity_range.range declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@threshold|no-row|column=MSrepl_identity_range.threshold declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers, not stored for a SQL Server one declared=1 call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@identityrangemanagementoption|no-row|column=MSrepl_identity_range.identity_support (no row: not managed) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent.@fire_triggers_on_snapshot|0|column=sysarticles.fire_triggers_on_snapshot declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@source_table|m_s.m_v|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@destination_table|m_v|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@type|64|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@source_object|m_v|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@source_table|m_s.m_p|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@destination_table|m_p|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@type|32|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@source_object|m_p|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@source_table|m_s.m_f|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@destination_table|m_f|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@type|128|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@source_object|m_f|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@source_table|m_s.m_t|column=Sales.dbo.sysarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@destination_table|m_t|column=sysarticles.dest_table declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@vertical_partition|2/2|column=Sales.dbo.sysarticlecolumns rows of the article / columns of the table declared=N'false' call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@type|1|column=sysarticles.type (1 logbased) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@filter|0|column=sysarticles.filter (object id of the filter procedure, 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@sync_object|syncobj_0x<hex>|column=sysarticles.sync_objid (the generated view) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@ins_cmd|CALL [dbo].[sp_MSins_m_t]|column=sysarticles.ins_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@del_cmd|CALL [dbo].[sp_MSdel_m_t]|column=sysarticles.del_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@upd_cmd|SCALL [dbo].[sp_MSupd_m_t]|column=sysarticles.upd_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@creation_script|null|column=sysarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@description|null|column=sysarticles.description declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@pre_creation_cmd|1|column=sysarticles.pre_creation_cmd (0 none, 1 drop, 2 delete, 3 truncate) declared=N'drop' call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@filter_clause|null|column=sysarticles.filter_clause declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@schema_option|0x0000000000030073|column=sysarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@destination_owner|null|column=sysarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@status|16|column=sysarticles.status declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@source_owner|m_s|column=sysarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@sync_object_owner|dbo|column=sysarticles.sync_objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@filter_owner|0|column=sysarticles.filter (schema; 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@source_object|m_t|column=sysarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@artid|assigned|column=sysarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@auto_identity_range|no-row|column=distribution.dbo.MSrepl_identity_range.identity_support declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@pub_identity_range|no-row|column=MSrepl_identity_range.pub_range declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@identity_range|no-row|column=MSrepl_identity_range.range declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@threshold|no-row|column=MSrepl_identity_range.threshold declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers, not stored for a SQL Server one declared=1 call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@identityrangemanagementoption|no-row|column=MSrepl_identity_range.identity_support (no row: not managed) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.concurrent_c.@fire_triggers_on_snapshot|0|column=sysarticles.fire_triggers_on_snapshot declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@source_table|m_s.m_v|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@destination_table|m_v|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@type|64|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@destination_owner|null|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@source_object|m_v|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@source_table|m_s.m_p|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@destination_table|m_p|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@type|32|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@destination_owner|null|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@source_object|m_p|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@source_table|m_s.m_f|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@destination_table|m_f|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@type|128|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@destination_owner|null|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@source_object|m_f|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@source_table|m_s.m_t|column=Sales.dbo.sysarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@destination_table|m_t|column=sysarticles.dest_table declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@vertical_partition|2/2|column=Sales.dbo.sysarticlecolumns rows of the article / columns of the table declared=N'false' call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@type|1|column=sysarticles.type (1 logbased) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@filter|0|column=sysarticles.filter (object id of the filter procedure, 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@sync_object|syncobj_0x<hex>|column=sysarticles.sync_objid (the generated view) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@ins_cmd|CALL [dbo].[sp_MSins_m_sm_t]|column=sysarticles.ins_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@del_cmd|CALL [dbo].[sp_MSdel_m_sm_t]|column=sysarticles.del_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@upd_cmd|SCALL [dbo].[sp_MSupd_m_sm_t]|column=sysarticles.upd_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@creation_script|null|column=sysarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@description|null|column=sysarticles.description declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@pre_creation_cmd|1|column=sysarticles.pre_creation_cmd (0 none, 1 drop, 2 delete, 3 truncate) declared=N'drop' call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@filter_clause|null|column=sysarticles.filter_clause declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@schema_option|0x0000000000030073|column=sysarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@destination_owner|m_s|column=sysarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@status|16|column=sysarticles.status declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@source_owner|m_s|column=sysarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@sync_object_owner|dbo|column=sysarticles.sync_objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@filter_owner|0|column=sysarticles.filter (schema; 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@source_object|m_t|column=sysarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@artid|assigned|column=sysarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@auto_identity_range|no-row|column=distribution.dbo.MSrepl_identity_range.identity_support declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@pub_identity_range|no-row|column=MSrepl_identity_range.pub_range declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@identity_range|no-row|column=MSrepl_identity_range.range declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@threshold|no-row|column=MSrepl_identity_range.threshold declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers, not stored for a SQL Server one declared=1 call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@identityrangemanagementoption|no-row|column=MSrepl_identity_range.identity_support (no row: not managed) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap.@fire_triggers_on_snapshot|0|column=sysarticles.fire_triggers_on_snapshot declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@source_table|m_s.m_v|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@destination_table|m_v|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@type|64|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@source_object|m_v|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@source_table|m_s.m_p|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@destination_table|m_p|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@type|32|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@source_object|m_p|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@source_table|m_s.m_f|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@destination_table|m_f|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@type|128|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@source_object|m_f|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@source_table|m_s.m_t|column=Sales.dbo.sysarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@destination_table|m_t|column=sysarticles.dest_table declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@vertical_partition|2/2|column=Sales.dbo.sysarticlecolumns rows of the article / columns of the table declared=N'false' call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@type|1|column=sysarticles.type (1 logbased) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@filter|0|column=sysarticles.filter (object id of the filter procedure, 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@sync_object|syncobj_0x<hex>|column=sysarticles.sync_objid (the generated view) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@ins_cmd|CALL [dbo].[sp_MSins_m_sm_t]|column=sysarticles.ins_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@del_cmd|CALL [dbo].[sp_MSdel_m_sm_t]|column=sysarticles.del_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@upd_cmd|SCALL [dbo].[sp_MSupd_m_sm_t]|column=sysarticles.upd_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@creation_script|null|column=sysarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@description|null|column=sysarticles.description declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@pre_creation_cmd|1|column=sysarticles.pre_creation_cmd (0 none, 1 drop, 2 delete, 3 truncate) declared=N'drop' call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@filter_clause|null|column=sysarticles.filter_clause declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@schema_option|0x0000000000030073|column=sysarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@destination_owner|m_s|column=sysarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@status|16|column=sysarticles.status declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@source_owner|m_s|column=sysarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@sync_object_owner|dbo|column=sysarticles.sync_objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@filter_owner|0|column=sysarticles.filter (schema; 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@source_object|m_t|column=sysarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@artid|assigned|column=sysarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@auto_identity_range|no-row|column=distribution.dbo.MSrepl_identity_range.identity_support declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@pub_identity_range|no-row|column=MSrepl_identity_range.pub_range declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@identity_range|no-row|column=MSrepl_identity_range.range declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@threshold|no-row|column=MSrepl_identity_range.threshold declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers, not stored for a SQL Server one declared=1 call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@identityrangemanagementoption|no-row|column=MSrepl_identity_range.identity_support (no row: not managed) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.dbsnap_c.@fire_triggers_on_snapshot|0|column=sysarticles.fire_triggers_on_snapshot declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@source_table|m_s.m_v|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@destination_table|m_v|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@type|64|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@source_object|m_v|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@source_table|m_s.m_p|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@destination_table|m_p|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@type|32|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@source_object|m_p|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@source_table|m_s.m_f|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@destination_table|m_f|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@type|128|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@source_object|m_f|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@source_table|m_s.m_t|column=Sales.dbo.sysarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@destination_table|m_t|column=sysarticles.dest_table declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@vertical_partition|2/2|column=Sales.dbo.sysarticlecolumns rows of the article / columns of the table declared=N'false' call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@type|1|column=sysarticles.type (1 logbased) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@filter|0|column=sysarticles.filter (object id of the filter procedure, 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@sync_object|syncobj_0x<hex>|column=sysarticles.sync_objid (the generated view) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@ins_cmd|SQL|column=sysarticles.ins_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@del_cmd|SQL|column=sysarticles.del_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@upd_cmd|SQL|column=sysarticles.upd_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@creation_script|null|column=sysarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@description|null|column=sysarticles.description declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@pre_creation_cmd|1|column=sysarticles.pre_creation_cmd (0 none, 1 drop, 2 delete, 3 truncate) declared=N'drop' call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@filter_clause|null|column=sysarticles.filter_clause declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@schema_option|0x0000000000030071|column=sysarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@destination_owner|m_s|column=sysarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@status|16|column=sysarticles.status declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@source_owner|m_s|column=sysarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@sync_object_owner|dbo|column=sysarticles.sync_objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@filter_owner|0|column=sysarticles.filter (schema; 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@source_object|m_t|column=sysarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@artid|assigned|column=sysarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@auto_identity_range|no-row|column=distribution.dbo.MSrepl_identity_range.identity_support declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@pub_identity_range|no-row|column=MSrepl_identity_range.pub_range declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@identity_range|no-row|column=MSrepl_identity_range.range declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@threshold|no-row|column=MSrepl_identity_range.threshold declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers, not stored for a SQL Server one declared=1 call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@identityrangemanagementoption|no-row|column=MSrepl_identity_range.identity_support (no row: not managed) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.native.@fire_triggers_on_snapshot|0|column=sysarticles.fire_triggers_on_snapshot declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@source_table|m_s.m_v|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@destination_table|m_v|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@type|64|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@source_object|m_v|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@source_table|m_s.m_p|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@destination_table|m_p|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@type|32|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@source_object|m_p|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@source_table|m_s.m_f|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@destination_table|m_f|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@type|128|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@source_object|m_f|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@source_table|m_s.m_t|column=Sales.dbo.sysarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@destination_table|m_t|column=sysarticles.dest_table declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@vertical_partition|2/2|column=Sales.dbo.sysarticlecolumns rows of the article / columns of the table declared=N'false' call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@type|1|column=sysarticles.type (1 logbased) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@filter|0|column=sysarticles.filter (object id of the filter procedure, 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@sync_object|syncobj_0x<hex>|column=sysarticles.sync_objid (the generated view) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@ins_cmd|SQL|column=sysarticles.ins_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@del_cmd|SQL|column=sysarticles.del_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@upd_cmd|SQL|column=sysarticles.upd_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@creation_script|null|column=sysarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@description|null|column=sysarticles.description declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@pre_creation_cmd|1|column=sysarticles.pre_creation_cmd (0 none, 1 drop, 2 delete, 3 truncate) declared=N'drop' call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@filter_clause|null|column=sysarticles.filter_clause declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@schema_option|0x0000000000030071|column=sysarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@destination_owner|null|column=sysarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@status|16|column=sysarticles.status declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@source_owner|m_s|column=sysarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@sync_object_owner|dbo|column=sysarticles.sync_objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@filter_owner|0|column=sysarticles.filter (schema; 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@source_object|m_t|column=sysarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@artid|assigned|column=sysarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@auto_identity_range|no-row|column=distribution.dbo.MSrepl_identity_range.identity_support declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@pub_identity_range|no-row|column=MSrepl_identity_range.pub_range declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@identity_range|no-row|column=MSrepl_identity_range.range declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@threshold|no-row|column=MSrepl_identity_range.threshold declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers, not stored for a SQL Server one declared=1 call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@identityrangemanagementoption|no-row|column=MSrepl_identity_range.identity_support (no row: not managed) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.character.@fire_triggers_on_snapshot|0|column=sysarticles.fire_triggers_on_snapshot declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@source_table|m_s.m_v|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@destination_table|m_v|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@type|64|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@destination_owner|null|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@source_object|m_v|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@source_table|m_s.m_p|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@destination_table|m_p|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@type|32|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@destination_owner|null|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@source_object|m_p|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@source_table|m_s.m_f|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@destination_table|m_f|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@type|128|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@destination_owner|null|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@source_object|m_f|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@source_table|m_s.m_t|column=Sales.dbo.sysarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@destination_table|m_t|column=sysarticles.dest_table declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@vertical_partition|2/2|column=Sales.dbo.sysarticlecolumns rows of the article / columns of the table declared=N'false' call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@type|1|column=sysarticles.type (1 logbased) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@filter|0|column=sysarticles.filter (object id of the filter procedure, 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@sync_object|syncobj_0x<hex>|column=sysarticles.sync_objid (the generated view) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@ins_cmd|SQL|column=sysarticles.ins_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@del_cmd|SQL|column=sysarticles.del_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@upd_cmd|SQL|column=sysarticles.upd_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@creation_script|null|column=sysarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@description|null|column=sysarticles.description declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@pre_creation_cmd|1|column=sysarticles.pre_creation_cmd (0 none, 1 drop, 2 delete, 3 truncate) declared=N'drop' call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@filter_clause|null|column=sysarticles.filter_clause declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@schema_option|0x0000000000030071|column=sysarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@destination_owner|m_s|column=sysarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@status|16|column=sysarticles.status declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@source_owner|m_s|column=sysarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@sync_object_owner|dbo|column=sysarticles.sync_objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@filter_owner|0|column=sysarticles.filter (schema; 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@source_object|m_t|column=sysarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@artid|assigned|column=sysarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@auto_identity_range|no-row|column=distribution.dbo.MSrepl_identity_range.identity_support declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@pub_identity_range|no-row|column=MSrepl_identity_range.pub_range declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@identity_range|no-row|column=MSrepl_identity_range.range declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@threshold|no-row|column=MSrepl_identity_range.threshold declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers, not stored for a SQL Server one declared=1 call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@identityrangemanagementoption|no-row|column=MSrepl_identity_range.identity_support (no row: not managed) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap.@fire_triggers_on_snapshot|0|column=sysarticles.fire_triggers_on_snapshot declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@source_table|m_s.m_v|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@destination_table|m_v|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@type|64|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@source_object|m_v|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@source_table|m_s.m_p|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@destination_table|m_p|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@type|32|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@source_object|m_p|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@source_table|m_s.m_f|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@destination_table|m_f|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@type|128|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@source_object|m_f|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@source_table|m_s.m_t|column=Sales.dbo.sysarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@destination_table|m_t|column=sysarticles.dest_table declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@vertical_partition|2/2|column=Sales.dbo.sysarticlecolumns rows of the article / columns of the table declared=N'false' call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@type|1|column=sysarticles.type (1 logbased) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@filter|0|column=sysarticles.filter (object id of the filter procedure, 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@sync_object|syncobj_0x<hex>|column=sysarticles.sync_objid (the generated view) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@ins_cmd|SQL|column=sysarticles.ins_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@del_cmd|SQL|column=sysarticles.del_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@upd_cmd|SQL|column=sysarticles.upd_cmd declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@creation_script|null|column=sysarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@description|null|column=sysarticles.description declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@pre_creation_cmd|1|column=sysarticles.pre_creation_cmd (0 none, 1 drop, 2 delete, 3 truncate) declared=N'drop' call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@filter_clause|null|column=sysarticles.filter_clause declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@schema_option|0x0000000000030071|column=sysarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@destination_owner|m_s|column=sysarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@status|16|column=sysarticles.status declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@source_owner|m_s|column=sysarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@sync_object_owner|dbo|column=sysarticles.sync_objid (schema) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@filter_owner|0|column=sysarticles.filter (schema; 0 none) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@source_object|m_t|column=sysarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@artid|assigned|column=sysarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@auto_identity_range|no-row|column=distribution.dbo.MSrepl_identity_range.identity_support declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@pub_identity_range|no-row|column=MSrepl_identity_range.pub_range declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@identity_range|no-row|column=MSrepl_identity_range.range declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@threshold|no-row|column=MSrepl_identity_range.threshold declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers, not stored for a SQL Server one declared=1 call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@identityrangemanagementoption|no-row|column=MSrepl_identity_range.identity_support (no row: not managed) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.table.nondbo.snapshot-pub.dbsnap_c.@fire_triggers_on_snapshot|0|column=sysarticles.fire_triggers_on_snapshot declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@source_table|m_s.m_v|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@destination_table|m_v|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@type|64|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@source_object|m_v|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@source_table|m_s.m_p|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@destination_table|m_p|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@type|32|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@source_object|m_p|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@source_table|m_s.m_f|column=Sales.dbo.sysschemaarticles.objid (schema.name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@destination_table|m_f|column=sysschemaarticles.dest_object declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@vertical_partition|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@type|128|column=sysschemaarticles.type (0x20 proc schema only, 0x40 view schema only, 0x80 func schema only) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@filter|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@sync_object|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@ins_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@del_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@upd_cmd|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@creation_script|null|column=sysschemaarticles.creation_script declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@description|null|column=sysschemaarticles.description declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@pre_creation_cmd|1|column=sysschemaarticles.pre_creation_cmd declared=N'drop' call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@filter_clause|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@schema_option|0x0000000000000001|column=sysschemaarticles.schema_option declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@destination_owner|m_s|column=sysschemaarticles.dest_owner declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@status|16|column=sysschemaarticles.status declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@source_owner|m_s|column=sysschemaarticles.objid (schema) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@sync_object_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@filter_owner|no-column|column=no-column: sysschemaarticles has no such column declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@source_object|m_f|column=sysschemaarticles.objid (name) declared=NULL passed call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@artid|assigned|column=sysschemaarticles.artid (output) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@auto_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@pub_identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@identity_range|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@threshold|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@use_default_datatypes|no-column|column=no-column: data type mapping of non-SQL Server publishers declared=1 call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@identityrangemanagementoption|no-column|column=no-column: identity ranges concern tables only declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@publisher|repllab|column=distribution.dbo.MSarticles.publisher_id (server name) declared=NULL call=ok
+R|D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@fire_triggers_on_snapshot|no-column|column=no-column: sysschemaarticles has no such column declared=N'false' call=ok
 R|D.sp_articlefilter.table.@filter_name|0|column=Sales.dbo.sysarticles.filter (object id of the filter procedure, 0 none) declared=NULL call=ok
 R|D.sp_articlefilter.table.@filter_clause|null|column=sysarticles.filter_clause declared=NULL call=ok
 R|D.sp_articlefilter.table.@force_invalidate_snapshot|no-column|column=no-column: a flag of the call declared=0 call=ok
@@ -539,6 +1760,12 @@ R|D.sp_addpullsubscription_agent.pull.@job_name|repllab-Sales-m_ps-repllab-m_dsu
 R|D.sp_addpullsubscription_agent.pull.@job_login|null|column=<subscription db>.dbo.MSsubscription_properties.job_login declared=NULL call=ok
 R|D.sp_addpullsubscription_agent.pull.@job_password|null|column=<subscription db>.dbo.MSsubscription_properties.job_password (secret) declared=NULL call=ok
 R|D.sp_addpullsubscription_agent.pull.@job_security_mode|no-column|column=no-column: Managed Instance only (refused with 41989 elsewhere, 07-changes) declared=NULL call=ok
+R|D.sp_addsubscription.push.fresh-subscriber.@subscriber_type|0|column=distribution.dbo.MSsubscriber_info.type of (publisher, m_freshsub) (0 SQL Server), m_freshsub registered nowhere before the call; after the call: servers=1 subscriber_info=0 subscription_rows=1 declared=0 call=ok
+R|D.sp_addsubscription.push.rso.@status|2|column=syssubscriptions.status (0 inactive, 1 subscribed, 2 active) of a push subscription created with @sync_type = replication support only (sync_type=2), m_pa_ext m_x1 to m_dsub3 call=ok
+R|D.sp_addsubscription.extend.pull.@status|1|column=syssubscriptions.status (0 inactive, 1 subscribed, 2 active) of the m_x2 row of the pull subscription of m_pa_ext to m_dsub4 (m_x1 row: 1), extended by sp_addsubscription @article = m_x2, @subscription_type = pull, @sync_type = automatic call=ok
+R|D.sp_addsubscription.extend.pull.@subscription_type|1|column=syssubscriptions.subscription_type (0 push, 1 pull) of the m_x2 row of the same extension (m_x1 row: 1) call=ok
+R|D.sp_addsubscription.extend.pull.agents|1|column=count of distribution.dbo.MSdistribution_agents rows of m_pa_ext for m_dsub4 after the extension (subscription_type of the rows: 1) call=ok
+R|D.sp_addsubscription.extend.rso.@status|2|column=syssubscriptions.status (0 inactive, 1 subscribed, 2 active) of the m_x2 row of the replication support only subscription of m_pa_ext to m_dsub3 (m_x1 row: 2; sync_type of the m_x2 row: 2), extended by sp_addsubscription @article = m_x2, @subscription_type = push, @sync_type = replication support only call=ok
 R|D.sp_replicationdboption.publish.@ignore_distributor|no-column|column=no-column: a flag of the call (do not connect to the distributor) declared=0 call=ok
 R|D.sp_replicationdboption.publish.@from_scripting|no-column|column=no-column: a flag of the call declared=0 call=ok
 R|D.sp_addlogreader_agent.publication-db.@job_login|null|column=distribution.dbo.MSlogreader_agents.job_login declared=NULL call=ok
@@ -553,4 +1780,4 @@ R|D.sp_add_agent_profile.agent-type-3.@profile_id|assigned|column=msdb.dbo.MSage
 R|D.sp_add_agent_profile.agent-type-3.@profile_type|1|column=MSagent_profiles.type (0 system, 1 custom) declared=1 call=ok
 R|D.sp_add_agent_profile.agent-type-3.@description|null|column=MSagent_profiles.description declared=NULL call=ok
 R|D.sp_add_agent_profile.agent-type-3.@default|0|column=MSagent_profiles.def_profile declared=0 call=ok
-R|TOTAL|554
+R|TOTAL|1781
