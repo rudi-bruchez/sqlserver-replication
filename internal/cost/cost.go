@@ -86,6 +86,13 @@ func Pattern(path string) string { return indexRE.ReplaceAllString(path, "[*]") 
 // Lookup finds the entry of a change (a path, with or without indices, or
 // an operation name), its direction (R8) and the publication type. An entry
 // whose Dir is "both" answers to_true and to_false.
+//
+// The changes outside a publication (distributor, log reader agent, agent
+// profiles, profile bindings, job operations) are measured once and stored
+// under PubType "transactional": callers pass "transactional" for them.
+// add_publication and generate_and_wait have no entry: they are costed
+// outside the table, by the creation cost of Task 11 and by R34's strategy
+// cost.
 func Lookup(change, dir, pubType string) (Entry, bool) {
 	p := Pattern(change)
 	for _, e := range Table {

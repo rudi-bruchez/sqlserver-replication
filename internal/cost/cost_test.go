@@ -26,6 +26,16 @@ func TestCostTableMatchesRows(t *testing.T) {
 			if ready, stated := rowReady(r); stated && ready != c.Ready {
 				t.Errorf("%s: %s: the row's ready state is %v, the cite says %v", key, c.Row, ready, c.Ready)
 			}
+			if at2, stated := rowAt2(r, e.Wide); stated && at2 != c.At2 {
+				t.Errorf("%s: %s: the row's status-2 state is %v, the cite says %v", key, c.Row, at2, c.At2)
+			}
+			if inv, rei, stated := rowDetailFlags(r, opProcedure[e.Change]); stated {
+				gi, gr := Flags(e, FlagState{Ready: c.Ready, At2: c.At2})
+				if gi != inv || gr != rei {
+					t.Errorf("%s: %s: the row's flags= passed invalidate=%v reinit=%v, Flags gives invalidate=%v reinit=%v",
+						key, c.Row, inv, rei, gi, gr)
+				}
+			}
 			if l := rowLabel(r); e.Property != "" && l != "" && !strings.Contains(l, e.Property) {
 				t.Errorf("%s: %s: the row's label %q does not name the property %q", key, c.Row, l, e.Property)
 			}
@@ -58,7 +68,7 @@ func TestCostTableMatchesRows(t *testing.T) {
 				t.Errorf("%s: counterexample %s: result %q, cite expects %q", key, c.Row, r.result, c.Expect)
 				continue
 			}
-			if rowOutcome(r).kind != "error" {
+			if rowOutcome(r).kind != "error" && !hasErrorCell(r.result) {
 				t.Errorf("%s: counterexample %s is not an error: %q", key, c.Row, r.result)
 			}
 		}
@@ -69,6 +79,10 @@ func TestCostTableMatchesRows(t *testing.T) {
 		}
 	}
 }
+
+// opProcedure names the procedure of an operation whose rows give flags per
+// procedure (06-structural flags=sp_droparticle:inv=1).
+var opProcedure = map[string]string{OpAddArticle: "sp_addarticle", OpDropArticle: "sp_droparticle"}
 
 func TestFlagsRule(t *testing.T) {
 	for _, ready := range []bool{false, true} {
@@ -128,6 +142,33 @@ func TestLookupDirections(t *testing.T) {
 	if _, ok := Lookup("publications[*].replicate_ddl", "to_true", sn); ok {
 		t.Errorf("snapshot replicate_ddl to_true found, the reverse directions were measured on transactional publications only")
 	}
+	// status is an enum: one entry, Dir "" (R8).
+	for _, pt := range []string{tr, sn} {
+		if _, ok := Lookup("publications[*].status", "", pt); !ok {
+			t.Errorf("%s status not found", pt)
+		}
+	}
+	for _, want := range []struct {
+		change, dir, pubType string
+		class                Class
+		err                  int
+	}{
+		{"publications[*].snapshot.in_default_folder", "to_false", sn, Snapshot, 0},
+		{"publications[*].independent_agent", "to_true", sn, DropReadd, 20013},
+		{"publications[*].allow_subscription_copy", "to_true", sn, Online, 0},
+		{"publications[*].enabled_for_het_sub", "to_true", tr, DropReadd, 20640},
+		{"publications[*].enabled_for_het_sub", "to_false", sn, DropReadd, 20640},
+	} {
+		e, ok := Lookup(want.change, want.dir, want.pubType)
+		if !ok || e.Class != want.class || e.Error != want.err {
+			t.Errorf("%s %s %s: %v %s %d, want %s %d", want.change, want.dir, want.pubType, ok, e.Class, e.Error, want.class, want.err)
+		}
+	}
+	for _, op := range []string{OpAddPublication, OpGenerateAndWait} {
+		if _, ok := Lookup(op, "", tr); ok {
+			t.Errorf("%s found: it is costed outside the table", op)
+		}
+	}
 	// A path with indices finds the entry of its pattern.
 	if _, ok := Lookup("publications[SalesPub].articles[Orders].description", "set", tr); !ok {
 		t.Errorf("an indexed path does not find its pattern's entry")
@@ -180,6 +221,9 @@ func TestEveryEntryCites(t *testing.T) {
 		}
 		if e.Procedure != "" && e.Property == "" {
 			t.Errorf("%s: procedure %s without a property", key, e.Procedure)
+		}
+		if e.Wide && e.Change != "publications[*].sync_method" {
+			t.Errorf("%s: Wide is set; only sync_method looks at every row", key)
 		}
 		if (e.Class == Refused || e.Class == DropReadd) && e.Error == 0 {
 			t.Errorf("%s: %s without its error", key, e.Class)

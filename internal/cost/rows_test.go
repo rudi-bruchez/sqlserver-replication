@@ -135,6 +135,85 @@ func rowReady(r row) (ready, stated bool) {
 	return false, false
 }
 
+var (
+	artStatusRE = regexp.MustCompile(`(?:^|\s)art_status=(\S+)`)
+	subStatusRE = regexp.MustCompile(`(?:^|\s)sub_status=(\S+)`)
+	statusRE    = regexp.MustCompile(`(?:^|[\s(])status=([0-9a-z/]+)`)
+)
+
+// rowAt2 is whether the rows the reinit condition looks at were at status 2,
+// when the row states it. In 05-snapshot-flag, the operated article's row is
+// art_status= (n/a when the article does not exist yet), and every row of the
+// publication is sub_status= (2, 1 or 1/2): wide reads sub_status=. In
+// 09-snapshot-pub and 18-reverse, status= is the one subscription's row
+// (none when there is no subscription).
+func rowAt2(r row, wide bool) (at2, stated bool) {
+	switch r.file {
+	case "05-snapshot-flag":
+		if wide {
+			if m := subStatusRE.FindStringSubmatch(r.detail); m != nil {
+				return strings.Contains(m[1], "2"), true
+			}
+			return false, false
+		}
+		if m := artStatusRE.FindStringSubmatch(r.detail); m != nil && m[1] != "n/a" {
+			return m[1] == "2", true
+		}
+	case "09-snapshot-pub", "18-reverse":
+		if m := statusRE.FindStringSubmatch(r.detail); m != nil {
+			return m[1] == "2", true
+		}
+	}
+	return false, false
+}
+
+var flagsRE = regexp.MustCompile(`(?:^|[\s;])flags=([^\s;]+)`)
+
+// rowDetailFlags reads the flags= of a row's detail, the flags the
+// accepted calls passed: "none", "inv=0,reinit=1", "reinit=1", or per
+// procedure "sp_droparticle:inv=1,sp_addarticle:inv=0". A procedure's
+// flags are read only when it is proc; unprefixed ones always. stated is
+// false when the detail has no flags= or none that applies.
+func rowDetailFlags(r row, proc string) (inv, reinit, stated bool) {
+	m := flagsRE.FindStringSubmatch(r.detail)
+	if m == nil {
+		return false, false, false
+	}
+	if m[1] == "none" {
+		return false, false, true
+	}
+	for _, part := range strings.Split(m[1], ",") {
+		if p, kv, ok := strings.Cut(part, ":"); ok {
+			if p != proc {
+				continue
+			}
+			part = kv
+		}
+		k, v, _ := strings.Cut(part, "=")
+		switch k {
+		case "inv":
+			inv, stated = v == "1", true
+		case "reinit":
+			reinit, stated = v == "1", true
+		}
+	}
+	return inv, reinit, stated
+}
+
+// hasErrorCell reports a compound result one of whose cells is an error
+// number ("m_t7:14100,all:ok").
+func hasErrorCell(result string) bool {
+	for _, part := range strings.Split(result, ",") {
+		if i := strings.LastIndexAny(part, ":="); i >= 0 {
+			part = part[i+1:]
+		}
+		if _, ok := errNumber(part); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // rowLabel is the text naming the call of a row, when the row has one: the
 // detail of a matrix row ("SalesPub publication retention = 100 ..."), or the
 // id of a 07-changes SUB or DST row and of an 08-pull P2 row, which ends with

@@ -128,6 +128,9 @@ var Table = []Entry{
 		Counter: []Cite{cite(mx+"P13", "f00=21210,f10=21210,f01=21210,f11=21210", non2)}},
 	{Change: pub + "allow_subscription_copy", Dir: "to_false", PubType: tr, Procedure: "sp_changepublication", Property: "allow_subscription_copy", Class: Online,
 		Cites: []Cite{cite(rv+"RV.I.allow_subscription_copy", allOK, rdy2)}},
+	{Change: pub + "allow_subscription_copy", Dir: "to_true", PubType: sn, Procedure: "sp_changepublication", Property: "allow_subscription_copy", Class: Online,
+		Cites:   []Cite{cite(sp+"SNAPI.P07", allOK, rdy2)},
+		Counter: []Cite{cite(sp+"SNAP.P07", "f00=21210,f10=21210,f01=21210,f11=21210", non2)}},
 
 	{Change: pub + "allow_partition_switch", Dir: "to_true", PubType: tr, Procedure: "sp_changepublication", Property: "allow_partition_switch", Class: Online,
 		Cites: []Cite{cite(mx+"P14", allOK, rdy2), cite(mx+"P15", allOK, non2)}},
@@ -150,11 +153,11 @@ var Table = []Entry{
 	{Change: pub + "allow_drop", Dir: "to_true", PubType: sn, Procedure: "sp_changepublication", Property: "allow_drop", Class: Online,
 		Cites: []Cite{cite(sp+"SNAP.P10", allOK, non2), cite(sp+"SNAPI.P10", allOK, rdy2)}},
 
-	{Change: pub + "status", Dir: "active>inactive", PubType: tr, Procedure: "sp_changepublication", Property: "status", Class: Online,
-		Cites: []Cite{cite(mx+"P19", allOK, rdy2), cite(mx+"P20", allOK, non2)}},
-	{Change: pub + "status", Dir: "inactive>active", PubType: tr, Procedure: "sp_changepublication", Property: "status", Class: Online,
-		Cites: []Cite{cite(rv+"RV.P.status", allOK, non1)}},
-	{Change: pub + "status", Dir: "active>inactive", PubType: sn, Procedure: "sp_changepublication", Property: "status", Class: Online,
+	// status is an enum: one entry for both values (R8), inactive measured
+	// by P19, P20 and SNAP.P11, active by RV.P.status.
+	{Change: pub + "status", PubType: tr, Procedure: "sp_changepublication", Property: "status", Class: Online,
+		Cites: []Cite{cite(mx+"P19", allOK, rdy2), cite(mx+"P20", allOK, non2), cite(rv+"RV.P.status", allOK, non1)}},
+	{Change: pub + "status", PubType: sn, Procedure: "sp_changepublication", Property: "status", Class: Online,
 		Cites: []Cite{cite(sp+"SNAP.P11", allOK, non2), cite(sp+"SNAPI.P11", allOK, rdy2)}},
 
 	{Change: pub + "immediate_sync", Dir: "to_false", PubType: tr, Procedure: "sp_changepublication", Property: "immediate_sync", Class: DropsReady,
@@ -172,6 +175,18 @@ var Table = []Entry{
 	{Change: pub + "independent_agent", Dir: "both", PubType: tr, Procedure: "sp_changepublication", Property: "independent_agent", Class: DropReadd, Error: 20013,
 		Cites:   []Cite{cite(mx+"P26", "f00=20013,f10=20013,f01=20013,f11=20013", non2)},
 		Counter: []Cite{cite(mx+"P25", "f00=21022,f10=21022,f01=21022,f11=21022", rdy2)}},
+	{Change: pub + "independent_agent", Dir: "both", PubType: sn, Procedure: "sp_changepublication", Property: "independent_agent", Class: DropReadd, Error: 20013,
+		Cites:   []Cite{cite(sp+"SNAP.P16", "f00=20013,f10=20013,f01=20013,f11=20013", non2)},
+		Counter: []Cite{cite(sp+"SNAPI.P16", "f00=21022,f10=21022,f01=21022,f11=21022", rdy2)}},
+
+	// enabled_for_het_sub cannot change while subscriptions exist (20640).
+	{Change: pub + "enabled_for_het_sub", Dir: "both", PubType: tr, Procedure: "sp_changepublication", Property: "enabled_for_het_sub", Class: DropReadd, Error: 20640,
+		Cites: []Cite{cite(mx+"P37", "f00=20640,f10=20640,f01=20640,f11=20640", rdy2)}},
+	{Change: pub + "enabled_for_het_sub", Dir: "both", PubType: sn, Procedure: "sp_changepublication", Property: "enabled_for_het_sub", Class: DropReadd, Error: 20640,
+		Cites: []Cite{
+			cite(sp+"SNAP.P24", "f00=20640,f10=20640,f01=20640,f11=20640", non2),
+			cite(sp+"SNAPI.P24", "f00=20640,f10=20640,f01=20640,f11=20640", rdy2),
+		}},
 
 	// allow_anonymous true needs immediate_sync (P28, SNAP.P17, 20011).
 	{Change: pub + "allow_anonymous", Dir: "to_true", PubType: tr, Procedure: "sp_changepublication", Property: "allow_anonymous", Class: Online,
@@ -196,6 +211,8 @@ var Table = []Entry{
 
 	{Change: pub + "snapshot.in_default_folder", Dir: "to_false", PubType: tr, Procedure: "sp_changepublication", Property: "snapshot_in_defaultfolder", Class: Snapshot,
 		Cites: []Cite{cite(mx+"P31", invOK, rdy2)}},
+	{Change: pub + "snapshot.in_default_folder", Dir: "to_false", PubType: sn, Procedure: "sp_changepublication", Property: "snapshot_in_defaultfolder", Class: Snapshot,
+		Cites: []Cite{cite(sp+"SNAP.P19", allOK, non2), cite(sp+"SNAPI.P19", invOK, rdy2)}},
 	{Change: pub + "snapshot.in_default_folder", Dir: "to_true", PubType: tr, Procedure: "sp_changepublication", Property: "snapshot_in_defaultfolder", Class: Snapshot,
 		Cites: []Cite{cite(rv+"RV.I.snapshot_in_defaultfolder", invOK, rdy2), cite(rv+"RV.N.snapshot_in_defaultfolder", allOK, non2)}},
 
@@ -233,7 +250,13 @@ var Table = []Entry{
 			cite(mx+"P22", reinitOK, non2),
 		}},
 	{Change: pub + "sync_method", Dir: "concurrent>native", PubType: tr, Procedure: "sp_changepublication", Property: "sync_method", Class: SnapshotReinit, Wide: true,
-		Cites: []Cite{cite(ss+"C.concurrent.sync_method", "f11", rdy2), cite(mx+"P21", "f00=20607,f10=20608,f01=20607,f11=ok", rdy2)}},
+		Cites: []Cite{
+			cite(ss+"C.concurrent.sync_method", "f11", rdy2), cite(mx+"P21", "f00=20607,f10=20608,f01=20607,f11=ok", rdy2),
+			// 05-snapshot-flag O6 on the concurrent publication: the reinit
+			// flag is asked when any row is at 2 (S5, S6: rows at 1 and 2).
+			cite(sf+"S2.O6", allOK, non1), cite(sf+"S3.O6", reinitOK, non2), cite(sf+"S5.O6", reinitOK, non2),
+			cite(sf+"S6.O6", reinitOK, non2), cite(sf+"S7.O6", bothOK, rdy2),
+		}},
 	{Change: pub + "sync_method", Dir: "concurrent_c>native", PubType: tr, Procedure: "sp_changepublication", Property: "sync_method", Class: SnapshotReinit, Wide: true,
 		Cites: []Cite{cite(ss+"C.concurrent_c.sync_method", "f11", rdy2)}},
 	{Change: pub + "sync_method", Dir: "concurrent>concurrent_c", PubType: tr, Procedure: "sp_changepublication", Property: "sync_method", Class: SnapshotReinit, Wide: true,
@@ -297,6 +320,9 @@ var Table = []Entry{
 		Cites: cat([]Cite{
 			cite(mx+"A12", bothOK, rdy2), cite(mx+"A13", reinitOK, non2),
 			cite(sf+"S1.O3", bothOK, rdy2), cite(sf+"S3.O3", reinitOK, non2), cite(sf+"S4.O3", allOK, non1),
+			// The reinit condition is the operated article's row: S5.O3 is at
+			// 2 among rows at 1 and 2, S6.O3 at 1 among rows at 1 and 2.
+			cite(sf+"S5.O3", reinitOK, non2), cite(sf+"S6.O3", allOK, non1),
 		}, scopeC("schema_option", "f11"))},
 	{Change: art + "schema_options", PubType: sn, Procedure: "sp_changearticle", Property: "schema_option", Class: SnapshotReinit,
 		Cites: []Cite{cite(sp+"SNAP.A12", reinitOK, non2), cite(sp+"SNAP.A13", reinitOK, non2), cite(sp+"SNAPI.A12", bothOK, rdy2), cite(sp+"SNAPI.A13", bothOK, rdy2)}},
@@ -360,12 +386,18 @@ var Table = []Entry{
 	{Change: OpArticleFilter, PubType: tr, Class: SnapshotReinit,
 		Cites: cat([]Cite{
 			cite(mx+"F01", bothOK, rdy2), cite(mx+"F02", bothOK, rdy2), cite(mx+"F03", bothOK, rdy2),
+			// The filter procedure changes only through sp_articlefilter;
+			// sp_changearticle filter (A22, the same procedure set again) is
+			// never generated and only supports the flags of this entry.
+			cite(mx+"A22", bothOK, rdy2),
 			cite(sf+"S1.O7", bothOK, rdy2), cite(sf+"S3.O7", reinitOK, non2), cite(sf+"S4.O7", allOK, non1),
 		}, scopeC("articlefilter", "f11"))},
 	{Change: OpArticleFilter, PubType: sn, Class: SnapshotReinit,
 		Cites: []Cite{
 			cite(sp+"SNAP.F01", reinitOK, non2), cite(sp+"SNAP.F04", reinitOK, non2), cite(sp+"SNAP.F05", reinitOK, non2),
 			cite(sp+"SNAPI.F01", bothOK, rdy2), cite(sp+"SNAPI.F04", bothOK, rdy2), cite(sp+"SNAPI.F05", bothOK, rdy2),
+			// sp_changearticle filter, never generated (see the transactional entry).
+			cite(sp+"SNAP.A22", reinitOK, non2), cite(sp+"SNAPI.A22", bothOK, rdy2),
 		}},
 	{Change: OpArticleView, PubType: tr, Class: SnapshotReinit,
 		Cites: cat([]Cite{
@@ -393,7 +425,13 @@ var Table = []Entry{
 			cite(st+"C4.nonimm-native", "addarticle=ok,extend=ok", non1), cite(st+"C4.nonimm-conc", "addarticle=ok,extend=ok", non1),
 			cite(ss+"D.non_native.extend_rule", "ok", non1), cite(ss+"D.non_concurrent.extend_rule", "ok", non1),
 		},
-		Counter: []Cite{cite(ss+"D.imm_native.extend_rule", "14122", non1)}},
+		Counter: []Cite{
+			cite(ss+"D.imm_native.extend_rule", "14122", non1),
+			cite(ss+"D.non_native_pub.extend", "m_t7:14100,all:ok", non1),
+			cite(ss+"D.non_concurrent_pub.extend", "m_t7:14100,all:ok", non1),
+			cite(ss+"D.imm_concurrent.extend_rule", "14058", non1),
+			cite(ss+"D.imm_native.extend_all", "14058", non1),
+		}},
 	{Change: OpDropSubscription, PubType: tr, Class: Online, Cites: dropSubscriptionCites},
 	{Change: OpDropSubscriptionArticle, PubType: tr, Class: Online, Cites: dropSubscriptionCites},
 	{Change: OpDropPublication, PubType: tr, Class: Online, Cites: dropPublicationCites},
@@ -428,6 +466,8 @@ var Table = []Entry{
 			cite(ch+"AGT.sp_changepublication_snapshot.frequency_type", "14278", non1),
 			cite(ch+"AGT.sp_changepublication_snapshot.active_end_date", "14288", non1),
 		}},
+	// AGT.sp_changepublication_snapshot.snapshot_job_name has no entry:
+	// job_name is not compared (R41).
 	// The connection security of the log reader and snapshot agents is
 	// refused (21694); job_login with 14529, since a valid account was never
 	// measured.
