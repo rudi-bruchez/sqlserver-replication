@@ -28,6 +28,9 @@ type PubState struct {
 	// this plan created and costed new_snapshot: a later change of the
 	// article does not count its snapshot again (R34).
 	counted map[string]bool
+	// wideMarked: a publication-wide reinitialization entry (sync_method
+	// from or to concurrent or concurrent_c) was applied by this plan.
+	wideMarked bool
 }
 
 // SubState is the predicted state of one subscription.
@@ -282,6 +285,9 @@ func (s *State) apply(op *Operation) {
 			s.LogReader = false // 13-transient T02
 		}
 		return
+	}
+	if e.Wide && e.Class == cost.SnapshotReinit {
+		ps.wideMarked = true
 	}
 	if flagSet(op, paramReinit) {
 		// C.*.schema_option, C.native.sync_method: the operated article's

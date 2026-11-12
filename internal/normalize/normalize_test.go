@@ -507,16 +507,32 @@ func TestNormalizeScheduleSubday(t *testing.T) {
 }
 
 func TestNormalizeSyncViewSchema(t *testing.T) {
+	// sp_articleview creates the view of a filtered article in dbo.
 	a := testTable("A", "s", "T")
 	a.SyncObject = &model.ObjectName{Schema: "s", Name: "v"}
+	a.Filter = &model.Filter{Clause: "x > 0", Procedure: &model.ObjectName{Name: "f"}}
 	b := testTable("B", "s", "U")
 	b.SyncObject = &model.ObjectName{Name: "w"}
-	_, rs := Normalize(testConfig(testPub("P", a, b)), nil)
+	b.Filter = &model.Filter{Clause: "x > 0", Procedure: &model.ObjectName{Name: "g"}}
+	c := testTable("C", "s", "V")
+	c.SyncObject = &model.ObjectName{Schema: "s", Name: "c"}
+	c.Columns = []string{"id"}
+	// Without a filter, the user's view is named by sp_addarticle
+	// @sync_object and @sync_object_owner, in any schema.
+	d := testTable("D", "s", "W")
+	d.SyncObject = &model.ObjectName{Schema: "s", Name: "d"}
+	_, rs := Normalize(testConfig(testPub("P", a, b, c, d)), nil)
 	if !refused(rs, "publications[P].articles[A].sync_object", "outside dbo", "sp_articleview") {
-		t.Errorf("sync view in s: refusals %v", rs)
+		t.Errorf("sync view in s with a row filter: refusals %v", rs)
+	}
+	if !refused(rs, "publications[P].articles[C].sync_object", "outside dbo", "sp_articleview") {
+		t.Errorf("sync view in s with a column filter: refusals %v", rs)
 	}
 	if refused(rs, "publications[P].articles[B].sync_object") {
 		t.Errorf("an unqualified sync view (dbo) refused: %v", rs)
+	}
+	if refused(rs, "publications[P].articles[D].sync_object") {
+		t.Errorf("a user view in s without a filter refused: %v", rs)
 	}
 }
 

@@ -427,9 +427,12 @@ func (n *normalizer) names(c *model.Config) {
 			}
 			qualify(&a.Source)
 			qualify(a.SyncObject)
-			if a.SyncObject != nil && a.SyncObject.Schema != "dbo" {
+			if a.SyncObject != nil && a.SyncObject.Schema != "dbo" && (a.Filter != nil || len(a.Columns) > 0) {
 				// Measured by the Task 8 review: sp_articleview ignores the
-				// schema of @view_name and creates the view in dbo.
+				// schema of @view_name and creates the view in dbo. It is
+				// called for an article with a row or a column filter; a
+				// view of the user's that sp_addarticle @sync_object and
+				// @sync_object_owner name can be in any schema.
 				n.refuse(artPath(p, a)+".sync_object", "a synchronization view outside dbo (%s) is not supported: sp_articleview creates its view in dbo whatever the schema of @view_name (measured)", a.SyncObject.Schema)
 			}
 			if a.Filter != nil {

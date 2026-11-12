@@ -65,6 +65,15 @@ type Operation struct {
 	Shared   []string         `json:"shared"`  // other publication databases, "<publisher>.<database>"
 	Warnings []string         `json:"warnings"`
 	entry    *cost.Entry      // set by the strategy; the flags pass reads it
+	// wideMarkCheck marks an sp_addarticle that finish refuses on an
+	// immediate_sync publication whose every subscription row an earlier
+	// sync_method change of the plan marked (spec "Strategies", Articles).
+	wideMarkCheck bool
+	// replacesData: a reinitialization of the operated article replaces
+	// subscriber data, its pre_creation_cmd being drop, delete or truncate
+	// (spec anti-goal 4); finish adds subscriber_data_replaced when it
+	// costs the call reinitialization.
+	replacesData bool
 }
 
 // PropertyChange is one property an operation changes.

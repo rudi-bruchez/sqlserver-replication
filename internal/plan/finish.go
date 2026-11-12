@@ -31,8 +31,15 @@ func finish(ops []Operation, st *State) ([]Operation, []Refusal) {
 		return ops[i].Order < ops[j].Order
 	})
 	finalImm := finalImmediateSync(ops, st)
+	var refusals []Refusal
 	for i := range ops {
 		op := &ops[i]
+		if op.wideMarkCheck && everyRowMarked(st.Pubs[first(op.Affects.Publications)]) {
+			// Spec "Strategies", Articles: no campaign row measured the
+			// snapshot and delivery after this combination (campaign item
+			// 15; O7 measured only that the call is accepted).
+			refusals = append(refusals, Refusal{Path: op.Path, Reason: "cost of the snapshot after sp_addarticle on a publication reinitialization not measured"})
+		}
 		var computed []Cost
 		switch {
 		case op.Kind == "publication" && op.Action == "add":
@@ -49,12 +56,43 @@ func finish(ops []Operation, st *State) ([]Operation, []Refusal) {
 			// are online.
 			computed = []Cost{CostOnline}
 		}
+		if op.replacesData && hasCost(computed, CostReinitialization) {
+			op.Costs = append(op.Costs, CostSubscriberDataReplaced) // anti-goal 4
+		}
 		op.Costs = mergeCosts(computed, op.Costs)
 		st.apply(op)
 		op.Seq = i + 1
 	}
 	owedAtEnd(ops, st)
-	return ops, nil
+	return ops, refusals
+}
+
+// everyRowMarked tells an immediate_sync publication whose every
+// subscription row is at 1 after a publication-wide reinitialization of
+// this plan (a sync_method change from or to concurrent or concurrent_c).
+func everyRowMarked(ps *PubState) bool {
+	if ps == nil || !ps.ImmediateSync || !ps.wideMarked {
+		return false
+	}
+	rows := 0
+	for _, sub := range ps.Subs {
+		for _, s := range sub.Rows {
+			if s != 1 {
+				return false
+			}
+			rows++
+		}
+	}
+	return rows > 0
+}
+
+func hasCost(cs []Cost, c Cost) bool {
+	for _, x := range cs {
+		if x == c {
+			return true
+		}
+	}
+	return false
 }
 
 // owedAtEnd turns full_generation_deferred into online for the

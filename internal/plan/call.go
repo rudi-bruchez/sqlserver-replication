@@ -344,7 +344,8 @@ func encCommand(v any) (string, error) {
 // encObjectName passes the name of an object alone: sp_addarticle
 // @sync_object, whose schema is @sync_object_owner, and sp_articleview
 // @view_name, whose schema the procedure ignores (it creates the view in
-// dbo, measured by the Task 8 review; normalization refuses another schema).
+// dbo, measured by the Task 8 review; normalization refuses another schema
+// for an article with a row or a column filter, whose view it creates).
 func encObjectName(v any) (string, error) {
 	x, ok := value(v)
 	if !ok {
