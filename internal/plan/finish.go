@@ -1,10 +1,15 @@
 package plan
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/rudi-bruchez/sqlserver-replication/internal/cost"
 )
+
+// keepsRowsWarning is the warning of an operation whose reinitialization
+// covers an article with pre_creation_cmd none (Operation.keepsRows).
+const keepsRowsWarning = "article %s keeps its rows at the subscriber (pre_creation_cmd none): the snapshot's bulk copy fails on duplicate keys unless the table is emptied first (measured)"
 
 // strategyCosts are the costs a strategy sets and finish keeps (R34): the
 // others are computed here, from the entry and the predicted state.
@@ -31,6 +36,12 @@ func finish(ops []Operation, st *State) ([]Operation, []Refusal) {
 		return ops[i].Order < ops[j].Order
 	})
 	finalImm := finalImmediateSync(ops, st)
+	lastGen := map[string]int{}
+	for i := range ops {
+		if ops[i].Kind == "generate_and_wait" {
+			lastGen[first(ops[i].Affects.Publications)] = i + 1
+		}
+	}
 	var refusals []Refusal
 	for i := range ops {
 		op := &ops[i]
@@ -56,6 +67,13 @@ func finish(ops []Operation, st *State) ([]Operation, []Refusal) {
 			computed = []Cost{CostNewSnapshot} // R25, R34
 		case op.entry != nil && scopeOf(op.entry) != scopeNone:
 			computed = flagsAndCosts(op, st.resolve(op), finalImm[first(op.Affects.Publications)])
+			if op.entry.Change == cost.OpExtendSubscription && i+1 < lastGen[first(op.Affects.Publications)] {
+				// -defer-full-snapshot: the extension creates the status 1
+				// rows and the generate_and_wait after it generates the added
+				// articles alone, which carries their new_snapshot (fix round
+				// 1 of Task 13, measured).
+				computed = []Cost{CostOnline}
+			}
 		}
 		if op.readd {
 			// A subscription added back after its drop for a drop_readd
@@ -71,6 +89,11 @@ func finish(ops []Operation, st *State) ([]Operation, []Refusal) {
 		}
 		if op.replacesData && hasCost(computed, CostReinitialization) {
 			op.Costs = append(op.Costs, CostSubscriberDataReplaced) // anti-goal 4
+		}
+		if hasCost(computed, CostReinitialization) {
+			for _, a := range op.keepsRows {
+				op.Warnings = append(op.Warnings, fmt.Sprintf(keepsRowsWarning, a))
+			}
 		}
 		op.Costs = mergeCosts(computed, op.Costs)
 		st.apply(op)

@@ -12,6 +12,7 @@ func init() { strategies = append(strategies, deferStrategy) }
 // The texts of the deferral (spec "Strategies", -defer-full-snapshot).
 const (
 	deferUnmeasured = "cost of deferred snapshot not measured"
+	deferSyncChange = "cost of deferred snapshot with a sync_method change not measured"
 	deferRecurring  = "the deferral would last until the next scheduled run: the snapshot agent of %s has a recurring schedule; change its schedule in one plan and defer in the next"
 	deferMadeRecur  = "the deferral would last until the next scheduled run: the file makes the snapshot agent of %s recurring; change its schedule in one plan and defer in another"
 	deferNoWait     = "-defer-full-snapshot needs -wait: the generate and wait step waits for the deliveries of the added articles (R25)"
@@ -87,12 +88,17 @@ func (b *builder) deferPublication(pd, pc *model.Publication) {
 	path := pubPath(pd.Name)
 	pubType := stringOr(pd.Type, "transactional")
 	refused := false
-	for _, m := range []string{stringOr(pc.SyncMethod, "native"), stringOr(pd.SyncMethod, "native")} {
-		if m != "native" && m != "concurrent" {
-			b.refuse(path+".sync_method", "%s", deferUnmeasured)
-			refused = true
-			break
-		}
+	switch cm, dm := stringOr(pc.SyncMethod, "native"), stringOr(pd.SyncMethod, "native"); {
+	case cm != dm:
+		// Measured by the Task 13 review: with a change from native to
+		// concurrent the generate run is a full generation that replaces
+		// subscriber data, and the deferral, which turns immediate_sync off,
+		// slips past the wide-mark refusal of sp_addarticle.
+		b.refuse(path+".sync_method", "%s", deferSyncChange)
+		refused = true
+	case dm != "native" && dm != "concurrent":
+		b.refuse(path+".sync_method", "%s", deferUnmeasured)
+		refused = true
 	}
 	if pubType != "transactional" || boolOf(pc.AllowSubscriptionCopy) || boolOf(pd.AllowSubscriptionCopy) {
 		// Phase B measured transactional publications without

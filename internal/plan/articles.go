@@ -113,6 +113,15 @@ func createsView(a *model.Article) bool {
 	return a.SyncObject != nil && (a.Filter != nil || len(a.Columns) > 0)
 }
 
+// keepsRowsOf is the article's name when its pre_creation_cmd is none: a
+// reinitialization of it leaves its subscriber rows (Operation.keepsRows).
+func keepsRowsOf(a *model.Article) []string {
+	if stringOr(a.PreCreationCmd, "") == "none" {
+		return []string{a.Name}
+	}
+	return nil
+}
+
 func destructive(cmd *string) bool {
 	switch stringOr(cmd, "") {
 	case "drop", "delete", "truncate":
@@ -566,6 +575,7 @@ func (b *builder) changeArticle(pd *model.Publication, ppath string, ap pair[mod
 		}
 		op.Affects = affects()
 		op.replacesData = replaces
+		op.keepsRows = keepsRowsOf(d)
 		op.Sources = append(op.Sources, "spec Strategies (Filters and views)", "14-filter-view F4")
 		b.add(op)
 	}
@@ -743,6 +753,7 @@ func (b *builder) articleProperty(pd *model.Publication, d *model.Article, ch Ch
 	op.Changes = []PropertyChange{{Path: ch.Path, Before: orEmpty(ch.Before), After: orEmpty(ch.After)}}
 	op.Affects = Affects{Publications: []string{pd.Name}, Articles: []string{d.Name}}
 	op.replacesData = replaces
+	op.keepsRows = keepsRowsOf(d)
 	if rel == "pre_creation_cmd" {
 		op.Costs = []Cost{CostSubscriberDataReplaced}
 	}

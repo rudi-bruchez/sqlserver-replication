@@ -492,7 +492,10 @@ func TestCostDeferKeepsDeferred(t *testing.T) {
 		gen,
 		stepOp(t, 9, "c", "publications[SalesPub].immediate_sync", "to_true", "SalesPub", ""),
 	}, st)
-	wantCosts(t, "deferral", ops, on(CostFullGenerationDeferred), on(CostOnline), on(CostOnline), on(CostNewSnapshot), on(CostNewSnapshot), on(CostOnline))
+	// Task 13 fix round 1, item 3: the extension before the generate_and_wait
+	// that generates its article is online; the generation carries
+	// new_snapshot.
+	wantCosts(t, "deferral", ops, on(CostFullGenerationDeferred), on(CostOnline), on(CostOnline), on(CostOnline), on(CostNewSnapshot), on(CostOnline))
 	if st.Pending("SalesPub") {
 		t.Error("SalesPub pending after generate_and_wait")
 	}

@@ -74,6 +74,11 @@ type Operation struct {
 	// (spec anti-goal 4); finish adds subscriber_data_replaced when it
 	// costs the call reinitialization.
 	replacesData bool
+	// keepsRows is the articles whose pre_creation_cmd is none that a
+	// reinitialization by this operation covers: finish warns on each when
+	// it costs the call reinitialization (fix round 1 of Task 13, measured:
+	// the bulk copy fails on duplicate keys, 2601 then 20253, retried).
+	keepsRows []string
 	// readd: the sp_addsubscription that adds back a subscription the plan
 	// dropped for a change of independent_agent (spec "Publication
 	// properties"); finish costs it reinitialization.

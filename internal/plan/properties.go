@@ -156,7 +156,8 @@ func (b *builder) planProperties(pp pair[model.Publication]) {
 			// Every subscribed article is reinitialized: those whose
 			// pre_creation_cmd is drop, delete or truncate replace subscriber
 			// data (anti-goal 4).
-			op.replacesData = replacesAny(pd, pc)
+			op.replacesData = len(subscribedWith(pd, pc, destructive)) > 0
+			op.keepsRows = subscribedWith(pd, pc, func(c *string) bool { return stringOr(c, "") == "none" })
 		}
 		b.add(op)
 	}
@@ -200,21 +201,23 @@ func (b *builder) propertyOp(pd *model.Publication, ch Change, e cost.Entry, ord
 	return op, true
 }
 
-// replacesAny tells a publication with a subscribed article whose desired
-// pre_creation_cmd is drop, delete or truncate.
-func replacesAny(pd, pc *model.Publication) bool {
+// subscribedWith is the articles of a publication a current subscription
+// covers whose desired pre_creation_cmd satisfies cmd.
+func subscribedWith(pd, pc *model.Publication, cmd func(*string) bool) []string {
+	var out []string
 	for i := range pd.Articles {
 		a := &pd.Articles[i]
-		if !destructive(a.PreCreationCmd) {
+		if !cmd(a.PreCreationCmd) {
 			continue
 		}
 		for j := range pc.Subscriptions {
 			if covers(&pc.Subscriptions[j], a.Name) {
-				return true
+				out = append(out, a.Name)
+				break
 			}
 		}
 	}
-	return false
+	return out
 }
 
 // readdPublication tells a publication on both sides whose subscriptions
@@ -230,14 +233,15 @@ func (b *builder) readdPublication(pd, pc *model.Publication) bool {
 
 // The refusals of a drop and re-add (spec "Subscriptions").
 const (
-	readdInit   = "re-adding subscription %s, initialized with %s, for the change of independent_agent loses the changes made between the drop and the re-add (10-init-modes I1.support-only.gap, I2.backup.gap-original, I3.lsn.gap-original); re-create it from a fresh COPY_ONLY backup restored over the subscriber, or with initialize from lsn and the subscriber's transaction_timestamp"
-	readdSubset = "subscription %s to a subset of articles cannot be re-added by name on publication %s (14100 under concurrent, 14122 under immediate_sync)"
+	readdInit = "re-adding subscription %s, initialized with %s, for the change of independent_agent loses the changes made between the drop and the re-add (10-init-modes I1.support-only.gap, I2.backup.gap-original, I3.lsn.gap-original); re-create it from a fresh COPY_ONLY backup restored over the subscriber, or with initialize from lsn and the subscriber's transaction_timestamp"
 )
 
 // readdSubscription drops a kept subscription of a publication whose
 // independent_agent changes (step 4) and returns true when it is to be
 // re-added (step 9, by addSubscription, which reads b.readd). Refused when
-// it is not snapshot-initialized, or its subset cannot be re-added.
+// it is not snapshot-initialized. A subset the publication cannot take is
+// refused by normalization first (14100, 14122), so the re-add by name
+// needs no check of its own.
 func (b *builder) readdSubscription(pd, pc *model.Publication, sp pair[model.Subscription]) bool {
 	d, c := sp.Des, sp.Cur
 	path := sp.path(pubPath(pc.Name) + ".subscriptions")
@@ -249,10 +253,6 @@ func (b *builder) readdSubscription(pd, pc *model.Publication, sp pair[model.Sub
 	}
 	if dt, ct := stringOr(d.Type, "push"), stringOr(c.Type, "push"); dt != ct {
 		b.refuse(path+".type", r21Type, c.Key(), ct, dt)
-		return false
-	}
-	if len(d.Articles) > 0 && !pd.SubsetAllowed() {
-		b.refuse(path+".articles", readdSubset, c.Key(), pd.Name)
 		return false
 	}
 	if !b.dropSubscription(pc, c, "independent_agent changes, which the server refuses while the subscription exists (20013): it is dropped and added back in step 9") {

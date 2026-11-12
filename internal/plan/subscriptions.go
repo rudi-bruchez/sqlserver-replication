@@ -220,7 +220,8 @@ func (b *builder) addSubscription(pd *model.Publication, s *model.Subscription) 
 			// or truncate.
 			op.readd = true
 			op.Costs = []Cost{CostDropAndReadd}
-			op.replacesData = subReplacesData(pd, s, art)
+			op.replacesData = len(subArticles(pd, s, art, destructive)) > 0
+			op.keepsRows = subArticles(pd, s, art, func(c *string) bool { return stringOr(c, "") == "none" })
 			op.Reason = "the subscription is added back after the change of independent_agent"
 			op.Sources = append(op.Sources, "spec Strategies (Publication properties)", "02-matrix P26")
 		}
@@ -234,17 +235,17 @@ func (b *builder) addSubscription(pd *model.Publication, s *model.Subscription) 
 	}
 }
 
-// subReplacesData tells a re-add call whose articles (art, or every
-// article the subscription covers for N'all') include one whose
-// pre_creation_cmd is drop, delete or truncate.
-func subReplacesData(pd *model.Publication, s *model.Subscription, art string) bool {
+// subArticles is the articles of a re-add call (art, or every article the
+// subscription covers for N'all') whose pre_creation_cmd satisfies cmd.
+func subArticles(pd *model.Publication, s *model.Subscription, art string, cmd func(*string) bool) []string {
+	var out []string
 	for i := range pd.Articles {
 		a := &pd.Articles[i]
-		if (art == "all" && covers(s, a.Name) || strings.EqualFold(a.Name, art)) && destructive(a.PreCreationCmd) {
-			return true
+		if (art == "all" && covers(s, a.Name) || strings.EqualFold(a.Name, art)) && cmd(a.PreCreationCmd) {
+			out = append(out, a.Name)
 		}
 	}
-	return false
+	return out
 }
 
 // pushAgent is sp_addpushsubscription_agent, for the subscription's own

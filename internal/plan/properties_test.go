@@ -404,3 +404,209 @@ func TestReaddWithArticleChanges(t *testing.T) {
 		t.Errorf("the sp_addsubscription is not the re-add")
 	}
 }
+
+// Task 13 fix round 1.
+
+// refusedWith tells a plan with no operation that has a refusal at path with
+// reason, whatever other refusals it has.
+func refusedWith(t *testing.T, p *Plan, path, reason string) {
+	t.Helper()
+	for _, r := range p.Refusals {
+		if r.Path == path && r.Reason == reason {
+			if len(p.Operations) != 0 {
+				t.Errorf("a refused plan has operations")
+			}
+			return
+		}
+	}
+	t.Errorf("refusals %v, want one at %s: %s", p.Refusals, path, reason)
+}
+
+func TestDeferSyncMethodChangeRefused(t *testing.T) {
+	for _, tc := range []struct{ from, to string }{{"native", "concurrent"}, {"concurrent", "native"}} {
+		t.Run(tc.from+">"+tc.to, func(t *testing.T) {
+			p := buildLabWith(t, deferOpt, func(des, cur *model.Config) {
+				deferPub(t, des, cur, tc.from)
+				pubOf(t, des, "SalesPub").SyncMethod = str(tc.to)
+			})
+			wantRefusal(t, p, pubPathOf("SalesPub")+".sync_method", deferSyncChange)
+		})
+	}
+}
+
+func TestReinitKeepsRowsWarning(t *testing.T) {
+	t.Run("drop_readd", func(t *testing.T) {
+		ops := plannedAlone(t, buildLab(t, nil, func(des, cur *model.Config) {
+			both(des, cur, func(c *model.Config) { articleOf(t, c, "SalesRef", "Product").PreCreationCmd = str("none") })
+			pubOf(t, des, "SalesRef").IndependentAgent = model.Ptr(true)
+		}))
+		add := oneAlone(t, ops, "sp_addsubscription")
+		if len(add.Warnings) != 1 || add.Warnings[0] != fmt.Sprintf(keepsRowsWarning, "Product") {
+			t.Errorf("re-add warnings %q, want the one of Product", add.Warnings)
+		}
+	})
+	t.Run("sync_method", func(t *testing.T) {
+		ops := plannedAlone(t, buildLab(t, nil, func(des, cur *model.Config) {
+			both(des, cur, func(c *model.Config) { articleOf(t, c, "SalesPub", "Orders").PreCreationCmd = str("none") })
+			pubOf(t, des, "SalesPub").SyncMethod = str("native")
+		}))
+		op := oneAlone(t, ops, "sp_changepublication")
+		if len(op.Warnings) != 1 || op.Warnings[0] != fmt.Sprintf(keepsRowsWarning, "Orders") {
+			t.Errorf("sync_method warnings %q, want the one of Orders", op.Warnings)
+		}
+	})
+	t.Run("not reinitialized", func(t *testing.T) {
+		// A description change of the article reinitializes nothing: no
+		// warning, though the call names the article.
+		ops := plannedAlone(t, buildLab(t, nil, func(des, cur *model.Config) {
+			both(des, cur, func(c *model.Config) { articleOf(t, c, "SalesRef", "Product").PreCreationCmd = str("none") })
+			articleOf(t, des, "SalesRef", "Product").Description = str("changed")
+		}))
+		if op := oneAlone(t, ops, "sp_changearticle"); len(op.Warnings) != 0 {
+			t.Errorf("warnings %q on a change that reinitializes nothing", op.Warnings)
+		}
+	})
+}
+
+func TestDeferCostsOnGeneration(t *testing.T) {
+	ops := planned(t, buildLabWith(t, deferOpt, func(des, cur *model.Config) { deferPub(t, des, cur, "native") }))
+	ext := one(t, ops, "sp_addsubscription")
+	gen := one(t, ops, "sp_startpublication_snapshot")
+	wantOpCosts(t, ext, CostOnline)
+	wantOpCosts(t, gen, CostNewSnapshot)
+	if n := planCost(ops, CostNewSnapshot); n != 1 {
+		t.Errorf("%d operations cost new_snapshot, want 1:\n%s", n, opsString(ops))
+	}
+}
+
+func planCost(ops []Operation, c Cost) int {
+	n := 0
+	for _, op := range ops {
+		if hasCost(op.Costs, c) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestDeferAnonymousTurnedOff(t *testing.T) {
+	ops := planned(t, buildLabWith(t, deferOpt, func(des, cur *model.Config) {
+		deferPub(t, des, cur, "native")
+		pubOf(t, des, "SalesPub").AllowAnonymous = model.Ptr(false)
+	}))
+	if got, want := propertiesString(pubChanges(ops)), "allow_anonymous=false immediate_sync=false immediate_sync=true"; got != want {
+		t.Errorf("changes %s, want %s:\n%s", got, want, opsString(ops))
+	}
+}
+
+func TestDeferMoreRefusals(t *testing.T) {
+	pp := pubPathOf("SalesPub")
+	t.Run("snapshot publication", func(t *testing.T) {
+		p := buildLabWith(t, deferOpt, func(des, cur *model.Config) {
+			deferPub(t, des, cur, "native")
+			both(des, cur, func(c *model.Config) { pubOf(t, c, "SalesPub").Type = str("snapshot") })
+		})
+		refusedWith(t, p, pp, deferUnmeasured)
+	})
+	t.Run("allow_subscription_copy", func(t *testing.T) {
+		p := buildLabWith(t, deferOpt, func(des, cur *model.Config) {
+			deferPub(t, des, cur, "native")
+			both(des, cur, func(c *model.Config) { pubOf(t, c, "SalesPub").AllowSubscriptionCopy = model.Ptr(true) })
+		})
+		wantRefusal(t, p, pp, deferUnmeasured)
+	})
+}
+
+func TestDeferNeedsCurrentImmediateSync(t *testing.T) {
+	ops := planned(t, buildLabWith(t, deferOpt, func(des, cur *model.Config) {
+		deferPub(t, des, cur, "native")
+		p := pubOf(t, cur, "SalesPub")
+		p.ImmediateSync, p.AllowAnonymous = model.Ptr(false), model.Ptr(false)
+	}))
+	if n := len(opsCalling(ops, "sp_startpublication_snapshot")); n != 0 {
+		t.Errorf("%d generate_and_wait on a publication without immediate_sync:\n%s", n, opsString(ops))
+	}
+}
+
+func TestDeferReplacedArticle(t *testing.T) {
+	ops := planned(t, buildLabWith(t, deferOpt, func(des, cur *model.Config) {
+		deferPub(t, des, cur, "native")
+		removeArticle(t, des, "SalesPub", "m_t1")
+		articleOf(t, des, "SalesPub", "Orders").Source.Name = "Orders2" // R20
+	}))
+	one(t, ops, "sp_startpublication_snapshot")
+}
+
+func TestReaddRefusals(t *testing.T) {
+	refPath := func(leaf string) string {
+		return subPath("SalesRef", subOf(t, loadLabConfig(t), "SalesRef", "SalesSub")) + "." + leaf
+	}
+	t.Run("type", func(t *testing.T) {
+		p := buildLab(t, nil, func(des, _ *model.Config) {
+			d := pubOf(t, des, "SalesRef")
+			d.IndependentAgent, d.AllowPull = model.Ptr(true), model.Ptr(true)
+			subOf(t, des, "SalesRef", "SalesSub").Type = str("pull")
+		})
+		wantRefusal(t, p, refPath("type"), fmt.Sprintf(r21Type, "REPLLAB/SalesSub", "push", "pull"))
+	})
+	for _, side := range []string{"current", "desired"} {
+		t.Run("initialization "+side, func(t *testing.T) {
+			p := buildLab(t, nil, func(des, cur *model.Config) {
+				pubOf(t, des, "SalesRef").IndependentAgent = model.Ptr(true)
+				c := cur
+				if side == "desired" {
+					c = des
+				}
+				subOf(t, c, "SalesRef", "SalesSub").Initialization = str("replication_support_only")
+			})
+			wantRefusal(t, p, refPath("initialization"), fmt.Sprintf(readdInit, "REPLLAB/SalesSub", "replication_support_only"))
+		})
+	}
+}
+
+func TestChainDepths(t *testing.T) {
+	order := func(rel, after string) string {
+		return chainOrder("P", Change{Path: "publications[P]." + rel, Pattern: pubPropPrefix + rel, After: str(after)})
+	}
+	for _, c := range []struct{ low, high, on, off string }{
+		{"immediate_sync", "allow_subscription_copy", "true", "false"},
+		{"allow_partition_switch", "replicate_partition_switch", "true", "false"},
+		{"snapshot.alt_folder", "snapshot.compress", "/x", ""},
+	} {
+		highOn, highOff := c.on, c.off
+		if c.high == "snapshot.compress" {
+			highOn, highOff = "true", "false"
+		}
+		if !(order(c.low, c.on) < order(c.high, highOn)) {
+			t.Errorf("enable: %s does not come before %s", c.low, c.high)
+		}
+		if !(order(c.high, highOff) < order(c.low, c.off)) {
+			t.Errorf("disable: %s does not come before %s", c.high, c.low)
+		}
+	}
+}
+
+func TestNamedExtensionSubsetRefused(t *testing.T) {
+	p := buildLab(t, nil, func(des, cur *model.Config) {
+		pubOf(t, cur, "SalesRef").SyncMethod = str("concurrent")
+		subOf(t, cur, "SalesRef", "SalesSub").Articles = []string{"Product"}
+	})
+	refusedWith(t, p, subPath("SalesRef", subOf(t, loadLabConfig(t), "SalesRef", "SalesSub")),
+		"cost of the snapshot after an extension on a publication reinitialization not measured: change sync_method in one plan and add the articles in another")
+}
+
+func TestNamedOnMarkedMethods(t *testing.T) {
+	for m, want := range map[string]bool{"native": true, "character": true, "concurrent": false, "database_snapshot": false} {
+		ps := &PubState{SyncMethod: m, wideMarked: true, Subs: map[string]*SubState{"s": {Rows: map[string]int{"a": 1}}}}
+		if got := namedOnMarked(ps); got != want {
+			t.Errorf("namedOnMarked under %s = %v, want %v", m, got, want)
+		}
+	}
+}
+
+func TestPostScriptWarningOnChange(t *testing.T) {
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		pubOf(t, des, "SalesRef").Snapshot.PostScript = str("/var/opt/mssql/data/post.sql")
+	}))
+	wantWarning(t, one(t, ops, "sp_changepublication"), snapshotScriptWarning)
+}
