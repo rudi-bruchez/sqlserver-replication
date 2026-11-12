@@ -96,3 +96,50 @@ func TestFactsJSONKeys(t *testing.T) {
 		t.Errorf("missing keys %v, unexpected keys %v", missing, extra)
 	}
 }
+
+func TestChecksJSONKeys(t *testing.T) {
+	c := Checks{
+		Servers:             []ServerCheck{{Name: "S", Version: "16.0.4305.5", Edition: "Developer", Error: "e", Reachable: true, Major: 16}},
+		Tables:              []TableCheck{{Schema: "dbo", Name: "T", Exists: true, HasPrimaryKey: true, Columns: []string{"id"}}},
+		SubscriberDatabases: []DatabaseCheck{{Server: "S", Database: "D", Checked: true, Exists: true}},
+		Folders:             []FolderCheck{{Server: "S", Path: "/x", Checked: true, Exists: true}},
+	}
+	b, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	keys("", v, got)
+	want := map[string]bool{}
+	for _, k := range []string{
+		".servers", ".tables", ".subscriber_databases", ".folders",
+		".servers[].name", ".servers[].version", ".servers[].edition", ".servers[].error",
+		".servers[].reachable", ".servers[].major",
+		".tables[].schema", ".tables[].name", ".tables[].exists", ".tables[].has_primary_key", ".tables[].columns",
+		".subscriber_databases[].server", ".subscriber_databases[].database",
+		".subscriber_databases[].checked", ".subscriber_databases[].exists",
+		".folders[].server", ".folders[].path", ".folders[].checked", ".folders[].exists",
+	} {
+		want[k] = true
+	}
+	var missing, extra []string
+	for k := range want {
+		if !got[k] {
+			missing = append(missing, k)
+		}
+	}
+	for k := range got {
+		if !want[k] {
+			extra = append(extra, k)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(extra)
+	if len(missing) > 0 || len(extra) > 0 {
+		t.Errorf("missing keys %v, unexpected keys %v", missing, extra)
+	}
+}

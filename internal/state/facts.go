@@ -135,3 +135,51 @@ type ProfileUse struct {
 	// may still block a profile drop.
 	Virtual bool `json:"virtual,omitempty"`
 }
+
+// Checks is what the precondition checks read, beside the facts: the
+// servers of the file, the source tables, the subscriber databases and the
+// folders the configuration names. The planner reads them; a nil Checks
+// leaves every precondition unchecked.
+type Checks struct {
+	Servers             []ServerCheck   `json:"servers"`
+	Tables              []TableCheck    `json:"tables"`
+	SubscriberDatabases []DatabaseCheck `json:"subscriber_databases"`
+	Folders             []FolderCheck   `json:"folders"`
+}
+
+// ServerCheck is a server of the file, as it was reached.
+type ServerCheck struct {
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+	Edition   string `json:"edition"`
+	Error     string `json:"error"` // why it could not be reached
+	Reachable bool   `json:"reachable"`
+	Major     int    `json:"major"`
+}
+
+// TableCheck is a source table of an article, in the publication database.
+type TableCheck struct {
+	Schema        string   `json:"schema"`
+	Name          string   `json:"name"`
+	Exists        bool     `json:"exists"`
+	HasPrimaryKey bool     `json:"has_primary_key"`
+	Columns       []string `json:"columns"` // in column_id order
+}
+
+// DatabaseCheck is a subscriber database; Checked is false when its server
+// could not be reached.
+type DatabaseCheck struct {
+	Server   string `json:"server"`
+	Database string `json:"database"`
+	Checked  bool   `json:"checked"`
+	Exists   bool   `json:"exists"`
+}
+
+// FolderCheck is a folder the configuration names on a server; Checked is
+// false when it could not be read.
+type FolderCheck struct {
+	Server  string `json:"server"`
+	Path    string `json:"path"`
+	Checked bool   `json:"checked"`
+	Exists  bool   `json:"exists"`
+}
