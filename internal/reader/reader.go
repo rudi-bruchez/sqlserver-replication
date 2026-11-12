@@ -105,13 +105,16 @@ type PublisherProbe struct {
 	// the distribution tables and a subscriber may compare it under a
 	// case-sensitive collation.
 	Name string
+	// ReadOnly is sys.databases.is_read_only: the export reads such a
+	// database, a plan cannot run in it (Writable).
+	ReadOnly bool
 }
 
 // Probe queries the publisher, through a connection to its master database.
 func Probe(ctx context.Context, publisher *sql.DB, database string) (PublisherProbe, error) {
 	var p PublisherProbe
 	err := publisher.QueryRowContext(ctx, qProbe, database).Scan(
-		&p.Distributor, &p.State, &p.Standby, &p.Published, &p.MergePublished, &p.Name)
+		&p.Distributor, &p.State, &p.Standby, &p.Published, &p.MergePublished, &p.Name, &p.ReadOnly)
 	if err == sql.ErrNoRows {
 		return p, fmt.Errorf("database %q not found at the publisher", database)
 	}
@@ -145,6 +148,18 @@ func (p PublisherProbe) Start() (empty bool, findings []model.Finding, err error
 			Message: "the database is published for merge replication"})
 	}
 	return empty, findings, nil
+}
+
+// Writable returns an error when the publication database is read only, as
+// Start does for an offline one. The export reads such a database; a plan's
+// first call that writes fails with 3906, after R24's job_disable has run
+// and left the snapshot job disabled (measured by the final review of plan
+// 3), so plan refuses it before any operation.
+func (p PublisherProbe) Writable() error {
+	if p.ReadOnly {
+		return fmt.Errorf("database is read only")
+	}
+	return nil
 }
 
 // Result is what Read returns.

@@ -24,7 +24,7 @@ const (
 	// offline or restoring database fails before any query.
 	qProbe = `
 SELECT ISNULL((SELECT TOP (1) datasource FROM master.dbo.sysservers WHERE srvstatus & 8 <> 0), N''),
-       state_desc, is_in_standby, is_published, is_merge_published, name
+       state_desc, is_in_standby, is_published, is_merge_published, name, is_read_only
 FROM sys.databases WHERE name = @p1`
 
 	// sp_replicationdboption 'sync with backup'; NULL when the database is not

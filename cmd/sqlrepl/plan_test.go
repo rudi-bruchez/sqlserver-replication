@@ -440,9 +440,11 @@ func TestPlanOpensSubscribers(t *testing.T) {
 	}
 }
 
-// The plan of the lab fixture against the lab is empty, the subscriber
-// REPLLAB of the file answering as repllab (carried decision 4).
-func TestLabPlanCLISalesEmpty(t *testing.T) {
+// labCLI opens the lab for a test of the command, skipped unless
+// SQLREPL_TEST_LAB is set, and returns the pool and @@SERVERNAME; it sets
+// SQLREPL_PASSWORD for runPlan.
+func labCLI(t *testing.T) (*sql.DB, string) {
+	t.Helper()
 	if os.Getenv("SQLREPL_TEST_LAB") == "" {
 		t.Skip("SQLREPL_TEST_LAB not set (run lab/gotest.sh)")
 	}
@@ -459,15 +461,21 @@ func TestLabPlanCLISalesEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	t.Cleanup(func() { db.Close() })
 	var server string
 	if err := db.QueryRow("SELECT @@SERVERNAME").Scan(&server); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("SQLREPL_PASSWORD", password)
+	return db, server
+}
 
+// The plan of the lab fixture against the lab is empty, the subscriber
+// REPLLAB of the file answering as repllab (carried decision 4).
+func TestLabPlanCLISalesEmpty(t *testing.T) {
+	_, server := labCLI(t)
 	var stdout, stderr bytes.Buffer
-	err = runPlan([]string{"-f", "../../internal/testdata/lab/sales.yaml", "-env", noEnv(t),
+	err := runPlan([]string{"-f", "../../internal/testdata/lab/sales.yaml", "-env", noEnv(t),
 		"-server", server + "=tcp:127.0.0.1,11980", "-user", "sa", "-param", "encrypt=disable"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("runPlan: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
@@ -475,5 +483,40 @@ func TestLabPlanCLISalesEmpty(t *testing.T) {
 	first, _, _ := strings.Cut(stdout.String(), "\n")
 	if !strings.HasSuffix(first, "no changes.") {
 		t.Errorf("first line %q, want it to end with \"no changes.\"\nstdout:\n%s\nstderr:\n%s", first, stdout.String(), stderr.String())
+	}
+}
+
+// A read-only publication database is refused before any operation, as an
+// offline one is: its plan would fail at the first write with 3906, after
+// the job_disable (final review item 2, measured). The database rv_ff_ro is
+// created for the test and dropped after it.
+func TestLabPlanCLIReadOnly(t *testing.T) {
+	db, server := labCLI(t)
+	const name = "rv_ff_ro"
+	drop := func() {
+		if _, err := db.Exec("IF DB_ID(N'" + name + "') IS NOT NULL DROP DATABASE " + name); err != nil {
+			t.Errorf("drop %s: %v", name, err)
+		}
+	}
+	drop()
+	t.Cleanup(drop)
+	if _, err := db.Exec("CREATE DATABASE " + name); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("ALTER DATABASE " + name + " SET READ_ONLY"); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "ro.yaml")
+	if err := os.WriteFile(file, []byte("version: 2\npublisher:\n  server: "+server+"\n  database: "+name+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	err := runPlan([]string{"-f", file, "-env", noEnv(t),
+		"-server", server + "=tcp:127.0.0.1,11980", "-user", "sa", "-param", "encrypt=disable"}, &stdout, &stderr)
+	if err == nil || err.Error() != "database is read only" {
+		t.Fatalf("runPlan: %v, want \"database is read only\"\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("a plan printed for a read-only database:\n%s", stdout.String())
 	}
 }

@@ -136,6 +136,9 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 	if _, _, err := probe.Start(); err != nil {
 		return err
 	}
+	if err := probe.Writable(); err != nil {
+		return err
+	}
 	// The stored name, in its own case, from here on.
 	ctx, cancel = step()
 	pub, err := connect(ctx, publisher, probe.Name, cp)

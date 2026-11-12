@@ -750,3 +750,14 @@ func TestLinkSettings(t *testing.T) {
 		t.Errorf("hidden: %+v, want every link property nil", d)
 	}
 }
+
+// A read-only database is read by the export and refused by plan
+// (Writable), worded as Start words an offline one.
+func TestWritable(t *testing.T) {
+	if err := (PublisherProbe{State: "ONLINE"}).Writable(); err != nil {
+		t.Errorf("read-write database: %v", err)
+	}
+	if err := (PublisherProbe{State: "ONLINE", ReadOnly: true}).Writable(); err == nil || err.Error() != "database is read only" {
+		t.Errorf("read-only database: %v, want \"database is read only\"", err)
+	}
+}
