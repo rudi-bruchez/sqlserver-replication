@@ -630,6 +630,18 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Observed: the `msdb.dbo.restorehistory` row of the restored database, joined to `backupset`, gives the backup's `last_lsn` (the same `backupset` row as the backup file's media family); that row's `database_name` is the source database and its `server_name` equals `@@SERVERNAME`, in the same case. `sys.dm_db_log_stats(...).log_end_lsn` is text of the form `XXXXXXXX:XXXXXXXX:XXXX`, upper-case hexadecimal.
 - Source: measured, `20-apply AP.lsn.restorehistory`, `AP.lsn.backupset_database`, `AP.lsn.log_end_format`. A backup restored on another instance is not measured.
 
+### A restore stopped at a point in time
+
+- Expected: the `last_lsn` of the backup a subscriber database was last restored from is where that database stands.
+- Observed: after a full backup restored WITH NORECOVERY and a log backup restored WITH STOPAT, the last `restorehistory` row is the log restore, its `backupset.last_lsn` is the end of the log backup, past the point the database was recovered to: an LSN taken from it would skip the changes in between silently. `restorehistory.stop_at` is set on that row (`stop_at_mark_name` and `stop_before` for a mark). The precheck refuses such a restore.
+- Source: measured, plan 4 Task 5 review (Important 1) and `TestLabRestoreHistoryLSN`, 2022 CU27 (2026-11-13).
+
+### Restore history after a DROP DATABASE
+
+- Expected: the restore history of a database goes with it.
+- Observed: `msdb.dbo.restorehistory` keeps its rows after `DROP DATABASE`; a database created again under the same name still reads the old restore as its last one. `create_date` cannot tell them apart: a freshly restored database has a `create_date` a few milliseconds after its `restore_date` (7 and 10 ms on the lab), so "created after the restore" is true of a valid restore too. `sys.database_recovery_status.family_guid` equals the restored backup's `backupset.family_guid` and differs for a database created by `CREATE DATABASE`; the precheck compares those.
+- Source: measured, plan 4 Task 5 review (Important 2), Task 5 fix round 1 probe and `TestLabRestoreHistoryLSN`, 2022 CU27 (2026-11-13).
+
 ### Converting an LSN
 
 - Expected: `CAST(lsn / 1e15 AS binary(4)) + ...` gives the binary LSN.
