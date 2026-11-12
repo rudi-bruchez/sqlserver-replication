@@ -507,3 +507,50 @@ func TestProfilesOmittedNotManaged(t *testing.T) {
 		t.Errorf("agent_profiles: [] plans:\n%s", opsString(ops))
 	}
 }
+
+// A profile the file declares without parameters has the template's set,
+// which sp_add_agent_profile copies: no parameter call. parameters: {} is
+// no parameter: each copied one is dropped (final review item 5, measured:
+// the plan dropped the template's 12).
+func TestProfileParametersOmitted(t *testing.T) {
+	tpl := labTemplate(t, "distribution")
+	build := func(params model.ProfileParameters) []Operation {
+		t.Helper()
+		return planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+			des.AgentProfiles = append(des.AgentProfiles, model.AgentProfile{Name: "m_new", AgentType: "distribution", Parameters: params})
+		}))
+	}
+	ops := build(nil)
+	one(t, ops, "sp_add_agent_profile")
+	for _, proc := range []string{"sp_add_agent_parameter", "sp_change_agent_parameter", "sp_drop_agent_parameter"} {
+		if got := opsCalling(ops, proc); len(got) != 0 {
+			t.Errorf("omitted parameters: %d %s, want none:\n%s", len(got), proc, opsString(ops))
+		}
+	}
+	ops = build(model.ProfileParameters{})
+	if got := opsCalling(ops, "sp_drop_agent_parameter"); len(got) != len(tpl) {
+		t.Errorf("parameters {}: %d sp_drop_agent_parameter, want the template's %d:\n%s", len(got), len(tpl), opsString(ops))
+	}
+
+	// An existing profile whose parameters are omitted is compared with the
+	// template's set: none when it holds that set, a change where it
+	// differs.
+	existing := func(cur map[string]string) []Operation {
+		t.Helper()
+		return planned(t, buildLab(t, nil, func(des, c *model.Config) {
+			des.AgentProfiles = append(des.AgentProfiles, model.AgentProfile{Name: "m_old", AgentType: "distribution", Description: str(""), Default: model.Ptr(false)})
+			c.AgentProfiles = append(c.AgentProfiles, model.AgentProfile{Name: "m_old", AgentType: "distribution", Description: str(""), Default: model.Ptr(false), Parameters: cur})
+		}))
+	}
+	same := map[string]string{}
+	for k, v := range tpl {
+		same[k] = v
+	}
+	if ops := existing(same); len(ops) != 0 {
+		t.Errorf("an existing profile with the template's set, parameters omitted:\n%s", opsString(ops))
+	}
+	same["-CommitBatchSize"] = "999"
+	chg := one(t, existing(same), "sp_change_agent_parameter")
+	wantParam(t, chg, "@parameter_name", "N'-CommitBatchSize'")
+	wantParam(t, chg, "@parameter_value", "N'"+tpl["-CommitBatchSize"]+"'")
+}

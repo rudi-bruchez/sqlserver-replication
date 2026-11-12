@@ -520,6 +520,15 @@ func (e *exporter) collectProfiles() error {
 	return nil
 }
 
+// profileParameters is a profile's parameters as read, an empty non-nil map
+// when it has none: nil would mean the template's set (model.ProfileParameters).
+func profileParameters(m map[string]string) model.ProfileParameters {
+	if m == nil {
+		return model.ProfileParameters{}
+	}
+	return m
+}
+
 // selectProfiles returns every user-defined profile of an in-scope agent
 // type, whether or not an agent uses it, sorted by agent type then name,
 // and an empty non-nil list when there is none.
@@ -539,7 +548,7 @@ func selectProfiles(profiles map[int]profileRow, params map[int]map[string]strin
 			AgentType:   decode.AgentType(p.agentType),
 			Description: model.Ptr(p.description),
 			Default:     model.Ptr(p.isDefault),
-			Parameters:  params[id],
+			Parameters:  profileParameters(params[id]),
 		}})
 	}
 	sort.Slice(es, func(i, j int) bool {

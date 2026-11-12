@@ -393,5 +393,16 @@ type AgentProfile struct {
 	AgentType   string            `yaml:"agent_type"`
 	Description *string           `yaml:"description,omitempty"`
 	Default     *bool             `yaml:"default,omitempty"`
-	Parameters  map[string]string `yaml:"parameters"`
+	Parameters  ProfileParameters `yaml:"parameters,omitempty"`
 }
+
+// ProfileParameters is a profile's parameters by name. A nil map (the key
+// omitted) is the set of the type's template, which sp_add_agent_profile
+// copies into a new profile; an empty one is no parameter. As for
+// AgentProfiles, IsZero true only for nil keeps the key out for nil and
+// writes {} for an empty map; Load keeps them apart (an explicit {} decodes
+// non-nil).
+type ProfileParameters map[string]string
+
+// IsZero reports whether the map is nil, for yaml.v3's omitempty.
+func (p ProfileParameters) IsZero() bool { return p == nil }

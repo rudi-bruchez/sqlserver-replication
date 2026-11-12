@@ -405,6 +405,8 @@ func (b *builder) addProfile(p *model.AgentProfile) {
 		b.markShared(&op)
 	}
 	b.add(op)
+	// Parameters omitted: the template's set, which sp_add_agent_profile
+	// has just copied, so no parameter call (final review item 5).
 	b.profileParameters(p, path, tpl, true)
 }
 
@@ -426,6 +428,21 @@ func (b *builder) changeProfile(pp pair[model.AgentProfile]) {
 	if !b.skip(path + ".parameters") {
 		b.profileParameters(pp.Des, path, pp.Cur.Parameters, false)
 	}
+}
+
+// wantedParameters is the parameter set the file declares for p: its
+// parameters, or the template's set when it omits them (nil,
+// model.ProfileParameters); false, with a refusal, when that set is not
+// known.
+func (b *builder) wantedParameters(p *model.AgentProfile, path string) (map[string]string, bool) {
+	if p.Parameters != nil {
+		return p.Parameters, true
+	}
+	tpl, ok := b.templateParameters(p.AgentType)
+	if !ok {
+		b.refuse(path, r6NoTemplate, p.AgentType)
+	}
+	return tpl, ok
 }
 
 func (b *builder) profileDescription(d, c *model.AgentProfile, ch Change) {
@@ -452,9 +469,10 @@ func (b *builder) profileDescription(d, c *model.AgentProfile, ch Change) {
 	b.add(op)
 }
 
-// profileParameters plans the parameters of the file's profile p against
-// have, the set the profile holds before (the template's copy for a new
-// one, its current parameters otherwise), names compared without regard to
+// profileParameters plans the parameters of the file's profile p
+// (wantedParameters) against have, the set the profile holds before (the
+// template's copy for a new one, its current parameters otherwise), names
+// compared without regard to
 // case: sp_change_agent_parameter per changed value, sp_add_agent_parameter
 // per name have lacks, sp_drop_agent_parameter per name the file omits when
 // PF.drop_parameter is measured (R6). A copied name is never added (20067),
@@ -465,6 +483,10 @@ func (b *builder) profileParameters(p *model.AgentProfile, path string, have map
 	e, ok := cost.Lookup("agent_profiles[*].parameters", "", "transactional")
 	if !ok {
 		b.refuse(path+".parameters", "cost of agent_profiles[*].parameters change not measured")
+		return
+	}
+	want, ok := b.wantedParameters(p, path)
+	if !ok {
 		return
 	}
 	pro, err := profilePrologue(p)
@@ -482,8 +504,8 @@ func (b *builder) profileParameters(p *model.AgentProfile, path string, have map
 		params                    []Param
 	}
 	var calls []call
-	for _, n := range sortedNames(p.Parameters) {
-		v := p.Parameters[n]
+	for _, n := range sortedNames(want) {
+		v := want[n]
 		desFold[strings.ToLower(n)] = true
 		held, ok := haveFold[strings.ToLower(n)]
 		switch {

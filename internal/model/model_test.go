@@ -543,3 +543,39 @@ func TestAgentProfilesEmptyVsOmittedRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+// A profile's omitted parameters (the template's set) and an empty map (no
+// parameter) survive Marshal then Load as they are: the planner tells them
+// apart by nil (final review item 5).
+func TestProfileParametersEmptyVsOmittedRoundTrip(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		in      ProfileParameters
+		wantKey bool
+	}{
+		{"empty", ProfileParameters{}, true},
+		{"omitted", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Config{Version: FormatVersion, Publisher: Publisher{Server: "S", Database: "D"},
+				AgentProfiles: AgentProfiles{{Name: "p", AgentType: "distribution", Parameters: tc.in}}}
+			out, err := Marshal(c)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			if got := strings.Contains(string(out), "parameters: {}\n"); got != tc.wantKey {
+				t.Errorf("parameters: {} written = %v, want %v:\n%s", got, tc.wantKey, out)
+			}
+			if !tc.wantKey && strings.Contains(string(out), "parameters") {
+				t.Errorf("omitted parameters wrote the key:\n%s", out)
+			}
+			got, err := Load(bytes.NewReader(out))
+			if err != nil {
+				t.Fatalf("Load: %v\n%s", err, out)
+			}
+			if p := got.AgentProfiles[0].Parameters; (p == nil) != (tc.in == nil) || len(p) != 0 {
+				t.Errorf("loaded parameters = %#v, want %#v", p, tc.in)
+			}
+		})
+	}
+}
