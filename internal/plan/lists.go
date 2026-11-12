@@ -20,6 +20,7 @@ const (
 	r24NoJob         = "the job of %s does not exist; sp_update_job would fail with 14262"
 	r24SharedPull    = "the shared pull agent of %s is not started by apply: its job lookup at the subscriber is not measured; the delivery waits for its next run"
 	r26NotMeasured   = "%s; repair of this state is not measured"
+	r29Unreachable   = "%s runs at subscriber %s, which cannot be reached (%s) (R29)"
 	tableMissing     = "table %s does not exist in %s: plan does not create published tables (spec Non-goals)"
 	tableNoKey       = "table %s has no primary key: a table article of a transactional publication needs one (error 14088)"
 	subDBMissing     = "subscriber database %s does not exist at %s: plan does not create subscriber databases (spec Non-goals)"
@@ -58,11 +59,30 @@ func (b *builder) incomplete(f model.Finding) {
 		return
 	}
 	for _, s := range repairSuffixes {
-		if strings.HasSuffix(f.Path, s) {
+		if strings.HasSuffix(f.Path, s) && !b.agentKept(f.Path) {
 			return
 		}
 	}
 	b.refuse(f.Path, r26NotMeasured, f.Message)
+}
+
+// agentKept tells an incomplete finding at an agent the current
+// configuration has (its job missing, unrecorded or without its replication
+// step): the plan creates only a missing agent, so it repairs none of these
+// (controller's ruling of the Task 15 review; sp_addpublication_snapshot is
+// the only repair that creates a job).
+func (b *builder) agentKept(path string) bool {
+	if path == "publisher.log_reader_agent" {
+		return b.cur.Publisher.LogReaderAgent != nil
+	}
+	if pub, ok := strings.CutSuffix(path, ".snapshot_agent"); ok {
+		for i := range b.cur.Publications {
+			if pubPath(b.cur.Publications[i].Name) == pub {
+				return b.cur.Publications[i].SnapshotAgent != nil
+			}
+		}
+	}
+	return false
 }
 
 // lists fills the plan-level lists of p, once the strategies and finish have
@@ -78,6 +98,7 @@ func (b *builder) lists(p *Plan, before *State) {
 		p.Operations = b.addJobOps(p.Operations, p.AgentsToStart)
 	}
 	p.Preconditions = b.preconditions(p.Operations)
+	b.unreachable(append(append([]Operation{}, b.ops...), p.Operations...))
 	b.planWarnings(after)
 	b.planNotes(before)
 	if len(b.refusals) > 0 {
@@ -559,6 +580,30 @@ func (b *builder) preconditions(ops []Operation) []Precondition {
 	return out
 }
 
+// unreachable refuses every operation that runs at a subscriber whose
+// ServerCheck says it cannot be reached (R29): the pull procedures and the
+// job operations there. The push operations run at the publisher and the
+// distributor and stay planned, with the subscriber's preconditions
+// unchecked.
+func (b *builder) unreachable(ops []Operation) {
+	if b.in.Checks == nil {
+		return
+	}
+	seen := map[string]bool{}
+	for _, op := range ops {
+		sc := serverCheck(b.in.Checks, op.Server)
+		if sc == nil || sc.Reachable || strings.EqualFold(op.Server, b.des.Publisher.Server) || strings.EqualFold(op.Server, b.distributorServer()) {
+			continue
+		}
+		k := op.Path + sep + op.Call.Procedure
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		b.refuse(op.Path, r29Unreachable, op.Call.Procedure, op.Server, sc.Error)
+	}
+}
+
 func (b *builder) refuseMissingDB(checks *state.Checks, s *model.Subscription, path string) {
 	if dc := databaseCheck(checks, s.Subscriber, s.Database); dc != nil && dc.Checked && !dc.Exists {
 		b.refuse(path, subDBMissing, s.Database, s.Subscriber)
@@ -678,6 +723,14 @@ func (b *builder) planWarnings(after *State) {
 		if agent == nil || agent.Schedules == nil {
 			if c := pubNamed(b.cur, p.Name); c != nil && c.SnapshotAgent != nil {
 				agent = c.SnapshotAgent
+			} else if def, ok := defaultSchedule(model.Pattern(pubPath(p.Name)+".snapshot_agent.schedules"), stringOr(p.Type, "transactional")); ok {
+				// A snapshot agent the plan creates without a schedule: the
+				// one sp_addpublication_snapshot stores (the defaults table).
+				a := model.Agent{Schedules: &[]model.Schedule{def}}
+				if p.SnapshotAgent != nil {
+					a.JobEnabled = p.SnapshotAgent.JobEnabled
+				}
+				agent = &a
 			}
 		}
 		if recurring(agent) {
