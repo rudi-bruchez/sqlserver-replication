@@ -254,7 +254,7 @@ var (
 		"allow_pull", "allow_anonymous", "snapshot.in_default_folder", "snapshot.compress",
 		"allow_subscription_copy", "allow_initialize_from_backup", "replicate_ddl", "enabled_for_het_sub",
 		"fire_triggers_on_snapshot", "loopback_detection", "distribution_agent.memory_optimized",
-		"pull_agent.memory_optimized", "enabled_for_syncmgr", "use_ftp", "default", "trusted")
+		"pull_agent.memory_optimized", "memory_optimized", "enabled_for_syncmgr", "use_ftp", "default", "trusted")
 	intPaths = set("retention_hours", "snapshot.ftp.port", "min_retention_hours", "max_retention_hours",
 		"history_retention_hours", "delete_batch_size_xact", "delete_batch_size_cmd",
 		"properties.heartbeat_interval")
@@ -390,7 +390,7 @@ func decodeStored(d Default) (string, error) {
 		return decode.Initialization(st, nst), nil
 	case "subscriber_type":
 		return num(decode.SubscriberType)
-	case "distribution_agent.subscription_streams", "pull_agent.subscription_streams":
+	case "distribution_agent.subscription_streams", "pull_agent.subscription_streams", "subscription_streams":
 		// The reader reads ISNULL(subscriptionstreams, 0).
 		if s == "null" {
 			return "0", nil
@@ -497,6 +497,15 @@ func TestDefaultsSpecSample(t *testing.T) {
 }
 
 func TestDefaultsLookup(t *testing.T) {
+	// A schema-only article has no status bit entries a caller could fill
+	// (Article.OmittedOK).
+	for _, k := range []string{"view_schema_only", "proc_schema_only", "func_schema_only"} {
+		for _, path := range []string{"insert_column_names", "parameterized"} {
+			if d, ok := Lookup(Context{Object: "article", PubType: "transactional", SyncMethod: "native", ArticleKind: k}, path); ok {
+				t.Errorf("%s %s: entry %s", k, path, d.Row)
+			}
+		}
+	}
 	anyMethod := Default{Context: Context{Object: "article", PubType: "transactional", ArticleKind: "table"}, Path: "x", Value: "any"}
 	chr := Default{Context: Context{Object: "article", PubType: "transactional", SyncMethod: "character", ArticleKind: "table"}, Path: "x", Value: "character"}
 	kind := Default{Context: Context{Object: "article", PubType: "transactional"}, Path: "y", Value: "any kind"}

@@ -7,7 +7,7 @@ import "strings"
 // Context is what a default depends on (spec "Omitted properties"). An empty
 // PubType, SyncMethod or ArticleKind of an entry matches any value.
 type Context struct {
-	Object      string // publication, article, subscription, snapshot_agent, push_agent, pull_subscription, pull_agent, log_reader_agent, distributor, distribution_db, distpublisher, profile
+	Object      string // publication, article, subscription, snapshot_agent, push_agent, shared_push_agent, pull_subscription, pull_agent, log_reader_agent, distributor, distribution_db, distpublisher, profile
 	PubType     string // transactional, snapshot, or "" for any
 	SyncMethod  string // a decode name, or "" for any
 	ArticleKind string // table, view_schema_only, proc_schema_only, func_schema_only, or ""
@@ -21,7 +21,9 @@ type Default struct {
 	// retention_hours, destination.schema, commands.insert.
 	Path string
 	// Value is the model value, as the export writes it: "" is NULL, a list
-	// is written [a, b] (formatList). It may hold the templates
+	// is written [a, b] (formatList). A command is the string form
+	// decode.ParseCommand reads (CALL [dbo].[x]), not the exported mode and
+	// procedure structure. It may hold the templates
 	// {source_schema}, {source_name}, {schema} and {table}, which Fill
 	// replaces with the article's source schema and name.
 	Value string
@@ -40,6 +42,7 @@ var objectBases = map[string]string{
 	"subscription":      "publications[*].subscriptions[*]",
 	"snapshot_agent":    "publications[*].snapshot_agent",
 	"push_agent":        "publications[*].subscriptions[*].distribution_agent",
+	"shared_push_agent": "publisher.shared_distribution_agents[*].distribution_agent",
 	"pull_subscription": "publications[*].subscriptions[*]",
 	"pull_agent":        "publications[*].subscriptions[*].pull_agent",
 	"log_reader_agent":  "publisher.log_reader_agent",
@@ -91,6 +94,13 @@ func lookup(table []Default, ctx Context, path string) (Default, bool) {
 // {table} by name. A generated command procedure is named after both,
 // glued (sp_MSins_{schema}{table}), or, under concurrent_c, where the
 // destination owner is NULL, after the table alone (sp_MSins_{table}).
+//
+// The command template is only right while the owner and the table name
+// together are at most 109 characters (measured by the Task 5 review: from
+// 110 the generated name is truncated to 120 characters ending with a
+// 10-digit number, and a 60-character schema with a 110-character table
+// drops the schema). Normalize therefore keeps a generated procedure nil
+// (rule 6, compared on its mode only) and never relies on a filled name.
 func Fill(value, schema, name string) string {
 	return strings.NewReplacer("{source_schema}", schema, "{source_name}", name,
 		"{schema}", schema, "{table}", name).Replace(value)
@@ -298,8 +308,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "dbo"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.proc-schema-only", Context{"article", "transactional", "native", "proc_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_p"),
@@ -308,8 +316,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "dbo"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.func-schema-only", Context{"article", "transactional", "native", "func_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_f"),
@@ -318,8 +324,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "dbo"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.table.nondbo.native", Context{"article", "transactional", "native", "table"},
 		e("@destination_table", "destination.name", "{source_name}", "m_t"),
@@ -528,8 +532,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.view-schema-only.nondbo.character", Context{"article", "transactional", "character", "view_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_v"),
@@ -538,8 +540,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "", "null"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.view-schema-only.nondbo.concurrent", Context{"article", "transactional", "concurrent", "view_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_v"),
@@ -548,8 +548,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.view-schema-only.nondbo.concurrent_c", Context{"article", "transactional", "concurrent_c", "view_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_v"),
@@ -558,8 +556,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "", "null"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.view-schema-only.nondbo.dbsnap", Context{"article", "transactional", "database_snapshot", "view_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_v"),
@@ -568,8 +564,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.view-schema-only.nondbo.dbsnap_c", Context{"article", "transactional", "database_snapshot_character", "view_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_v"),
@@ -578,8 +572,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native", Context{"article", "snapshot", "native", "view_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_v"),
@@ -588,8 +580,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character", Context{"article", "snapshot", "character", "view_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_v"),
@@ -598,8 +588,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "", "null"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap", Context{"article", "snapshot", "database_snapshot", "view_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_v"),
@@ -608,8 +596,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c", Context{"article", "snapshot", "database_snapshot_character", "view_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_v"),
@@ -618,8 +604,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.proc-schema-only.nondbo.native", Context{"article", "transactional", "native", "proc_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_p"),
@@ -628,8 +612,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.proc-schema-only.nondbo.character", Context{"article", "transactional", "character", "proc_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_p"),
@@ -638,8 +620,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "", "null"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.proc-schema-only.nondbo.concurrent", Context{"article", "transactional", "concurrent", "proc_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_p"),
@@ -648,8 +628,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.proc-schema-only.nondbo.concurrent_c", Context{"article", "transactional", "concurrent_c", "proc_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_p"),
@@ -658,8 +636,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "", "null"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.proc-schema-only.nondbo.dbsnap", Context{"article", "transactional", "database_snapshot", "proc_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_p"),
@@ -668,8 +644,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c", Context{"article", "transactional", "database_snapshot_character", "proc_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_p"),
@@ -678,8 +652,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native", Context{"article", "snapshot", "native", "proc_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_p"),
@@ -688,8 +660,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character", Context{"article", "snapshot", "character", "proc_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_p"),
@@ -698,8 +668,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "", "null"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap", Context{"article", "snapshot", "database_snapshot", "proc_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_p"),
@@ -708,8 +676,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c", Context{"article", "snapshot", "database_snapshot_character", "proc_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_p"),
@@ -718,8 +684,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.func-schema-only.nondbo.native", Context{"article", "transactional", "native", "func_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_f"),
@@ -728,8 +692,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.func-schema-only.nondbo.character", Context{"article", "transactional", "character", "func_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_f"),
@@ -738,8 +700,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "", "null"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.func-schema-only.nondbo.concurrent", Context{"article", "transactional", "concurrent", "func_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_f"),
@@ -748,8 +708,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.func-schema-only.nondbo.concurrent_c", Context{"article", "transactional", "concurrent_c", "func_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_f"),
@@ -758,8 +716,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "", "null"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.func-schema-only.nondbo.dbsnap", Context{"article", "transactional", "database_snapshot", "func_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_f"),
@@ -768,8 +724,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.func-schema-only.nondbo.dbsnap_c", Context{"article", "transactional", "database_snapshot_character", "func_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_f"),
@@ -778,8 +732,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native", Context{"article", "snapshot", "native", "func_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_f"),
@@ -788,8 +740,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character", Context{"article", "snapshot", "character", "func_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_f"),
@@ -798,8 +748,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "", "null"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap", Context{"article", "snapshot", "database_snapshot", "func_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_f"),
@@ -808,8 +756,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c", Context{"article", "snapshot", "database_snapshot_character", "func_schema_only"},
 		e("@destination_table", "destination.name", "{source_name}", "m_f"),
@@ -818,8 +764,6 @@ var Defaults = concat(
 		e("@pre_creation_cmd", "pre_creation_cmd", "drop", "1"),
 		e("@schema_option", "schema_options", "[object_creation]", "0x0000000000000001"),
 		e("@destination_owner", "destination.schema", "{source_schema}", "m_s"),
-		e("@status", "insert_column_names", "false", "16"),
-		e("@status", "parameterized", "true", "16"),
 	),
 	measured("11-defaults D.sp_addpublication_snapshot.transactional", Context{"snapshot_agent", "transactional", "", ""},
 		e("@frequency_type", "schedules[*].frequency", "daily", "4"),
@@ -901,6 +845,28 @@ var Defaults = concat(
 		e("@active_end_time_of_day", "schedules[*].end_time", "235959", "235959"),
 		e("@active_end_date", "schedules[*].end_date", "99991231", "99991231"),
 	),
+	// The shared push distribution agent. The push rows were measured on a
+	// publication without @independent_agent (m_ps), so their agent is the
+	// shared one; an independent agent stores the same values (measured by
+	// the Task 5 review), hence the push_agent entries above.
+	measured("11-defaults D.sp_addpushsubscription_agent.push", Context{"shared_push_agent", "", "", ""},
+		e("@subscriber_security_mode", "connection.security", "windows", "1"),
+		e("@subscriber_login", "connection.login", "", "''"),
+		e("@job_login", "job_login", "", "null"),
+		e("@frequency_type", "schedules[*].frequency", "agent_start", "64"),
+		e("@frequency_interval", "schedules[*].interval", "0", "0"),
+		e("@frequency_relative_interval", "schedules[*].relative_interval", "0", "0"),
+		e("@frequency_recurrence_factor", "schedules[*].recurrence_factor", "0", "0"),
+		e("@frequency_subday", "schedules[*].subday", "", "0"),
+		e("@frequency_subday_interval", "schedules[*].subday_interval", "0", "0"),
+		e("@active_start_time_of_day", "schedules[*].start_time", "0", "0"),
+		e("@active_end_time_of_day", "schedules[*].end_time", "235959", "235959"),
+		e("@active_end_date", "schedules[*].end_date", "99991231", "99991231"),
+	),
+	measured("11-defaults D.sp_addsubscription.push", Context{"shared_push_agent", "", "", ""},
+		e("@subscriptionstreams", "subscription_streams", "0", "null"),
+		e("@memory_optimized", "memory_optimized", "false", "0"),
+	),
 	measured("11-defaults D.sp_addpullsubscription.pull", Context{"pull_subscription", "transactional", "", ""},
 		e("@description", "pull_agent.description", "", "null"),
 	),
@@ -940,30 +906,64 @@ var Defaults = concat(
 
 // Reasons of the rows that map to a field and give no default.
 const (
-	rPassed    = "passed by the measuring call: the row shows the value given, not a default"
-	rSecret    = "a secret: the file names it, the server keeps the value, which is never read or compared (spec \"Secrets\")"
-	rJobname   = "a name the procedure generates from the server, database and publication: kept current and not passed when omitted (R41)"
-	rToday     = "the day of the call: an omitted start_date stays zero and is not compared (R37)"
-	rCommand   = "the agent command line: shown, never compared, not passed when omitted (R32, R41)"
-	rNojob     = "sp_addsubscription creates no job for a pull subscription (no-job): its agent and schedule are the pull agent's, at the subscriber"
-	rNosched   = "the pull agent job is created without a schedule (no-schedule): there is no schedule field to fill"
-	rSrc       = "the article's source, which the file always writes (Article.Source is not a pointer)"
-	rSubid     = "names the subscription, which the file always writes (Subscription.Subscriber and Database are not pointers)"
-	rPublisher = "names the published database, which the file always writes (publisher.database)"
-	rGenview   = "the schema of the generated synchronization view: a nil sync_object means the generated view (R31)"
-	rPullpub   = "a property of the publication, which the pull subscription copies: plan 3 passes the publication's value (R15)"
-	rPulltype  = "plan 3 passes @subscription_type = N'pull' at both ends (R15)"
-	rPubtype   = "the code of the publication's type, which plan 3 passes (model.Parameters)"
-	rPushconn  = "a push agent's connection: a pull subscription has no distribution_agent (Subscription.OmittedOK)"
-	rDistname  = "defaults to @publisher (declared=@publisher): the publisher's name, which no template expresses"
-	rPullsub   = "names the subscription the pull agent serves, which the file always writes"
-	rFolder    = "the instance's default folder, not a constant of the procedure: measured on the lab container only"
-	rFile      = "named after the distribution database (distribution.MDF, distribution.LDF for the database distribution): no template expresses it"
+	rPassed     = "passed by the measuring call: the row shows the value given, not a default"
+	rSecret     = "a secret: the file names it, the server keeps the value, which is never read or compared (spec \"Secrets\")"
+	rJobname    = "a name the procedure generates from the server, database and publication: kept current and not passed when omitted (R41)"
+	rToday      = "the day of the call: an omitted start_date stays zero and is not compared (R37)"
+	rCommand    = "the agent command line: shown, never compared, not passed when omitted (R32, R41)"
+	rNojob      = "sp_addsubscription creates no job for a pull subscription (no-job): its agent and schedule are the pull agent's, at the subscriber"
+	rNosched    = "the pull agent job is created without a schedule (no-schedule): there is no schedule field to fill"
+	rSrc        = "the article's source, which the file always writes (Article.Source is not a pointer)"
+	rSubid      = "names the subscription, which the file always writes (Subscription.Subscriber and Database are not pointers)"
+	rPublisher  = "names the published database, which the file always writes (publisher.database)"
+	rGenview    = "the schema of the generated synchronization view: a nil sync_object means the generated view (R31)"
+	rPullpub    = "a property of the publication, which the pull subscription copies: plan 3 passes the publication's value (R15)"
+	rPulltype   = "plan 3 passes @subscription_type = N'pull' at both ends (R15)"
+	rPubtype    = "the code of the publication's type, which plan 3 passes (model.Parameters)"
+	rPushconn   = "a push agent's connection: a pull subscription has no distribution_agent (Subscription.OmittedOK)"
+	rDistname   = "defaults to @publisher (declared=@publisher): the publisher's name, which no template expresses"
+	rPullsub    = "names the subscription the pull agent serves, which the file always writes"
+	rFolder     = "the instance's default folder, not a constant of the procedure: measured on the lab container only"
+	rSchemaOnly = "the status bits of a schema-only article: insert_column_names and parameterized do not apply to it (Article.OmittedOK), so no entry is given that a caller could fill"
+	rFile       = "named after the distribution database (distribution.MDF, distribution.LDF for the database distribution): no template expresses it"
 )
 
 // notDefaults lists, with the reason, every row of a listed context that
 // maps to a field and has no entry (TestDefaultsCoverRows).
 var notDefaults = map[string]string{
+	"11-defaults D.sp_addarticle.view-schema-only.@status":                                      rSchemaOnly,
+	"11-defaults D.sp_addarticle.proc-schema-only.@status":                                      rSchemaOnly,
+	"11-defaults D.sp_addarticle.func-schema-only.@status":                                      rSchemaOnly,
+	"11-defaults D.sp_addarticle.view-schema-only.nondbo.native.@status":                        rSchemaOnly,
+	"11-defaults D.sp_addarticle.view-schema-only.nondbo.character.@status":                     rSchemaOnly,
+	"11-defaults D.sp_addarticle.view-schema-only.nondbo.concurrent.@status":                    rSchemaOnly,
+	"11-defaults D.sp_addarticle.view-schema-only.nondbo.concurrent_c.@status":                  rSchemaOnly,
+	"11-defaults D.sp_addarticle.view-schema-only.nondbo.dbsnap.@status":                        rSchemaOnly,
+	"11-defaults D.sp_addarticle.view-schema-only.nondbo.dbsnap_c.@status":                      rSchemaOnly,
+	"11-defaults D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.native.@status":           rSchemaOnly,
+	"11-defaults D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.character.@status":        rSchemaOnly,
+	"11-defaults D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap.@status":           rSchemaOnly,
+	"11-defaults D.sp_addarticle.view-schema-only.nondbo.snapshot-pub.dbsnap_c.@status":         rSchemaOnly,
+	"11-defaults D.sp_addarticle.proc-schema-only.nondbo.native.@status":                        rSchemaOnly,
+	"11-defaults D.sp_addarticle.proc-schema-only.nondbo.character.@status":                     rSchemaOnly,
+	"11-defaults D.sp_addarticle.proc-schema-only.nondbo.concurrent.@status":                    rSchemaOnly,
+	"11-defaults D.sp_addarticle.proc-schema-only.nondbo.concurrent_c.@status":                  rSchemaOnly,
+	"11-defaults D.sp_addarticle.proc-schema-only.nondbo.dbsnap.@status":                        rSchemaOnly,
+	"11-defaults D.sp_addarticle.proc-schema-only.nondbo.dbsnap_c.@status":                      rSchemaOnly,
+	"11-defaults D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.native.@status":           rSchemaOnly,
+	"11-defaults D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.character.@status":        rSchemaOnly,
+	"11-defaults D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap.@status":           rSchemaOnly,
+	"11-defaults D.sp_addarticle.proc-schema-only.nondbo.snapshot-pub.dbsnap_c.@status":         rSchemaOnly,
+	"11-defaults D.sp_addarticle.func-schema-only.nondbo.native.@status":                        rSchemaOnly,
+	"11-defaults D.sp_addarticle.func-schema-only.nondbo.character.@status":                     rSchemaOnly,
+	"11-defaults D.sp_addarticle.func-schema-only.nondbo.concurrent.@status":                    rSchemaOnly,
+	"11-defaults D.sp_addarticle.func-schema-only.nondbo.concurrent_c.@status":                  rSchemaOnly,
+	"11-defaults D.sp_addarticle.func-schema-only.nondbo.dbsnap.@status":                        rSchemaOnly,
+	"11-defaults D.sp_addarticle.func-schema-only.nondbo.dbsnap_c.@status":                      rSchemaOnly,
+	"11-defaults D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.native.@status":           rSchemaOnly,
+	"11-defaults D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.character.@status":        rSchemaOnly,
+	"11-defaults D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap.@status":           rSchemaOnly,
+	"11-defaults D.sp_addarticle.func-schema-only.nondbo.snapshot-pub.dbsnap_c.@status":         rSchemaOnly,
 	"11-defaults D.sp_addpublication.transactional.@ftp_password":                               rSecret,
 	"11-defaults D.sp_addpublication.snapshot.@repl_freq":                                       rPassed,
 	"11-defaults D.sp_addpublication.snapshot.@ftp_password":                                    rSecret,
