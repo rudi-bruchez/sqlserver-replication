@@ -424,3 +424,73 @@ func TestAgentOmittedOK(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadRejectsDuplicateKeys(t *testing.T) {
+	load := func(c *Config) error {
+		b, err := Marshal(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = Load(bytes.NewReader(b))
+		return err
+	}
+	if err := load(fullConfig()); err != nil {
+		t.Fatalf("full configuration: %v", err)
+	}
+	cases := []struct {
+		name   string
+		mutate func(c *Config)
+		path   string // empty: accepted
+	}{
+		{"publication", func(c *Config) { c.Publications = append(c.Publications, c.Publications[0]) }, "publications"},
+		{"article", func(c *Config) {
+			p := &c.Publications[0]
+			p.Articles = append(p.Articles, p.Articles[0])
+		}, "publications[P].articles"},
+		{"article in another case", func(c *Config) {
+			p := &c.Publications[0]
+			a := p.Articles[0]
+			a.Name = strings.ToLower(a.Name)
+			p.Articles = append(p.Articles, a)
+		}, ""},
+		{"subscription in another case", func(c *Config) {
+			p := &c.Publications[0]
+			s := p.Subscriptions[0]
+			s.Subscriber, s.Database = strings.ToLower(s.Subscriber), strings.ToUpper(s.Database)
+			p.Subscriptions = append(p.Subscriptions, s)
+		}, "publications[P].subscriptions"},
+		{"shared distribution agent", func(c *Config) {
+			s := c.Publisher.SharedDistributionAgents[0]
+			s.Subscriber = strings.ToLower(s.Subscriber)
+			c.Publisher.SharedDistributionAgents = append(c.Publisher.SharedDistributionAgents, s)
+		}, "publisher.shared_distribution_agents"},
+		{"shared pull agent", func(c *Config) {
+			c.Publisher.SharedPullAgents = append(c.Publisher.SharedPullAgents, c.Publisher.SharedPullAgents[0])
+		}, "publisher.shared_pull_agents"},
+		{"agent profile", func(c *Config) { c.AgentProfiles = append(c.AgentProfiles, c.AgentProfiles[0]) }, "agent_profiles"},
+		{"profile of another agent type", func(c *Config) {
+			p := c.AgentProfiles[0]
+			p.AgentType = "snapshot"
+			c.AgentProfiles = append(c.AgentProfiles, p)
+		}, ""},
+		{"schedule", func(c *Config) {
+			s := c.Publisher.LogReaderAgent.Schedules
+			*s = append(*s, (*s)[0])
+		}, "publisher.log_reader_agent.schedules"},
+		{"schedule of a pull agent", func(c *Config) {
+			s := c.Publisher.SharedPullAgents[0].Schedules
+			*s = append(*s, (*s)[1])
+		}, "publisher.shared_pull_agents[SUB2/PullDB].schedules"},
+	}
+	for _, c := range cases {
+		cfg := fullConfig()
+		c.mutate(cfg)
+		err := load(cfg)
+		switch {
+		case c.path == "" && err != nil:
+			t.Errorf("%s: %v, want accepted", c.name, err)
+		case c.path != "" && (err == nil || !strings.HasPrefix(err.Error(), c.path+": duplicate key")):
+			t.Errorf("%s: err = %v, want a duplicate key at %s", c.name, err, c.path)
+		}
+	}
+}

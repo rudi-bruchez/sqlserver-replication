@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -55,7 +57,73 @@ func Load(r io.Reader) (*Config, error) {
 	if err := strict.Decode(&c); err != nil {
 		return nil, err
 	}
+	if err := duplicateKeys(reflect.ValueOf(&c).Elem(), ""); err != nil {
+		return nil, err
+	}
 	return &c, nil
+}
+
+// duplicateKeys refuses two elements of a list with the same key, under
+// any list of the model: publications, articles, subscriptions, shared agents,
+// agent profiles, schedules. The key of a subscription or a shared agent
+// names a server and a database, which the reader compares in any case:
+// there it is compared case-insensitively. The enumerations are not checked
+// here: plan 3's normalization does it.
+func duplicateKeys(sv reflect.Value, path string) error {
+	t := sv.Type()
+	for i := range t.NumField() {
+		f := t.Field(i)
+		tag, ok := f.Tag.Lookup("yaml")
+		if !f.IsExported() || !ok || f.Type == findingsType {
+			continue
+		}
+		key, opts, _ := strings.Cut(tag, ",")
+		fv := sv.Field(i)
+		if hasOption(opts, "inline") {
+			if err := duplicateKeys(fv, path); err != nil {
+				return err
+			}
+			continue
+		}
+		if key == "" {
+			key = strings.ToLower(f.Name)
+		}
+		p := Join(path, key)
+		if fv.Kind() == reflect.Pointer {
+			if fv.IsNil() {
+				continue
+			}
+			fv = fv.Elem()
+		}
+		switch fv.Kind() {
+		case reflect.Struct:
+			if err := duplicateKeys(fv, p); err != nil {
+				return err
+			}
+		case reflect.Slice:
+			if fv.Type().Elem().Kind() != reflect.Struct {
+				continue
+			}
+			seen := map[string]string{}
+			for j := range fv.Len() {
+				e := fv.Index(j)
+				k := e.Addr().Interface().(interface{ Key() string }).Key()
+				cmp := k
+				switch e.Interface().(type) {
+				case Subscription, SharedDistributionAgent, SharedPullAgent:
+					cmp = strings.ToUpper(k)
+				}
+				if first, dup := seen[cmp]; dup {
+					return fmt.Errorf("%s: duplicate key %q (first %q)", p, k, first)
+				}
+				seen[cmp] = k
+				if err := duplicateKeys(e, p+Element(k)); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func nullListElement(n *yaml.Node) error {

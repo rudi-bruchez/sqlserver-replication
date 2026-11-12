@@ -189,3 +189,24 @@ func fieldByYAMLKey(t reflect.Type, key string) (reflect.Type, bool) {
 	}
 	return nil, false
 }
+
+// The reader writes subscription_streams and memory_optimized on the pull
+// agents too: a parameter of the creation procedures must set them there.
+func TestPullAgentFieldsMapped(t *testing.T) {
+	for _, path := range []string{pPullAgent, pSharedPull} {
+		for _, key := range []string{"subscription_streams", "memory_optimized"} {
+			want := path + "." + key
+			var by []string
+			for _, m := range Parameters {
+				for _, p := range m.Paths {
+					if p == want {
+						by = append(by, m.Procedure+"."+m.Parameter)
+					}
+				}
+			}
+			if len(by) != 1 {
+				t.Errorf("%s: set by %q, want one parameter", want, by)
+			}
+		}
+	}
+}

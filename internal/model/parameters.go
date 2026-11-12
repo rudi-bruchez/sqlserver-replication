@@ -153,7 +153,9 @@ func concat(groups ...[]ParamMapping) []ParamMapping {
 var (
 	pushAgents = []string{pPushAgent, pSharedPush}
 	pullAgents = []string{pPullAgent, pSharedPull}
-	allAgents  = []string{pLogAgent, pSnapAgent, pPushAgent, pSharedPush, pPullAgent, pSharedPull}
+	// subscriptionAgents are the agents of a subscription, push or pull.
+	subscriptionAgents = []string{pPushAgent, pSharedPush, pPullAgent, pSharedPull}
+	allAgents          = []string{pLogAgent, pSnapAgent, pPushAgent, pSharedPush, pPullAgent, pSharedPull}
 )
 
 // Parameters maps every parameter of the creation procedures listed by
@@ -505,9 +507,15 @@ func subscriptionParameters() []ParamMapping {
 			creationOnly(p, "@fileidhint", rBackup, pSubs+".backup.file_id_hint"),
 			creationOnly(p, "@unload", rBackup, pSubs+".backup.unload"),
 			creationOnly(p, "@subscriptionlsn", "11-defaults D.sp_addsubscription.push.@subscriptionlsn maps it to MSsubscriptions.subscription_seqno, set only by an initialization from an LSN: that is the subscription's window, runtime state", pSubs+".lsn"),
-			field(p, "@subscriptionstreams", under("subscription_streams", pushAgents...)...),
+			// A pull subscription's agent row at the distributor is written by
+			// sp_addsubscription too, and the pull procedures have no such
+			// parameter (17-parameters): the reader reads the values of both
+			// kinds of agent in MSdistribution_agents (11-defaults
+			// D.sp_addsubscription.pull.@subscriptionstreams and
+			// .@memory_optimized).
+			field(p, "@subscriptionstreams", under("subscription_streams", subscriptionAgents...)...),
 			field(p, "@subscriber_type", pSubs+".subscriber_type"),
-			field(p, "@memory_optimized", under("memory_optimized", pushAgents...)...),
+			field(p, "@memory_optimized", under("memory_optimized", subscriptionAgents...)...),
 		},
 		connection(p, "@subscriber_", "connection", pushAgents...),
 	)
