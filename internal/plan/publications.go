@@ -15,9 +15,10 @@ func init() { strategies = append(strategies, publicationsStrategy) }
 // (finish sorts by (Step, Order)):
 //
 //   - step 3: "logreader" for sp_addlogreader_agent;
-//   - step 4: "<pub>\x00<subscription>" for the drop of a whole
-//     subscription, "<pub>\x00<article>\x00<subscription>" for the drop of
-//     one article from it;
+//   - step 4: "<pub>\x00<subscription>\x00" then 1 for
+//     sp_droppullsubscription and 2 for sp_dropsubscription, the drop of a
+//     whole subscription (subscriptions.go), "<pub>\x00<article>\x00<subscription>"
+//     for the drop of one article from it;
 //   - step 5: "1\x00<pub>\x00<article>" for sp_droparticle and "2\x00<pub>"
 //     for sp_droppublication, so every article drop comes before every
 //     publication drop (spec "Order" step 5);
@@ -178,26 +179,19 @@ func (b *builder) addPublication(p *model.Publication) {
 	}
 }
 
-// dropPublication: sp_dropsubscription @article = N'all' for each of its
-// subscriptions (step 4), then sp_droppublication (step 5), which fails
+// dropPublication: dropSubscription for each of its subscriptions (step 4),
+// then sp_droppublication (step 5), which fails
 // with 14005 while a subscription remains (spec "Order" step 5). A snapshot
 // agent with a proxy loses it with its job (ledger of plan 2).
 func (b *builder) dropPublication(p *model.Publication) {
 	path := pubPath(p.Name)
 	pubType := stringOr(p.Type, "transactional")
 	for _, s := range sortedSubscriptions(p.Subscriptions) {
-		sp := subPath(p.Name, s)
-		op := b.newOp(4, p.Name+sep+subKey(s.Key()), "subscription", "drop", sp,
-			Call{Procedure: "sp_dropsubscription", Params: subscriptionParams(p.Name, "all", s)})
-		if !b.withEntry(&op, cost.OpDropSubscription, pubType) {
+		// dropSubscription (Task 12): a pull subscription is dropped at the
+		// subscriber first (08-pull P3.subscriber-first).
+		if !b.dropSubscription(p, s, "the publication is dropped: its subscriptions first (14005); the subscriber tables are left in place") {
 			return
 		}
-		op.Affects.Publications = []string{p.Name}
-		op.Affects.Subscriptions = []string{s.Key()}
-		op.Costs = []Cost{CostSubscriberObjectLeft}
-		op.Reason = "the publication is dropped: its subscriptions first (14005); the subscriber tables are left in place"
-		op.Sources = append(op.Sources, "spec Strategies (Subscriptions: @article = N'all')")
-		b.add(op)
 	}
 	op := b.newOp(5, "2"+sep+p.Name, "publication", "drop", path,
 		Call{Procedure: "sp_droppublication", Params: []Param{{Name: "@publication", Value: literal(p.Name)}}})

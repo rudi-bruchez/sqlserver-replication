@@ -353,25 +353,16 @@ func (b *builder) extend(pd, pc *model.Publication, added []*model.Article) {
 		}
 		cur := sp.Cur
 		path := subPath(pd.Name, cur)
-		init := stringOr(cur.Initialization, initSnapshot)
-		if init == "backup" || init == "lsn" {
-			b.refuse(path, "extension of a %s-initialized subscription not measured", init)
+		types, ok := b.extensionTypes(path, sp.Des, cur) // R36, R21
+		if !ok {
 			continue
 		}
-		syncType, err := encSyncType(init)
-		if err != nil {
-			b.refuse(path, "extension of a %s-initialized subscription not measured", init)
-			continue
-		}
-		subType := stringOr(sp.Des.Type, stringOr(cur.Type, "push"))
 		names := arts
 		if all {
 			names = []string{"all"}
 		}
 		for _, name := range names {
-			params := append(subscriptionParams(pd.Name, name, cur),
-				Param{Name: "@subscription_type", Value: literal(subType)},
-				Param{Name: "@sync_type", Value: syncType})
+			params := append(subscriptionParams(pd.Name, name, cur), types...)
 			first := name
 			if all {
 				first = arts[0]
