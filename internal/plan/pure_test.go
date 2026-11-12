@@ -1,52 +1,34 @@
 package plan
 
 import (
-	"go/parser"
-	"go/token"
-	"os"
-	"path/filepath"
-	"strconv"
+	"os/exec"
 	"strings"
 	"testing"
 )
 
 // TestPurePackages: the planner packages import neither database/sql nor the
-// reader nor the precheck package (spec "Engine as a library").
+// reader nor the precheck package, directly or through another package
+// (spec "Engine as a library"). go list -deps lists the transitive closure
+// of the non-test files.
 func TestPurePackages(t *testing.T) {
 	forbidden := map[string]bool{
 		"database/sql": true,
 		"github.com/rudi-bruchez/sqlserver-replication/internal/reader":   true,
 		"github.com/rudi-bruchez/sqlserver-replication/internal/precheck": true,
 	}
-	files := 0
-	for _, dir := range []string{"../normalize", "../cost", "."} {
-		entries, err := os.ReadDir(dir)
+	for _, pkg := range []string{"../normalize", "../cost", "."} {
+		out, err := exec.Command("go", "list", "-deps", pkg).CombinedOutput()
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("go list -deps %s: %v\n%s", pkg, err, out)
 		}
-		for _, e := range entries {
-			name := e.Name()
-			if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-				continue
-			}
-			path := filepath.Join(dir, name)
-			f, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
-			if err != nil {
-				t.Fatal(err)
-			}
-			files++
-			for _, imp := range f.Imports {
-				p, err := strconv.Unquote(imp.Path.Value)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if forbidden[p] {
-					t.Errorf("%s imports %s", path, p)
-				}
+		deps := strings.Fields(string(out))
+		if len(deps) < 2 {
+			t.Fatalf("go list -deps %s listed %d packages", pkg, len(deps))
+		}
+		for _, d := range deps {
+			if forbidden[d] {
+				t.Errorf("%s depends on %s", pkg, d)
 			}
 		}
-	}
-	if files < 3 {
-		t.Fatalf("parsed %d files: the directories were not found", files)
 	}
 }

@@ -819,3 +819,31 @@ func TestNormalizeObjectsDoNotLeak(t *testing.T) {
 		t.Errorf("max_retention_hours %s from distpublisher's entry; refusals %v", show(out.Distributor.MaxRetentionHours), rs)
 	}
 }
+
+// TestNormalizeDuplicateNames: the plan compares column names and profile
+// parameter names without regard to case, so a column listed twice and two
+// parameters differing only in case are refused; a subscription's articles
+// listing every article in another case is every article.
+func TestNormalizeDuplicateNames(t *testing.T) {
+	fx := loadFixture(t)
+	d := loadFixture(t)
+	d.Publications[0].Articles[0].Columns = []string{"CustomerID", "Name", "customerid"}
+	v := d.AgentProfiles[0].Parameters["-PollingInterval"]
+	d.AgentProfiles[0].Parameters["-pollinginterval"] = v
+	_, rs := Normalize(d, fx)
+	want := []Refusal{
+		{Path: "publications[SalesPub].articles[Customer].columns", Reason: `column "customerid" is listed twice (column names are compared without regard to case)`},
+		{Path: "agent_profiles[distribution/lab-distrib].parameters", Reason: "parameters -PollingInterval, -pollinginterval differ only in case (parameter names are compared without regard to case)"},
+	}
+	if !reflect.DeepEqual(rs, want) {
+		t.Errorf("refusals %+v, want %+v", rs, want)
+	}
+
+	d = loadFixture(t)
+	d.Publications[0].Subscriptions[0].Articles = []string{"customer", "ORDERS"}
+	out, rs := Normalize(d, fx)
+	noRefusal(t, "every article in another case", rs)
+	if got := out.Publications[0].Subscriptions[0].Articles; got != nil {
+		t.Errorf("articles %v, want nil", got)
+	}
+}

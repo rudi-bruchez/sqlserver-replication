@@ -68,14 +68,16 @@ func (b *builder) diff(path string, desired, current any) []Change {
 // side's R14 bit, match objects (R7), call the strategies, finish.
 //
 // Matching is the strategies' (matchPublications and its siblings), each
-// on the lists it plans. A refused plan has no operation (R3): when the
-// normalization or the findings refuse, the strategies do not run, since
-// their input is not the configuration the file means; when a strategy
-// refuses, the operations are dropped.
+// on the lists it plans, and a matched pair is diffed at pair.path, built
+// from the current key. A refused plan has no operation (R3): when the
+// normalization, the schedules (scheduleRefusals, R22) or the findings
+// refuse, the strategies do not run, since their input is not the
+// configuration the file means; when a strategy refuses, the operations
+// are dropped.
 func Build(in Inputs, opt Options) *Plan {
 	b := &builder{in: in, opt: opt}
 	des, refusals := normalize.Normalize(in.Desired, in.Current)
-	b.des, b.refusals = des, refusals
+	b.des, b.refusals = des, append(refusals, scheduleRefusals(des)...)
 
 	b.cur = &model.Config{Version: model.FormatVersion}
 	if in.Current != nil {

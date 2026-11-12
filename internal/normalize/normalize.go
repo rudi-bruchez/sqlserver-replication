@@ -383,7 +383,10 @@ func (n *normalizer) required(c *model.Config) {
 }
 
 // Rule 3: names. Two publications whose names are equal without regard to
-// case collide in distribution.dbo.MSpublications (R7). A command
+// case collide in distribution.dbo.MSpublications (R7). A column listed
+// twice, names compared without regard to case as the plan compares them,
+// is refused, and so are two parameters of a profile whose names differ
+// only in case: the plan compares both without regard to case. A command
 // procedure, a filter procedure, a synchronization object and an article
 // source written without a schema get dbo, the schema sp_addarticle and
 // sp_articlefilter store (spec "Names", 11-defaults
@@ -414,6 +417,14 @@ func (n *normalizer) names(c *model.Config) {
 		}
 		for j := range c.Publications[i].Articles {
 			a := &c.Publications[i].Articles[j]
+			cols := map[string]bool{}
+			for _, col := range a.Columns {
+				if k := strings.ToLower(col); cols[k] {
+					n.refuse(artPath(p, a)+".columns", "column %q is listed twice (column names are compared without regard to case)", col)
+				} else {
+					cols[k] = true
+				}
+			}
 			qualify(&a.Source)
 			qualify(a.SyncObject)
 			if a.SyncObject != nil && a.SyncObject.Schema != "dbo" {
@@ -433,19 +444,39 @@ func (n *normalizer) names(c *model.Config) {
 			}
 		}
 	}
+	for i := range c.AgentProfiles {
+		pr := &c.AgentProfiles[i]
+		byName := map[string][]string{}
+		for k := range pr.Parameters {
+			byName[strings.ToLower(k)] = append(byName[strings.ToLower(k)], k)
+		}
+		var dups []string
+		for _, ks := range byName {
+			if len(ks) > 1 {
+				sort.Strings(ks)
+				dups = append(dups, strings.Join(ks, ", "))
+			}
+		}
+		sort.Strings(dups)
+		for _, d := range dups {
+			n.refuse("agent_profiles"+model.Element(pr.Key())+".parameters", "parameters %s differ only in case (parameter names are compared without regard to case)", d)
+		}
+	}
 }
 
-// everyArticle: names, as a set, are the publication's article names.
+// everyArticle: names, as a set, are the publication's article names,
+// compared without regard to case as the plan compares a subscription's
+// articles.
 func everyArticle(p *model.Publication, names []string) bool {
 	set := map[string]bool{}
 	for _, x := range names {
-		set[x] = true
+		set[strings.ToLower(x)] = true
 	}
 	if len(set) != len(p.Articles) {
 		return false
 	}
 	for _, a := range p.Articles {
-		if !set[a.Name] {
+		if !set[strings.ToLower(a.Name)] {
 			return false
 		}
 	}

@@ -34,10 +34,16 @@ func pubPathOf(name string) string { return "publications" + model.Element(name)
 
 // diffAll compares every object of the two configurations the comparison
 // looks at: the publisher, the distributor, the shared agents, the
-// publications, their articles and subscriptions, the profiles.
+// publications, their articles and subscriptions, the profiles, each
+// matched pair at the path of its current key (pair.path).
 func diffAll(t *testing.T, des, cur *model.Config) []Change {
 	t.Helper()
-	never := func(string) bool { return false }
+	return diffAllSkip(t, des, cur, func(string) bool { return false })
+}
+
+// diffAllSkip is diffAll with a skip function.
+func diffAllSkip(t *testing.T, des, cur *model.Config, never func(string) bool) []Change {
+	t.Helper()
 	out := diffObject("publisher", &des.Publisher, &cur.Publisher, never)
 	out = append(out, diffObject("distributor", des.Distributor, cur.Distributor, never)...)
 	sd, dOnly, cOnly := matchFold(des.Publisher.SharedDistributionAgents, cur.Publisher.SharedDistributionAgents,
@@ -46,28 +52,28 @@ func diffAll(t *testing.T, des, cur *model.Config) []Change {
 		t.Fatalf("shared agents unmatched: %d desired, %d current", len(dOnly), len(cOnly))
 	}
 	for _, p := range sd {
-		out = append(out, diffObject("publisher.shared_distribution_agents"+model.Element(p.Des.Key()), p.Des, p.Cur, never)...)
+		out = append(out, diffObject(p.path("publisher.shared_distribution_agents"), p.Des, p.Cur, never)...)
 	}
 	pubs, dp, cp := matchPublications(des.Publications, cur.Publications)
 	if len(dp)+len(cp) > 0 {
 		t.Fatalf("publications unmatched: %d desired, %d current", len(dp), len(cp))
 	}
 	for _, p := range pubs {
-		pp := pubPathOf(p.Des.Name)
+		pp := p.path("publications")
 		out = append(out, diffObject(pp, p.Des, p.Cur, never)...)
 		arts, da, ca := matchArticles(p.Des.Articles, p.Cur.Articles)
 		if len(da)+len(ca) > 0 {
 			t.Fatalf("articles of %s unmatched", pp)
 		}
 		for _, a := range arts {
-			out = append(out, diffObject(pp+".articles"+model.Element(a.Des.Name), a.Des, a.Cur, never)...)
+			out = append(out, diffObject(a.path(pp+".articles"), a.Des, a.Cur, never)...)
 		}
 		subs, ds, cs := matchSubscriptions(p.Des.Subscriptions, p.Cur.Subscriptions)
 		if len(ds)+len(cs) > 0 {
 			t.Fatalf("subscriptions of %s unmatched", pp)
 		}
 		for _, s := range subs {
-			out = append(out, diffObject(pp+".subscriptions"+model.Element(s.Des.Key()), s.Des, s.Cur, never)...)
+			out = append(out, diffObject(s.path(pp+".subscriptions"), s.Des, s.Cur, never)...)
 		}
 	}
 	profs, dpr, cpr := matchProfiles(des.AgentProfiles, cur.AgentProfiles)
@@ -75,7 +81,7 @@ func diffAll(t *testing.T, des, cur *model.Config) []Change {
 		t.Fatalf("profiles unmatched")
 	}
 	for _, p := range profs {
-		out = append(out, diffObject("agent_profiles"+model.Element(p.Des.Key()), p.Des, p.Cur, never)...)
+		out = append(out, diffObject(p.path("agent_profiles"), p.Des, p.Cur, never)...)
 	}
 	return out
 }
