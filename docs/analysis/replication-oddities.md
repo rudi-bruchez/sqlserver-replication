@@ -80,6 +80,8 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: the log reader agent belongs to the database and stays until the database is unpublished.
 - Observed: dropping the last publication of a database also drops its log reader agent, its job and its `MSpublisher_databases` row. Whether a later `sp_addpublication` recreates a log reader implicitly is not measured after such a drop. On a database published for the first time, `sp_addpublication` creates and starts one by itself: it prints "Job 'REPLLAB-rv_fxk3q1_p-14' started successfully" and "The logreader agent job has been implicitly created and will run under the SQL Server Agent Service Account", and `MSlogreader_agents` then has one row for the database. As with the distribution agent job, it runs under the Agent service account until changed.
+- Also observed: dropping a database's last publication keeps the database published (`IsPublished` 1, `sysdatabases` category 1); its log reader and its `MSpublisher_databases` row are removed. `sp_replicationdboption @optname = N'publish', @value = N'true'` run again on it answers that the option is already set to true and succeeds. Source: Task 14 review of plan 3, measured on 2022 CU27 (2026-11-12).
+- Also observed: `sp_addlogreader_agent` starts its job at once. Source: Task 14 review of plan 3, measured on 2022 CU27 (2026-11-12).
 - Source: measured, `13-transient T02`, `T04`, `T06`, `T08`, `T10` (`logreader_after_drop=dropped`); `plan3-fold-review m3` (the warning and `logreader|1`), `m5` (the same warning).
 
 ### A database published for merge only
@@ -575,6 +577,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Also observed: on a publication with `independent_agent`, `sp_addsubscription` starts the distribution job at once, even for an unreachable subscriber. A pull subscription at an unreachable subscriber reads, from the publisher, as a job NULL with "Distribution agent for subscription added.". Source: plan 3 task 4 and task 5 reviews, measured; the ledger lines do not show where that message appears.
 - Also observed: the same happens when `sp_addsubscription` is given schedule or security parameters (`@frequency_*`, `@subscriber_security_mode`, `@subscriber_login`, `@subscriber_password`). It prints "The parameters for security, batch size, and scheduling have been deprecated and should no longer be used", then creates the distribution agent job implicitly; a following `sp_addpushsubscription_agent` returns 0 and updates the same job. Source: plan 3 task 8 review, measured (2026-11-12).
 - Also observed: a push subscription to a subset of articles, with `sp_addpushsubscription_agent` called right after the `sp_addsubscription` of the first article and the other articles added after it, is accepted and has one agent. Source: plan 3 task 12 and task 13 reviews, measured on 2022 CU27 (2026-11-12).
+- Also observed: `sp_addsubscription` on a publication without `independent_agent` creates and starts the shared distribution job implicitly. Source: Task 14 review of plan 3, measured on 2022 CU27 (2026-11-12).
 - Source: measured, `O13` (Claude, controller); p2 task-11-fix-1-report (the same warning on `m_gen`).
 
 ### sp_addsubscription in a transaction
@@ -611,6 +614,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Also observed: `sp_addpushsubscription_agent` on an existing shared agent (publication without `independent_agent`, agent already serving that subscriber database) returns success and creates no second job. It keeps the agent row and its `profile_id`, but drops and re-creates the job: a new `job_id`, the job history lost, a disabled job back enabled and started, a custom job description reset. Source: plan 3 task 12 and task 13 reviews, measured on 2022 CU27 (2026-11-12).
 - Also observed: `sp_addsubscription` on such a publication, when the subscriber database already has a shared agent, keeps the agent and its job unchanged: same `job_id`, still disabled if it was, history kept. Source: plan 3 task 12 and task 13 reviews, measured on 2022 CU27 (2026-11-12).
 - Also observed: dropping the last push subscription served by a shared distribution agent drops the shared agent row and its job, unlike the shared pull agent, whose job stays at the subscriber (see "Dropping a shared pull agent"). Source: plan 3 task 12 and task 13 reviews, measured on 2022 CU27 (2026-11-12).
+- Also observed: dropping the last subscription of a shared distribution agent while its job ran left one row in `MSdistribution_history` for the removed agent. Source: Task 14 review of plan 3, measured on 2022 CU27 (2026-11-12).
 - Source: measured, `07-changes SHR.after1`, `SHR.after2`.
 
 ### sp_changesubscription
@@ -717,6 +721,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: `msdb.dbo.sp_update_agent_profile`, since the procedure lives in `msdb`.
 - Observed: called as `msdb.dbo.sp_update_agent_profile` it executes in `msdb` whatever the current database and refuses with 21482 ("can only be executed in the distribution database"). `distribution.dbo.sp_update_agent_profile` works, and so does the plain name from the distribution database.
+- Also observed: `[distribution].dbo.sp_update_agent_profile` binds a profile to the log reader, the push distribution agent, the pull agent (through the distributor's row, `subscription_type` 1) and the shared push agent, not only to the snapshot agent. Source: Task 14 review of plan 3, measured on 2022 CU27 (2026-11-12).
 - Source: measured, `07-changes PRF.*`.
 
 ### Job account changes
@@ -771,6 +776,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: `sp_changedistributiondb` changes the retention in `msdb.dbo.MSdistributiondbs`.
 - Observed: changing `min_distretention`, `max_distretention` or `history_retention` also changes the cleanup jobs and their steps, and the row records that the jobs still differ after the value is restored (what differs is not recorded).
+- Also observed: `sp_changedistributiondb` refuses a `max_distretention` below the current `min_distretention` with 14107 ("The @max_distretention value must be larger than the @min_distretention value") and a `min_distretention` above the current `max_distretention` with 14107 too; `min_distretention` equal to `max_distretention` is accepted. Every move between valid states succeeds when the two calls are ordered to keep min <= max at each step: both down, `min_distretention` first; both up, `max_distretention` first. Source: Task 14 review of plan 3, measured on 2022 CU27 (2026-11-12).
 - Source: measured, `07-changes DST.sp_changedistributiondb.*` (`changed_inside=[distributor,jobs,steps] after_restore_differs=[jobs]`).
 
 ## Agent history and errors
@@ -825,6 +831,8 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: only a parameter added by hand can be dropped, since the copied ones come from the default profile.
 - Observed: `sp_drop_agent_parameter` works on a copied parameter: `-QueryTimeout` dropped from the copied profile leaves 11 parameters and no row of that name. `sp_drop_agent_profile` on an unused profile removes its row of `MSagent_profiles` and all its rows of `MSagent_parameters`.
+- Also observed: `sp_drop_agent_profile` on an unused default user profile makes the type's `MIN` system profile (`type` 0) the default again. Source: Task 14 review of plan 3, measured on 2022 CU27 (2026-11-12).
+- Also observed: `sp_drop_agent_profile` on a default profile that is in use fails with 20065 ("Cannot drop profile because it is in use"), but the procedure's earlier `UPDATE`, which sets `def_profile = 1` on the system profile, stays: the agent type is left with two default profiles. Source: Task 14 review of plan 3, measured on 2022 CU27 (2026-11-12).
 - Source: measured, `19-profiles PF.drop_parameter`, `PF.drop_unused` (commit `2653ad6`).
 
 ### The default profile of a type
@@ -832,6 +840,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected: `sp_change_agent_profile` can make a profile the default.
 - Observed: it accepts only `description` (21183 "Invalid property name 'default'"), in the 2019 source and on 2022. The default is set by `sp_add_agent_profile @default` at creation, or by the internal `sys.sp_MSupdate_agenttype_default`, which no public procedure wraps.
 - Also observed: `sys.sp_MSupdate_agenttype_default` resets the default of a type (plan 3 task 4 review, measured; the ledger line does not say to what). `sp_change_agent_profile` with `default` returns 21183 again in `19-profiles PF.change_default`.
+- Also observed: `sp_add_agent_profile @default = 1` rebinds no existing agent; agents created afterwards take the new default. Source: Task 14 review of plan 3, measured on 2022 CU27 (2026-11-12).
 - Source: measured, panel 3 codex directive and codex neutral (verified items 3 and 1), Fable; panel 3 GLM item 4 for `sp_MSupdate_agenttype_default` (read on the lab); `19-profiles PF.change_default`.
 
 ### Profiles across distribution databases
@@ -865,6 +874,12 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected: `sp_changepublication_snapshot @frequency_type` changes the type.
 - Observed: alone it is refused with 14278 (a daily schedule needs an interval); with `@frequency_interval` it works. An `@active_end_date` before the start date is refused with 14288.
 - Source: measured, `07-changes AGT.sp_changepublication_snapshot.frequency_type`, `.frequency_type+frequency_interval`, `.active_end_date`.
+
+### The end time and relative interval of a schedule change
+
+- Expected: a change that gives only the frequency fields resets the rest of the schedule.
+- Observed: `sp_changepublication_snapshot` with only the four frequency fields (type, interval, sub-day type, sub-day interval) is accepted and keeps the stored active end time and relative interval: an agent left stopping at 12:00:00 keeps doing so.
+- Source: Task 14 review of plan 3, measured on 2022 CU27 (2026-11-12).
 
 ### Two schedules of one name
 
@@ -1080,6 +1095,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected: dropping a publication either succeeds or fails.
 - Observed: the drop of the last publication of a database, which drops its log reader, can print Msg 18752 ("only one Log Reader Agent or log-related procedure") once or twice from `sys.sp_replcmds` while the log reader runs, and still complete: return code 0, `@@TRANCOUNT` 0, publication and log reader gone. Of eight publications of one database dropped in turn, only the last raised it. Under load it came with the log reader blocked for over 200 s. Ten idle create and drop cycles of `13-transient` saw none. It was also seen during `sp_replicationdboption @value = N'false'`. Dropping the last publication with no subscription left prints no 18752 in one attempt (`06-structural C5`). On 2019 and 2025 not measured.
 - Also observed: `sp_droppublication` of a database's last publication printed two Msg 18752 from `sys.sp_replcmds` and completed. `sp_articlefilter` with `@force_reinit_subscription = 1` printed it from `sys.sp_repldone` in two of five tries, with the log reader running, and completed (see "sp_articlefilter with a new clause"). Source: plan 3 task 9 review, measured (2026-11-12).
+- Also observed: the same `sp_droppublication` of a database's last publication while its log reader runs, already recorded as `O14`, aborts the rest of a script under `sqlcmd -b`. Source: Task 14 review of plan 3, measured on 2022 CU27 (2026-11-12).
 - Source: measured, `O14` (Claude, controller, fix review), `O21`, panel 3 Opus; `13-transient T01` to `T10`; `06-structural C5.*`.
 
 ### Deadlock during subscription drops
@@ -1216,6 +1232,7 @@ The numbers met, with their meaning in this context. The agent messages met in t
 | 14099 | `sp_adddistributor` | a distributor exists |
 | 14100 | `sp_addsubscription` | a named article on a `concurrent` or `concurrent_c` publication |
 | 14122 | `sp_addsubscription` | a named article on an `immediate_sync` publication under `native` or `character` |
+| 14107 | `sp_changedistributiondb` | `max_distretention` below `min_distretention`, or `min_distretention` above `max_distretention`; equal values are accepted |
 | 14124 | `sp_addsubscription` | refused (no article); leaves the subscriber registered |
 | 14151 | distribution agent | "agent ... failed", the wrapper of an agent failure |
 | 14262 | `msdb.dbo.sp_update_job` | the `@job_id` names no job (a snapshot agent never added) |
@@ -1225,7 +1242,7 @@ The numbers met, with their meaning in this context. The agent messages met in t
 | 15001 | `sp_changearticle sync_object` | the unqualified name of a view outside `dbo` (leaves `@@TRANCOUNT` at 1), or a view that does not exist (leaves it at 0) |
 | 15002 | `sp_addsubscription` | cannot run inside a transaction |
 | 15251 | `sp_addarticle`, `sp_changearticle` | `upd_cmd = 'SCALL'` without a procedure name; `ins_cmd N'XCALL ...'` (leaves `@@TRANCOUNT` at 0) |
-| 18752 | publication drops, `sp_articlefilter` | another log reader or log-related procedure (`sp_replcmds`, `sp_repldone`); the call may still complete |
+| 18752 | publication drops, `sp_articlefilter` | another log reader or log-related procedure (`sp_replcmds`, `sp_repldone`); the call may still complete, but under `sqlcmd -b` the script stops |
 | 18757 | `sp_addpublication_snapshot` | the database is not published |
 | 18787 | `sp_changepublication` | initialization from backup on a snapshot publication |
 | 20011 | `sp_changepublication` | `allow_anonymous` without `immediate_sync`, or `immediate_sync` false while `allow_anonymous` is true |
@@ -1234,6 +1251,7 @@ The numbers met, with their meaning in this context. The agent messages met in t
 | 20016 | `sp_addpullsubscription` (2019 source) | pull without `@subscription_type`, by reading |
 | 20017 | `sp_addpullsubscription_agent` | the subscription does not exist at the subscriber |
 | 20026 | `sp_articlefilter` in `distribution`, inside 14027 | the publication does not exist |
+| 20065 | `sp_drop_agent_profile` | the default profile is in use; the earlier `UPDATE` of `def_profile` stays, leaving two defaults |
 | 20067 | `sp_add_agent_parameter` | the parameter exists (copied from the default profile) |
 | 20253 | distribution agent | bulk copy failure of a re-add over rows that exist (with 2601), retried forever |
 | 20607 | `sp_change*`, `sp_addarticle`, `sp_droparticle` | needs `@force_invalidate_snapshot = 1` (ready `immediate_sync` snapshot, with or without subscriptions) |
