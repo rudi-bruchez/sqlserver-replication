@@ -332,3 +332,31 @@ func TestLabRenameReplacesData(t *testing.T) {
 	}
 	e.converged(t, des)
 }
+
+// A push subscription whose distribution job was deleted by hand is dropped
+// when the file omits it: sp_dropsubscription @article = N'all' succeeds in
+// that state (minor 8 of the final review).
+func TestLabDropSubscriptionWithoutJob(t *testing.T) {
+	e := labEnv(t, "dropnojob")
+	createAndDeliver(t, e)
+	if _, err := e.master.Exec(e.replace(`
+DECLARE @job_id uniqueidentifier = (SELECT CONVERT(uniqueidentifier, job_id) FROM distribution.dbo.MSdistribution_agents
+WHERE publisher_db = N'{db}' AND subscriber_db = N'{sub}');
+EXEC msdb.dbo.sp_delete_job @job_id = @job_id;`)); err != nil {
+		t.Fatal(err)
+	}
+	des := e.desired(t, "create.yaml")
+	if p := e.plan(t, des, plan.Options{}); len(p.Refusals) != 1 {
+		t.Fatalf("the subscription kept without its job, want one refusal:\n%s", p.Summary())
+	}
+	des.Publications[0].Subscriptions = nil
+	p := e.plan(t, des, plan.Options{})
+	if len(p.Refusals) > 0 {
+		t.Fatalf("refused:\n%s", p.Summary())
+	}
+	if _, err := find(p, "sp_dropsubscription", map[string]string{"@article": "N'all'"}); err != nil {
+		t.Fatalf("%v\n%s", err, p.Summary())
+	}
+	e.run(t, p)
+	e.converged(t, des)
+}

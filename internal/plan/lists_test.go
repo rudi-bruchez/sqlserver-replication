@@ -591,3 +591,44 @@ func TestListsRemovedPullSubscriberChecked(t *testing.T) {
 		}
 	}
 }
+
+// A push subscription whose job was deleted by hand is dropped when the file
+// omits it or its publication: sp_dropsubscription @article = N'all'
+// succeeds in that state (minor 8 of the final review, measured). Kept, it
+// stays refused.
+func TestDropSubscriptionWithoutJob(t *testing.T) {
+	const path = "publications[SalesPub].subscriptions[REPLLAB/SalesSub].distribution_agent"
+	const msg = "agent: job 0x01 recorded by replication no longer exists in msdb"
+	missing := func(f *state.Facts) {
+		for i := range f.Agents {
+			if a := &f.Agents[i]; a.Kind == "distribution" && a.Publication == "SalesPub" {
+				a.Job.Exists = false
+			}
+		}
+	}
+	finding := func(cur *model.Config) {
+		cur.Findings = append(cur.Findings, model.Finding{Kind: model.FindingIncomplete, Path: path, Message: msg})
+	}
+	p := buildFull(t, nil, missing, func(des, cur *model.Config) {
+		finding(cur)
+		pubOf(t, des, "SalesPub").Subscriptions = nil
+	})
+	drop := one(t, withJobs(t, p), "sp_dropsubscription")
+	wantParam(t, drop, "@article", "N'all'")
+	wantParam(t, drop, "@publication", "N'SalesPub'")
+
+	p = buildFull(t, nil, missing, func(des, cur *model.Config) {
+		finding(cur)
+		var keep []model.Publication
+		for _, pub := range des.Publications {
+			if pub.Name != "SalesPub" {
+				keep = append(keep, pub)
+			}
+		}
+		des.Publications = keep
+	})
+	one(t, withJobs(t, p), "sp_droppublication")
+
+	p = buildFull(t, nil, missing, func(_, cur *model.Config) { finding(cur) })
+	wantOnlyRefusal(t, p, msg+"; repair of this state is not measured")
+}

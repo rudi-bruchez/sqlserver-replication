@@ -71,7 +71,37 @@ func (b *builder) incomplete(f model.Finding) {
 			return
 		}
 	}
+	if b.droppedWithoutJob(f.Path) {
+		return
+	}
 	b.refuse(f.Path, r26NotMeasured, f.Message)
+}
+
+// droppedWithoutJob tells the agent of a push subscription whose job was
+// deleted by hand, when the file omits the subscription or its publication:
+// the plan drops it whole, with sp_dropsubscription @article = N'all', which
+// succeeds in that state and leaves no transaction open (measured by the
+// final review, minor 8). Any other operation on such a subscription stays
+// refused, a drop of a pull subscription (sp_droppullsubscription first)
+// too: not measured.
+func (b *builder) droppedWithoutJob(path string) bool {
+	for i := range b.cur.Publications {
+		pc := &b.cur.Publications[i]
+		for j := range pc.Subscriptions {
+			s := &pc.Subscriptions[j]
+			if path != subPath(pc.Name, s)+".distribution_agent" || stringOr(s.Type, "push") != "push" ||
+				!b.jobMissing("distribution", pc.Name, s.Subscriber, s.Database) {
+				continue
+			}
+			pd := pubNamed(b.des, pc.Name)
+			if pd == nil {
+				return true
+			}
+			_, _, drops := matchSubscriptions(pd.Subscriptions, []model.Subscription{*s})
+			return len(drops) == 1
+		}
+	}
+	return false
 }
 
 // agentKept tells an incomplete finding at an agent the current
