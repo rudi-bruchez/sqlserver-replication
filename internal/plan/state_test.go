@@ -206,8 +206,8 @@ func TestPredictReinitMarks(t *testing.T) {
 	if hasParam(ops[1], paramReinit) {
 		t.Error("pre_creation_cmd after schema_options passes the reinit flag")
 	}
-	if !reflect.DeepEqual(ops[1].Costs, []Cost{CostPendingSnapshotStart}) {
-		t.Errorf("pre_creation_cmd costs %v", ops[1].Costs)
+	if !reflect.DeepEqual(ops[1].Costs, []Cost{CostOnline}) {
+		t.Errorf("pre_creation_cmd costs %v, want online (counted by schema_options, round 2)", ops[1].Costs)
 	}
 	if got := rowsOf(st, "SalesPub", labSub); !reflect.DeepEqual(got, map[string]int{"Customer": 1, "Orders": 2}) {
 		t.Errorf("rows %v, want Customer 1 and Orders 2", got)
@@ -691,4 +691,24 @@ func TestPredictAgentFailureBoundary(t *testing.T) {
 	if got := agentStatus(a, gen); got != "failed" {
 		t.Errorf("last_failure at last_generation: %s, want failed (R13: at or after)", got)
 	}
+}
+
+// Round 2: rows a reinit-flagged change of this plan set to 1 are counted
+// by that change; a later change of the same article is online, while the
+// rows at 1 observed before the plan still cost pending_snapshot_start.
+func TestCostReinitCountedOnce(t *testing.T) {
+	schema := testOp(t, "a", "publications[SalesPub].articles[Customer].schema_options", "", "SalesPub", "Customer")
+	view := testOp(t, "b", cost.OpArticleView, "", "SalesPub", "Customer")
+	ops, _ := finish([]Operation{schema, view}, labState(t))
+	wantCosts(t, "schema_options then article_view", ops, on(CostReinitialization, CostNewSnapshot), on(CostOnline))
+
+	wide := testOp(t, "a", "publications[SalesPub].sync_method", "concurrent>native", "SalesPub", "")
+	view = testOp(t, "b", cost.OpArticleView, "", "SalesPub", "Orders")
+	ops, _ = finish([]Operation{wide, view}, labState(t))
+	wantCosts(t, "sync_method then article_view", ops, on(CostReinitialization, CostNewSnapshot), on(CostOnline))
+
+	st := labState(t)
+	st.Pubs["SalesPub"].Subs[strings.ToLower(labSub)].Rows["Customer"] = 1
+	ops, _ = finish([]Operation{testOp(t, "a", cost.OpArticleView, "", "SalesPub", "Customer")}, st)
+	wantCosts(t, "article_view on rows observed at 1", ops, on(CostPendingSnapshotStart))
 }

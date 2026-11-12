@@ -290,6 +290,9 @@ func (s *State) apply(op *Operation) {
 			for a := range sub.Rows {
 				if e.Wide || a == art {
 					sub.Rows[a] = 1
+					// The change carries reinitialization and new_snapshot
+					// for these rows: counted once (R34).
+					ps.count(a)
 				}
 			}
 		}
