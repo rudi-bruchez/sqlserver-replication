@@ -33,6 +33,11 @@ type builder struct {
 	refusals        []Refusal
 	warnings, notes []string
 	skip            func(path string) bool // the unreadable paths
+	// sharedPush is the shared distribution agents, by lower-cased
+	// subscriber/database, that an sp_addpushsubscription_agent of this plan
+	// creates (subscriptions.go): a later subscription to the same subscriber
+	// database emits none.
+	sharedPush map[string]bool
 }
 
 func (b *builder) refuse(path, format string, args ...any) {

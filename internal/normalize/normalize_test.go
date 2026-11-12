@@ -764,7 +764,7 @@ func TestNormalizeSchemaOptionsCanonical(t *testing.T) {
 
 func TestNormalizeSubscriptionArticles(t *testing.T) {
 	fx := loadFixture(t)
-	for name, arts := range map[string][]string{"every article": {"Orders", "Customer", "Orders"}, "empty": {}} {
+	for name, arts := range map[string][]string{"every article": {"Orders", "customer"}, "empty": {}} {
 		d := loadFixture(t)
 		d.Publications[0].Subscriptions[0].Articles = arts
 		out, rs := Normalize(d, fx)
@@ -778,6 +778,14 @@ func TestNormalizeSubscriptionArticles(t *testing.T) {
 	_, rs := Normalize(d, fx)
 	if !refused(rs, "publications[SalesPub].subscriptions[REPLLAB/SalesSub].articles", "14100") {
 		t.Errorf("a real subset: refusals %v, want 14100", rs)
+	}
+	// Measured by the Task 12 review: [T1,t1,T2,T2] collapsed to N'all',
+	// subscribing excluded articles; [T1,t1] gave 14058 on its second call.
+	d = loadFixture(t)
+	d.Publications[0].Subscriptions[0].Articles = []string{"Orders", "Customer", "orders"}
+	_, rs = Normalize(d, fx)
+	if !refused(rs, "publications[SalesPub].subscriptions[REPLLAB/SalesSub].articles", "article orders listed twice") {
+		t.Errorf("a duplicate: refusals %v, want article orders listed twice", rs)
 	}
 }
 

@@ -384,6 +384,12 @@ func (w *walker) schedules(path string, d, c reflect.Value) {
 		return
 	}
 	des := *d.Interface().(*[]model.Schedule)
+	if len(des) == 0 && pullSchedules(model.Pattern(path)) {
+		if len(cur) != 0 {
+			w.add(path, model.Pattern(path), model.Ptr(scheduleNames(cur)), model.Ptr("[]"))
+		}
+		return
+	}
 	if len(des) != 1 {
 		return // refused before any comparison (scheduleRefusals, R22)
 	}
@@ -396,6 +402,14 @@ func (w *walker) schedules(path string, d, c reflect.Value) {
 		// the name an unreadable finding writes (R26).
 		w.scheduleFields(path+model.Element(cur[i].Name), des[i], cur[i], declaredFields)
 	}
+}
+
+// pullSchedules tells the schedules of a pull agent, where an empty list is
+// the state "no schedule" (the export of a pull agent created without
+// schedule parameters), not a refused shape (R22).
+func pullSchedules(pattern string) bool {
+	return pattern == "publications[*].subscriptions[*].pull_agent.schedules" ||
+		pattern == "publisher.shared_pull_agents[*].schedules"
 }
 
 func scheduleNames(ss []model.Schedule) string {
@@ -746,6 +760,10 @@ func scheduleRefusals(des *model.Config) []Refusal {
 			}
 			if v.Type() == reflect.PointerTo(scheduleListType) {
 				switch n := v.Elem().Len(); {
+				case n == 0 && pullSchedules(model.Pattern(path)):
+					// A pull agent created without schedule parameters has no
+					// schedule, which the export writes [] (measured by the
+					// Task 12 review): the state "no schedule", compared.
 				case n == 0:
 					out = append(out, Refusal{Path: path, Reason: "an empty schedules list is refused (R22): omit schedules for the procedure's schedule, or declare one"})
 				case n > 1:

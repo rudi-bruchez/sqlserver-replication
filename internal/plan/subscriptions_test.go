@@ -366,3 +366,335 @@ func TestDropLastPullOfSharedAgentWarns(t *testing.T) {
 		t.Errorf("sp_dropsubscription seq %d before sp_droppullsubscription seq %d", pub.Seq, drop.Seq)
 	}
 }
+
+// exportedPull is a pull agent as the export writes one created without
+// schedule parameters (the Task 12 review's export of rv_t12s4).
+func exportedPull(db string) *model.PullAgent {
+	a := &model.PullAgent{
+		DistributionAgent: model.DistributionAgent{
+			Agent: model.Agent{
+				JobName: str("repllab-Sales-SalesRef-repllab-" + db + "-F4197652"), JobEnabled: model.Ptr(true), JobLogin: str(""),
+				DistributorConnection: &model.Connection{Security: str("windows")},
+				Profile:               str("Default agent profile"), RunAs: str(""),
+				Connection: &model.Connection{Security: str("windows")},
+				Schedules:  &[]model.Schedule{},
+				Command:    str("-Publisher [repllab] -PublisherDB [Sales] -Publication [SalesRef] -Distributor [repllab] -SubscriptionType 1 -Subscriber [repllab] -SubscriberSecurityMode 1 -SubscriberDB [" + db + "]"),
+			},
+			SubscriptionStreams: model.Ptr(0), MemoryOptimized: model.Ptr(false),
+		},
+		Distributor: str("repllab"), AltSnapshotFolder: str(""), WorkingDirectory: str(""), UseFTP: model.Ptr(false),
+		EnabledForSyncmgr: model.Ptr(false), Description: str(""),
+	}
+	return a
+}
+
+func TestPullExportRoundTrips(t *testing.T) {
+	p := buildLab(t, nil, func(des, cur *model.Config) {
+		both(des, cur, func(c *model.Config) {
+			p := pubOf(t, c, "SalesRef")
+			p.IndependentAgent, p.AllowPull = model.Ptr(true), model.Ptr(true)
+			s := subOf(t, c, "SalesRef", "SalesSub")
+			s.Type, s.PullAgent = str("pull"), exportedPull("SalesSub")
+		})
+	})
+	ops := planned(t, p)
+	if len(ops) != 0 {
+		t.Errorf("the export as a file plans %d operations:\n%s", len(ops), opsString(ops))
+	}
+}
+
+// threeOnRef gives SalesRef a third article m_t3 on both sides, and its
+// subscription to SalesSub the current subset cur.
+// The current m_t3 is the normalized desired one, as an export would write
+// its properties.
+func threeOnRef(t *testing.T, des, cur *model.Config, curArts ...string) {
+	t.Helper()
+	addTo(t, des, "SalesRef", newTable("m_t3"))
+	n, rs := normalize.Normalize(des, cur)
+	for _, r := range rs {
+		t.Fatalf("normalization refuses %s: %s", r.Path, r.Reason)
+	}
+	addTo(t, cur, "SalesRef", *articleOf(t, n, "SalesRef", "m_t3"))
+	subOf(t, cur, "SalesRef", "SalesSub").Articles = curArts
+}
+
+func TestSubsetChangeOfKeptSubscription(t *testing.T) {
+	ops := planned(t, buildLab(t, nil, func(des, cur *model.Config) {
+		threeOnRef(t, des, cur, "Product", "vCustomerFR")
+		subOf(t, des, "SalesRef", "SalesSub").Articles = []string{"Product", "m_t3"}
+	}))
+	if len(ops) != 2 {
+		t.Fatalf("%d operations, want 2:\n%s", len(ops), opsString(ops))
+	}
+	drop, ext := ops[0], ops[1]
+	if drop.Kind != "subscription_article_drop" || drop.Step != 4 || ext.Kind != "subscription_extension" || ext.Step != 9 {
+		t.Fatalf("operations %s step %d, %s step %d", drop.Kind, drop.Step, ext.Kind, ext.Step)
+	}
+	wantParam(t, drop, "@article", "N'vCustomerFR'")
+	wantOpCosts(t, drop, CostOnline, CostSubscriberObjectLeft)
+	wantParam(t, ext, "@article", "N'm_t3'")
+	wantParam(t, ext, "@subscription_type", "N'push'")
+	wantParam(t, ext, "@sync_type", "N'automatic'")
+	wantOpCosts(t, ext, CostNewSnapshot)
+}
+
+func TestSubscriptionLosingEveryArticleRefused(t *testing.T) {
+	const reason = "subscription REPLLAB/SalesSub would lose every article before the new ones are added, which drops it with its agent (measured); drop and add it in two plans"
+	const path = "publications[SalesRef].subscriptions[REPLLAB/SalesSub].articles"
+	// By its subset change.
+	wantRefusal(t, buildLab(t, nil, func(des, cur *model.Config) {
+		threeOnRef(t, des, cur, "Product")
+		subOf(t, des, "SalesRef", "SalesSub").Articles = []string{"m_t3"}
+	}), path, reason)
+	// The publication drops every article it has and adds another (Task 11).
+	wantRefusal(t, buildLab(t, nil, func(des, _ *model.Config) {
+		pubOf(t, des, "SalesRef").Articles = []model.Article{newTable("m_t9")}
+	}), path, reason)
+	// Product's source changes, so it is dropped and added back (R20), and
+	// vCustomerFR is dropped: no current article stays.
+	wantRefusal(t, buildLab(t, nil, func(des, _ *model.Config) {
+		removeArticle(t, des, "SalesRef", "vCustomerFR")
+		articleOf(t, des, "SalesRef", "Product").Source.Name = "Product2"
+	}), path, reason)
+}
+
+func TestAgentOwnedChangesLeftToAgents(t *testing.T) {
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		a := subOf(t, des, "SalesPub", "SalesSub").DistributionAgent
+		a.Profile, a.JobEnabled = str("lab-distrib"), model.Ptr(false)
+	}))
+	if len(ops) != 0 {
+		t.Errorf("profile and job_enabled are Task 14's; operations:\n%s", opsString(ops))
+	}
+	if !agentOwned("pull_agent.schedules[*].frequency") || agentOwned("distribution_agent.subscription_streams") {
+		t.Error("agentOwned: the schedules of a pull agent are Task 14's, its streams are not")
+	}
+}
+
+func TestPushAgentPropertyChange(t *testing.T) {
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		subOf(t, des, "SalesPub", "SalesSub").DistributionAgent.SubscriptionStreams = model.Ptr(2)
+	}))
+	op := one(t, ops, "sp_changesubscription")
+	if op.Step != 10 || op.Server != "repllab" || op.Database != "Sales" {
+		t.Errorf("step %d at %s.%s", op.Step, op.Server, op.Database)
+	}
+	wantParam(t, op, "@article", "N'all'")
+	wantParam(t, op, "@property", "N'subscriptionstreams'")
+	wantParam(t, op, "@value", "N'2'")
+	wantOpCosts(t, op, CostOnline)
+}
+
+func TestPullAgentPropertyChange(t *testing.T) {
+	ops := planned(t, buildLab(t, nil, func(des, cur *model.Config) {
+		pullOnRef(t, des, cur)
+		a := *subOf(t, cur, "SalesRef", "SalesSub").PullAgent
+		a.WorkingDirectory = str("/var/opt/mssql/data/m_wd")
+		subOf(t, des, "SalesRef", "SalesSub").PullAgent = &a
+	}))
+	op := one(t, ops, "sp_change_subscription_properties")
+	if op.Step != 10 || op.Server != "REPLLAB" || op.Database != "SalesSub" {
+		t.Errorf("step %d at %s.%s, want the subscriber", op.Step, op.Server, op.Database)
+	}
+	wantParam(t, op, "@publisher", "N'repllab'")
+	wantParam(t, op, "@publication", "N'SalesRef'")
+	wantParam(t, op, "@property", "N'working_directory'")
+	wantParam(t, op, "@value", "N'/var/opt/mssql/data/m_wd'")
+}
+
+func TestRefusedAgentPropertyChange(t *testing.T) {
+	wantRefusal(t, buildLab(t, nil, func(des, _ *model.Config) {
+		subOf(t, des, "SalesPub", "SalesSub").DistributionAgent.JobLogin = str(`REPLLAB\m_nobody`)
+	}), "publications[SalesPub].subscriptions[REPLLAB/SalesSub].distribution_agent.job_login",
+		"publications[*].subscriptions[*].distribution_agent.job_login change refused by the server (14529)")
+}
+
+func TestPullImmediateSyncPassed(t *testing.T) {
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		addSub(t, des, "SalesPub", newSub("m_sdb_pull", "pull", "snapshot"))
+	}))
+	ps := one(t, ops, "sp_addpullsubscription")
+	wantParam(t, ps, "@immediate_sync", "N'true'")
+	wantParam(t, ps, "@independent_agent", "N'true'")
+}
+
+// sharedRef declares the shared distribution agent of SalesRef's new
+// subscriptions to db in the file, with a job login sp_addpushsubscription_agent
+// would pass.
+func sharedRef(des *model.Config, db string) {
+	des.Publisher.SharedDistributionAgents = append(des.Publisher.SharedDistributionAgents, model.SharedDistributionAgent{
+		Subscriber: "REPLLAB", Database: db,
+		DistributionAgent: model.DistributionAgent{Agent: model.Agent{JobLogin: str(`REPLLAB\m_job`)}},
+	})
+}
+
+func TestSharedPushAgentCreatedOnce(t *testing.T) {
+	// No shared agent yet: the file's shared agent is created.
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		sharedRef(des, "m_sdb_shared")
+		addSub(t, des, "SalesRef", newSub("m_sdb_shared", "push", "snapshot"))
+	}))
+	agent := one(t, ops, "sp_addpushsubscription_agent")
+	wantParam(t, agent, "@job_login", `N'REPLLAB\m_job'`)
+	if len(agent.Warnings) != 0 {
+		t.Errorf("warnings %v", agent.Warnings)
+	}
+
+	// The shared agent exists: sp_addsubscription alone keeps its job.
+	ops = plannedAlone(t, buildLab(t, nil, func(des, cur *model.Config) {
+		both(des, cur, func(c *model.Config) { sharedRef(c, "m_sdb_shared") })
+		addSub(t, des, "SalesRef", newSub("m_sdb_shared", "push", "snapshot"))
+	}))
+	if n := len(opsCalling(ops, "sp_addpushsubscription_agent")); n != 0 || len(opsCalling(ops, "sp_addsubscription")) != 1 {
+		t.Errorf("an existing shared agent: operations\n%s", opsString(ops))
+	}
+
+	// Created earlier in the same plan: by the first addition in plan order
+	// (SalesRef before m_p2), right after its sp_addsubscription.
+	ops = plannedAlone(t, buildLab(t, nil, func(des, _ *model.Config) {
+		sharedRef(des, "m_sdb_shared")
+		p := model.Publication{Name: "m_p2", Type: str("transactional"), Status: str("active"), SyncMethod: str("native"),
+			IndependentAgent: model.Ptr(false), Articles: []model.Article{newTable("m_t9")},
+			Subscriptions: []model.Subscription{newSub("m_sdb_shared", "push", "snapshot")}}
+		des.Publications = append(des.Publications, p)
+		addSub(t, des, "SalesRef", newSub("m_sdb_shared", "push", "snapshot"))
+	}))
+	agents := opsCalling(ops, "sp_addpushsubscription_agent")
+	if len(agents) != 1 || len(ofSubscription(opsCalling(ops, "sp_addsubscription"), "REPLLAB/m_sdb_shared")) != 2 {
+		t.Fatalf("two additions to one shared agent: operations\n%s", opsString(ops))
+	}
+	var refAdd Operation
+	for _, op := range ofSubscription(ops, "REPLLAB/m_sdb_shared") {
+		if op.Call.Procedure == "sp_addsubscription" && first(op.Affects.Publications) == "SalesRef" {
+			refAdd = op
+		}
+	}
+	if first(agents[0].Affects.Publications) != "SalesRef" || agents[0].Seq != refAdd.Seq+1 {
+		t.Errorf("the agent is created by %s at seq %d, want SalesRef's right after its sp_addsubscription (seq %d)",
+			first(agents[0].Affects.Publications), agents[0].Seq, refAdd.Seq)
+	}
+}
+
+func TestPushSubsetAgentPlacement(t *testing.T) {
+	const key = "REPLLAB/m_sdb_subset"
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		addTo(t, des, "SalesRef", newTable("m_t9"))
+		addSub(t, des, "SalesRef", newSub("m_sdb_subset", "push", "snapshot", "Product", "m_t9"))
+	}))
+	got := ofSubscription(ops, key)
+	var procs []string
+	for _, op := range got {
+		procs = append(procs, op.Call.Procedure+":"+func() string { v, _ := paramOf(op, "@article"); return v }())
+	}
+	want := "sp_addsubscription:N'Product',sp_addpushsubscription_agent:,sp_addsubscription:N'm_t9'"
+	if strings.Join(procs, ",") != want {
+		t.Errorf("order %s, want %s", strings.Join(procs, ","), want)
+	}
+	if len(got) == 3 && (got[1].Seq != got[0].Seq+1 || got[2].Seq != got[1].Seq+1) {
+		t.Errorf("not consecutive: seq %d %d %d", got[0].Seq, got[1].Seq, got[2].Seq)
+	}
+}
+
+func TestDropPullOfSharedAgentNotLast(t *testing.T) {
+	ops := planned(t, buildLab(t, nil, func(des, cur *model.Config) {
+		allowPull(t, des, cur)
+		both(des, cur, func(c *model.Config) {
+			subOf(t, c, "SalesRef", "SalesSub").Type = str("pull")
+			// Another publication without independent_agent keeps its pull
+			// subscription to SalesSub.
+			p := cloneConfig(&model.Config{Publications: []model.Publication{*pubOf(t, c, "SalesRef")}}).Publications[0]
+			p.Name = "m_p2"
+			c.Publications = append(c.Publications, p)
+		})
+		cur.Publisher.SharedPullAgents = []model.SharedPullAgent{{Subscriber: "REPLLAB", Database: "SalesSub"}}
+		pubOf(t, des, "SalesRef").Subscriptions = nil
+	}))
+	drop := one(t, ops, "sp_droppullsubscription")
+	if first(drop.Affects.Publications) != "SalesRef" || len(drop.Warnings) != 0 {
+		t.Errorf("drop of %s, warnings %q: the shared pull agent keeps m_p2's subscription", first(drop.Affects.Publications), drop.Warnings)
+	}
+	wantOpCosts(t, drop, CostOnline)
+}
+
+func TestExtendLsnRefused(t *testing.T) {
+	wantRefusal(t, buildLab(t, nil, func(des, cur *model.Config) {
+		both(des, cur, func(c *model.Config) { subOf(t, c, "SalesRef", "SalesSub").Initialization = str("lsn") })
+		addTo(t, des, "SalesRef", newTable("m_t9"))
+	}), "publications[SalesRef].subscriptions[REPLLAB/SalesSub]", "extension of a lsn-initialized subscription not measured")
+}
+
+func TestSubsetAdditionRefusedWithoutSubset(t *testing.T) {
+	// A current subset on SalesPub without the reader's finding: the
+	// extension by name is refused (14100 under concurrent).
+	wantRefusal(t, buildLab(t, nil, func(_, cur *model.Config) {
+		subOf(t, cur, "SalesPub", "SalesSub").Articles = []string{"Customer"}
+	}), "publications[SalesPub].subscriptions[REPLLAB/SalesSub].articles",
+		"extending subscription REPLLAB/SalesSub by name to Orders is refused on this publication (14100 under concurrent, 14122 under immediate_sync)")
+}
+
+func TestEveryArticleListIsAll(t *testing.T) {
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		addSub(t, des, "SalesRef", newSub("m_sdb_all", "push", "snapshot", "vcustomerfr", "Product"))
+	}))
+	add := ofSubscription(opsCalling(ops, "sp_addsubscription"), "REPLLAB/m_sdb_all")
+	if len(add) != 1 {
+		t.Fatalf("%d sp_addsubscription, want one:\n%s", len(add), opsString(ops))
+	}
+	wantParam(t, add[0], "@article", "N'all'")
+}
+
+func TestUnreadableSubscriptionNotDropped(t *testing.T) {
+	p := buildLab(t, nil, func(des, cur *model.Config) {
+		cur.Findings = append(cur.Findings, model.Finding{Kind: model.FindingUnreadable,
+			Path: "publications[SalesRef].subscriptions[REPLLAB/SalesSub]", Message: "m_test"})
+		pubOf(t, des, "SalesRef").Subscriptions = nil
+	})
+	if ops := planned(t, p); len(ops) != 0 {
+		t.Errorf("an unreadable subscription is dropped:\n%s", opsString(ops))
+	}
+}
+
+func TestDropPublicationDropsPullAtSubscriberFirst(t *testing.T) {
+	ops := planned(t, buildLab(t, nil, func(des, cur *model.Config) {
+		pullOnRef(t, des, cur)
+		var keep []model.Publication
+		for _, p := range des.Publications {
+			if p.Name != "SalesRef" {
+				keep = append(keep, p)
+			}
+		}
+		des.Publications = keep
+	}))
+	var procs []string
+	for _, op := range ops {
+		procs = append(procs, op.Call.Procedure)
+	}
+	if want := "sp_droppullsubscription,sp_dropsubscription,sp_droppublication"; strings.Join(procs, ",") != want {
+		t.Errorf("operations %s, want %s", strings.Join(procs, ","), want)
+	}
+	if len(ops) > 0 && (ops[0].Server != "REPLLAB" || ops[0].Database != "SalesSub") {
+		t.Errorf("sp_droppullsubscription at %s.%s", ops[0].Server, ops[0].Database)
+	}
+}
+
+func TestDiffPullEmptySchedules(t *testing.T) {
+	des, cur := newSub("SalesSub", "pull", "snapshot"), newSub("SalesSub", "pull", "snapshot")
+	des.PullAgent, cur.PullAgent = exportedPull("SalesSub"), exportedPull("SalesSub")
+	const path = "publications[SalesRef].subscriptions[REPLLAB/SalesSub]"
+	if cs := diffObject(path, &des, &cur, nil); len(cs) != 0 {
+		t.Errorf("[] against []: %s", changesString(cs))
+	}
+	cur.PullAgent.Schedules = &[]model.Schedule{{Name: "s", Frequency: "agent_start"}}
+	cs := diffObject(path, &des, &cur, nil)
+	if len(cs) != 1 || cs[0].Pattern != "publications[*].subscriptions[*].pull_agent.schedules" || show(cs[0].After) != `"[]"` {
+		t.Errorf("[] against one schedule: %s", changesString(cs))
+	}
+	// The refusal of [] stays for the other agents (R22).
+	c := testConfig(testPub("P", testTable("A", "dbo", "T")))
+	c.Publications[0].SnapshotAgent = &model.Agent{Schedules: &[]model.Schedule{}}
+	c.Publications[0].Subscriptions = []model.Subscription{des}
+	rs := scheduleRefusals(c)
+	if len(rs) != 1 || rs[0].Path != "publications[P].snapshot_agent.schedules" {
+		t.Errorf("refusals %v, want the snapshot agent's [] alone", rs)
+	}
+}

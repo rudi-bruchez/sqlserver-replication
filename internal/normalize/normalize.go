@@ -411,6 +411,20 @@ func (n *normalizer) names(c *model.Config) {
 		p := &c.Publications[i]
 		for j := range p.Subscriptions {
 			s := &p.Subscriptions[j]
+			// Measured by the Task 12 review: [T1,t1,T2,T2] collapsed to
+			// N'all', and [T1,t1] gave 14058 on its second call.
+			arts, dup := map[string]bool{}, false
+			for _, a := range s.Articles {
+				if k := strings.ToLower(a); arts[k] {
+					n.refuse(subPath(p, s)+".articles", "article %s listed twice", a)
+					dup = true
+				} else {
+					arts[k] = true
+				}
+			}
+			if dup {
+				continue
+			}
 			if s.Articles != nil && (len(s.Articles) == 0 || everyArticle(p, s.Articles)) {
 				s.Articles = nil // every article, as the export writes it
 			}

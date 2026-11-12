@@ -2,6 +2,7 @@ package plan
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -36,6 +37,7 @@ const (
 	r21Extension    = "extension of a %s-initialized subscription not measured"
 	r21InitNote     = "the initialization of subscription %s of %s changes from %s to %s: it only serves the creation of a subscription, so the plan changes nothing (R21)"
 	sharedPullStays = "the shared pull agent job stays at the subscriber after sp_droppullsubscription"
+	r12LosesAll     = "subscription %s would lose every article before the new ones are added, which drops it with its agent (measured); drop and add it in two plans"
 )
 
 const subPrefix = "publications[*].subscriptions[*]."
@@ -48,23 +50,46 @@ const subPrefix = "publications[*].subscriptions[*]."
 // dropped publication are dropped by publicationsStrategy, through
 // dropSubscription. Extending a subscription to an article new to the
 // publication is articlesStrategy's (Task 11).
+//
+// The additions are planned in the order of their step 9 Order keys
+// (publication, then subscription), so that the first addition to a
+// subscriber database creates its shared distribution agent and the later
+// ones find it (pushAgent).
 func subscriptionsStrategy(b *builder) {
 	pairs, desOnly, _ := matchPublications(b.des.Publications, b.cur.Publications)
+	type addition struct {
+		pub *model.Publication
+		sub *model.Subscription
+	}
+	var adds []addition
 	for _, p := range desOnly {
 		for _, s := range sortedSubscriptions(p.Subscriptions) {
-			b.addSubscription(p, s)
+			adds = append(adds, addition{p, s})
 		}
 	}
 	for _, pp := range pairs {
-		b.planSubscriptions(pp)
+		for _, s := range b.planSubscriptions(pp) {
+			adds = append(adds, addition{pp.Des, s})
+		}
+	}
+	sort.SliceStable(adds, func(i, j int) bool {
+		if adds[i].pub.Name != adds[j].pub.Name {
+			return adds[i].pub.Name < adds[j].pub.Name
+		}
+		return subKey(adds[i].sub.Key()) < subKey(adds[j].sub.Key())
+	})
+	for _, a := range adds {
+		b.addSubscription(a.pub, a.sub)
 	}
 }
 
-func (b *builder) planSubscriptions(pp pair[model.Publication]) {
+// planSubscriptions drops and changes the subscriptions of a publication on
+// both sides, and returns those the file adds.
+func (b *builder) planSubscriptions(pp pair[model.Publication]) []*model.Subscription {
 	pd, pc := pp.Des, pp.Cur
 	ppath := pp.path("publications")
 	if b.skip(ppath) || b.skip(ppath+".subscriptions") {
-		return
+		return nil
 	}
 	spairs, adds, drops := matchSubscriptions(pd.Subscriptions, pc.Subscriptions)
 	for _, s := range drops {
@@ -78,15 +103,15 @@ func (b *builder) planSubscriptions(pp pair[model.Publication]) {
 	for _, sp := range spairs {
 		b.changeSubscription(pd, pc, ppath, sp)
 	}
-	for _, s := range adds {
-		b.addSubscription(pd, s)
-	}
+	return adds
 }
 
 // articleList is the @article values of the sp_addsubscription calls that
-// create s on p: N'all' when the file subscribes every article, otherwise
-// the names of the subset, as the publication writes them (normalization
-// refuses a subset where SubsetAllowed is false, 14100 and 14122).
+// create s on p: N'all' when the file subscribes every article (nil:
+// normalization writes nil for a list of every article, and refuses one
+// that names an article twice), otherwise the names of the subset, as the
+// publication writes them (normalization refuses a subset where
+// SubsetAllowed is false, 14100 and 14122).
 func (b *builder) articleList(p *model.Publication, s *model.Subscription, path string) ([]string, bool) {
 	if len(s.Articles) == 0 {
 		return []string{"all"}, true
@@ -104,9 +129,6 @@ func (b *builder) articleList(p *model.Publication, s *model.Subscription, path 
 			return nil, false
 		}
 		names = append(names, found)
-	}
-	if len(names) == len(p.Articles) {
-		return []string{"all"}, true
 	}
 	return names, true
 }
@@ -198,8 +220,26 @@ func (b *builder) pushAgent(pd *model.Publication, s *model.Subscription, path, 
 	pubType := stringOr(pd.Type, "transactional")
 	var obj any = s.DistributionAgent
 	object := "push_agent"
-	var warnings []string
 	if !boolOf(pd.IndependentAgent) {
+		// Measured by the Task 12 review: sp_addpushsubscription_agent on an
+		// existing shared agent drops and re-creates its job (new job_id,
+		// history lost, re-enabled and started, description reset), while
+		// sp_addsubscription alone keeps it. So none is emitted when the
+		// agent exists or this plan creates it earlier; its property changes
+		// are the agents strategy's (Task 14).
+		k := subKey(s.Key())
+		if b.sharedPush[k] {
+			return true
+		}
+		for _, a := range b.cur.Publisher.SharedDistributionAgents {
+			if strings.EqualFold(a.Subscriber, s.Subscriber) && strings.EqualFold(a.Database, s.Database) {
+				return true
+			}
+		}
+		if b.sharedPush == nil {
+			b.sharedPush = map[string]bool{}
+		}
+		b.sharedPush[k] = true
 		object = "shared_push_agent"
 		var shared *model.DistributionAgent
 		for i := range b.des.Publisher.SharedDistributionAgents {
@@ -209,11 +249,6 @@ func (b *builder) pushAgent(pd *model.Publication, s *model.Subscription, path, 
 			}
 		}
 		obj = shared
-		for _, a := range b.cur.Publisher.SharedDistributionAgents {
-			if strings.EqualFold(a.Subscriber, s.Subscriber) && strings.EqualFold(a.Database, s.Database) {
-				warnings = append(warnings, fmt.Sprintf("the shared distribution agent of %s exists: sp_addpushsubscription_agent on an existing shared agent is not measured", s.Key()))
-			}
-		}
 	}
 	call, err := creationCall("sp_addpushsubscription_agent", obj, normalize.Context{Object: object, PubType: pubType}, []Param{
 		{Name: "@publication", Value: literal(pd.Name)},
@@ -226,7 +261,6 @@ func (b *builder) pushAgent(pd *model.Publication, s *model.Subscription, path, 
 	}
 	op := b.newOp(9, order, "push_agent", "add", path+".distribution_agent", call)
 	op.Affects = Affects{Publications: []string{pd.Name}, Subscriptions: []string{s.Key()}}
-	op.Warnings = warnings
 	op.Reason = "the distribution agent of the push subscription, right after sp_addsubscription: between the two the job runs under the Agent service account (O13)"
 	op.Sources = append(op.Sources, "spec Strategies (Subscriptions)", "note O13")
 	b.add(op)
@@ -273,16 +307,10 @@ func (b *builder) pullSubscription(pd *model.Publication, s *model.Subscription,
 	op.Sources = append(op.Sources, "spec Strategies (Subscriptions)", "08-pull P1.named")
 	b.add(op)
 
-	id = b.pubIdentity(pd.Name)
-	if pubType != "transactional" {
-		lit, err := encPubTypeCode(pubType)
-		if err != nil {
-			b.refuse(path+".pull_agent", "%v", err)
-			return
-		}
-		id = append(id, Param{Name: "@publication_type", Value: lit})
-	}
-	call, err = creationCall("sp_addpullsubscription_agent", s.PullAgent, normalize.Context{Object: "pull_agent", PubType: pubType}, id)
+	// @publication_type is left at its default, 0 (transactional): the
+	// add_subscription entry is measured on transactional publications only,
+	// so a snapshot publication's subscription is refused before this call.
+	call, err = creationCall("sp_addpullsubscription_agent", s.PullAgent, normalize.Context{Object: "pull_agent", PubType: pubType}, b.pubIdentity(pd.Name))
 	if err != nil {
 		b.refuse(path+".pull_agent", "%v", err)
 		return
@@ -421,6 +449,10 @@ func (b *builder) changeSubscription(pd, pc *model.Publication, ppath string, sp
 	if di, ci := stringOr(d.Initialization, initSnapshot), stringOr(c.Initialization, initSnapshot); di != ci {
 		b.notes = append(b.notes, fmt.Sprintf(r21InitNote, c.Key(), pd.Name, ci, di))
 	}
+	if b.losesEveryArticle(pd, pc, d, c) {
+		b.refuse(path+".articles", r12LosesAll, c.Key())
+		return
+	}
 	if !b.skip(path + ".articles") {
 		b.subsetChanges(pd, pc, path, d, c)
 	}
@@ -434,6 +466,40 @@ func (b *builder) changeSubscription(pd, pc *model.Publication, ppath string, sp
 		}
 		b.subscriptionProperty(pd, d, c, path, ch)
 	}
+}
+
+// losesEveryArticle tells a kept subscription whose every current article
+// this plan drops from it, by its subset change or because the publication
+// drops the article (Task 11, an R20 replacement included), while it keeps
+// or gains others. Measured by the Task 12 review: dropping by name every
+// article of a subscription removes the subscription and its distribution
+// agent, and the following named sp_addsubscription creates a new
+// subscription with an implicit agent under the Agent service account,
+// losing its streams, job_login, schedule and profile.
+func (b *builder) losesEveryArticle(pd, pc *model.Publication, d, c *model.Subscription) bool {
+	had := 0
+	for i := range pc.Articles {
+		a := &pc.Articles[i]
+		if !covers(c, a.Name) {
+			continue
+		}
+		had++
+		for j := range pd.Articles {
+			x := &pd.Articles[j]
+			if x.Name == a.Name && !replaced(x, a) && covers(d, x.Name) {
+				return false // a current article it keeps
+			}
+		}
+	}
+	if had == 0 {
+		return false
+	}
+	for _, x := range pd.Articles {
+		if covers(d, x.Name) {
+			return true // it gains others
+		}
+	}
+	return false
 }
 
 // agentOwned tells an agent property of a subscription whose change is the
