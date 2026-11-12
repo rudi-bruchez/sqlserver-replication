@@ -396,9 +396,23 @@ func (b *builder) addJobOps(ops []Operation, refs []AgentRef) []Operation {
 	return ops
 }
 
+// jobIdle is the guard of a job_start: the job has no run requested or
+// running in the current session of SQL Server Agent. sp_start_job refuses
+// to start a job that has one (22022, and 0x5606 in the messages): the push
+// distribution job that sp_addpushsubscription_agent has just created and
+// started, a continuous agent that runs. The printed batch is the executed
+// one (spec anti-goal 2), so the guard is in it; a run that starts between
+// the check and the start still fails with 22022, which plan 4's apply
+// retries. Measured on the lab by TestLabJobStartGuard (final review item
+// 4).
+const jobIdle = "NOT EXISTS (SELECT 1 FROM msdb.dbo.sysjobactivity AS ja" +
+	" WHERE ja.job_id = @job_id AND ja.session_id = (SELECT MAX(ss.session_id) FROM msdb.dbo.syssessions AS ss)" +
+	" AND (ja.run_requested_date IS NOT NULL OR ja.start_execution_date IS NOT NULL) AND ja.stop_execution_date IS NULL)"
+
 // jobOp is one of R24's operations on the job of s: msdb.dbo.sp_update_job
-// @job_id, @enabled (enabled not empty), or msdb.dbo.sp_start_job @job_id,
-// the job found in the batch (jobLookup), at the distributor, or at the
+// @job_id, @enabled (enabled not empty), or msdb.dbo.sp_start_job @job_id
+// under the jobIdle guard, the job found in the batch (jobLookup), at the
+// distributor, or at the
 // subscriber for a pull agent; online.
 func (b *builder) jobOp(step int, order, kind, change string, s agentSlot, enabled string) Operation {
 	proc, action := "msdb.dbo.sp_update_job", "disable"
@@ -412,7 +426,11 @@ func (b *builder) jobOp(step int, order, kind, change string, s agentSlot, enabl
 	if enabled != "" {
 		params = append(params, Param{Name: "@enabled", Value: enabled})
 	}
-	op := b.distOp(step, order, kind, action, s.path, Call{Procedure: proc, Prologue: b.jobLookup(s), Params: params})
+	call := Call{Procedure: proc, Prologue: b.jobLookup(s), Params: params}
+	if kind == "job_start" {
+		call.Guard = jobIdle
+	}
+	op := b.distOp(step, order, kind, action, s.path, call)
 	if s.kind == agentPull {
 		op.Server = s.subscriber
 	}

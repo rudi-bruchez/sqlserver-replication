@@ -15,7 +15,7 @@ import (
 type Statement struct {
 	Seq              int
 	Server, Database string
-	Text             string            // the batch: Prologue, then the EXEC; secrets as @secret_<n>
+	Text             string            // the batch: Prologue, then the EXEC under its Guard; secrets as @secret_<n>
 	Secrets          []StatementSecret // each @secret_<n> the batch uses, in order of first use in it
 }
 
@@ -29,6 +29,11 @@ type StatementSecret struct {
 // variables (@job_id, @profile_id), so run as one batch they fail at
 // compile with Msg 134 (measured by the Task 16 review).
 const sqlHeader = "-- each operation below is a batch of its own: run them one at a time (sqlrepl apply does); the file does not run as one batch"
+
+// waitHeader follows sqlHeader in a plan with a generate_and_wait (R25,
+// minor 15 of the final review): run as printed, the restore of
+// immediate_sync would follow a generation the subscriptions have not read.
+const waitHeader = "-- a generate_and_wait operation starts the snapshot agent of the added articles: wait until every subscription has received them, its job_start operations starting the agents that deliver them, before running the operations after them (sqlrepl apply waits)"
 
 // Statements is one statement per operation, in Seq order. A secret
 // parameter is rendered @<param> = @secret_<n> (R16), numbered once per
@@ -62,6 +67,9 @@ func (p *Plan) Statements() []Statement {
 			b.WriteString(strings.TrimRight(op.Call.Prologue, "\n"))
 			b.WriteString("\n")
 		}
+		if op.Call.Guard != "" {
+			b.WriteString("IF " + op.Call.Guard + "\n")
+		}
 		b.WriteString("EXEC " + op.Call.Procedure)
 		if len(args) > 0 {
 			b.WriteString(" " + strings.Join(args, ", "))
@@ -90,7 +98,8 @@ func costList(cs []Cost) string {
 	return strings.Join(xs, ", ")
 }
 
-// SQL is the statements laid out for -sql: sqlHeader, then a "-- server"
+// SQL is the statements laid out for -sql: sqlHeader (and waitHeader when
+// the plan has a generate_and_wait), then a "-- server"
 // header whenever the server changes, a USE whenever the server or the
 // database changes (both compared without regard to case, R7), and for
 // each operation its header comment, its warnings, its secret comments
@@ -103,6 +112,12 @@ func (p *Plan) SQL() string {
 	}
 	var b strings.Builder
 	b.WriteString(sqlHeader + "\n")
+	for _, op := range p.Operations {
+		if op.Kind == "generate_and_wait" {
+			b.WriteString(waitHeader + "\n")
+			break
+		}
+	}
 	stmts := p.Statements()
 	server, database := "", ""
 	for i, op := range p.Operations {

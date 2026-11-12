@@ -71,10 +71,12 @@ EXEC msdb.dbo.sp_update_job @job_id = @job_id, @enabled = 1;
 DECLARE @job_id uniqueidentifier;
 SELECT @job_id = sj.job_id FROM [distribution].dbo.MSsnapshot_agents AS a JOIN [distribution].dbo.MSreplservers AS ps ON ps.srvid = a.publisher_id JOIN msdb.dbo.sysjobs AS sj ON sj.job_id = CONVERT(uniqueidentifier, a.job_id) WHERE UPPER(ps.srvname) = UPPER(N'repllab') AND a.publisher_db = N'Sales' AND a.publication = N'm_p' AND a.local_job = 1;
 IF @job_id IS NULL THROW 50000, N'the job of publications[m_p].snapshot_agent does not exist', 1;
+IF NOT EXISTS (SELECT 1 FROM msdb.dbo.sysjobactivity AS ja WHERE ja.job_id = @job_id AND ja.session_id = (SELECT MAX(ss.session_id) FROM msdb.dbo.syssessions AS ss) AND (ja.run_requested_date IS NOT NULL OR ja.start_execution_date IS NOT NULL) AND ja.stop_execution_date IS NULL)
 EXEC msdb.dbo.sp_start_job @job_id = @job_id;
 
 -- 17 start job_start publications[m_p].subscriptions[REPLLAB/m_sdb].distribution_agent: online
 DECLARE @job_id uniqueidentifier;
 SELECT @job_id = sj.job_id FROM [distribution].dbo.MSdistribution_agents AS a JOIN [distribution].dbo.MSreplservers AS ps ON ps.srvid = a.publisher_id JOIN [distribution].dbo.MSreplservers AS rs ON rs.srvid = a.subscriber_id JOIN msdb.dbo.sysjobs AS sj ON sj.job_id = CONVERT(uniqueidentifier, a.job_id) WHERE UPPER(ps.srvname) = UPPER(N'repllab') AND a.publisher_db = N'Sales' AND a.publication = N'm_p' AND UPPER(rs.srvname) = UPPER(N'REPLLAB') AND a.subscriber_db = N'm_sdb' AND a.subscription_type = 0;
 IF @job_id IS NULL THROW 50000, N'the job of publications[m_p].subscriptions[REPLLAB/m_sdb].distribution_agent does not exist', 1;
+IF NOT EXISTS (SELECT 1 FROM msdb.dbo.sysjobactivity AS ja WHERE ja.job_id = @job_id AND ja.session_id = (SELECT MAX(ss.session_id) FROM msdb.dbo.syssessions AS ss) AND (ja.run_requested_date IS NOT NULL OR ja.start_execution_date IS NOT NULL) AND ja.stop_execution_date IS NULL)
 EXEC msdb.dbo.sp_start_job @job_id = @job_id;

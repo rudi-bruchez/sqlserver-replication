@@ -453,8 +453,10 @@ func (e *env) startAndWait(t *testing.T, p *plan.Plan) {
 // pollTimeout has passed. The pull agent job sp_addpullsubscription_agent
 // creates has no schedule, and a run started before the snapshot is
 // generated exits without delivering (carried decision 5), so the start is
-// repeated every few seconds; sp_start_job on a running job fails with
-// 22022, which means it runs already.
+// repeated every few seconds. The printed start skips a job that has a run
+// requested or running (its guard, TestLabJobStartGuardPull); 22022 is
+// still read as running, for a run that starts between the guard and the
+// start.
 func (e *env) startPull(t *testing.T, p *plan.Plan) {
 	t.Helper()
 	var starts []plan.Statement

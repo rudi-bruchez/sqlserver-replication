@@ -115,8 +115,11 @@ type Call struct {
 	Procedure string `json:"procedure"`
 	// Prologue holds the statements before the EXEC in the same batch
 	// (Task 14's id lookups); usually empty.
-	Prologue string  `json:"prologue"`
-	Params   []Param `json:"params"`
+	Prologue string `json:"prologue"`
+	// Guard, when not empty, is the condition the EXEC runs under: the
+	// batch writes IF <Guard> before it (R24's job_start).
+	Guard  string  `json:"guard,omitempty"`
+	Params []Param `json:"params"`
 }
 
 // Param is one parameter of a call.

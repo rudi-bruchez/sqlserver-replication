@@ -56,6 +56,20 @@ func TestRenderSQLGolden(t *testing.T) {
 	golden(t, "testdata/create.sql", orderStepsPlan(t).SQL())
 }
 
+// A plan with a generate_and_wait says, under sqlHeader, to wait for the
+// deliveries before the operations after it (minor 15 of the final
+// review); one without says nothing of it.
+func TestRenderSQLWaitHeader(t *testing.T) {
+	p := buildLabWith(t, deferOpt, func(des, cur *model.Config) { deferPub(t, des, cur, "native") })
+	planned(t, p)
+	if lines := strings.SplitN(p.SQL(), "\n", 3); len(lines) < 2 || lines[0] != sqlHeader || lines[1] != waitHeader {
+		t.Errorf("the deferral's SQL does not start with sqlHeader and waitHeader:\n%s", p.SQL())
+	}
+	if strings.Contains(orderStepsPlan(t).SQL(), waitHeader) {
+		t.Errorf("a plan without generate_and_wait has the waitHeader")
+	}
+}
+
 func TestSummaryGolden(t *testing.T) {
 	golden(t, "testdata/create.txt", orderStepsPlan(t).Summary())
 }
