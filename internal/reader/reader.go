@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/rudi-bruchez/sqlserver-replication/internal/decode"
@@ -147,7 +146,8 @@ type exporter struct {
 
 	dist        string // quoted distribution database name
 	servers     string // server name table at the distributor
-	replServers bool   // the distributor's version has MSreplservers
+	replServers bool   // the distribution database has MSreplservers
+	replProbed  bool   // replServers is decided
 	publisherID int
 
 	pubIndex     map[int]int      // pubid → index in cfg.Publications
@@ -290,18 +290,10 @@ func (e *exporter) readDistributor(lenient bool) error {
 	if err := db.QueryRowContext(e.ctx, qServerName).Scan(&d.Server); err != nil {
 		return err
 	}
-	var version string
-	if err := db.QueryRowContext(e.ctx, qDistributorVersion).Scan(&version); err != nil {
-		return fmt.Errorf("distributor version: %w", err)
-	}
-	var err error
-	if e.replServers, err = replServersSince(version); err != nil {
-		return err
-	}
 
 	var security, trusted, hasStorage int
 	var workingDirectory, login, publisherType string
-	err = db.QueryRowContext(e.ctx, qDistPublisher, e.cfg.Publisher.Server).Scan(
+	err := db.QueryRowContext(e.ctx, qDistPublisher, e.cfg.Publisher.Server).Scan(
 		&d.Database, &workingDirectory, &security, &login, &trusted, &publisherType, &hasStorage)
 	if err == sql.ErrNoRows && lenient {
 		e.find(model.FindingNote, "distributor", "publisher %q is not registered at the distributor", e.cfg.Publisher.Server)
@@ -370,6 +362,9 @@ func (e *exporter) readDistributor(lenient bool) error {
 		return err
 	}
 
+	if err := e.probeReplServers(e.dist); err != nil {
+		return err
+	}
 	if e.replServers {
 		e.servers = e.dist + ".dbo.MSreplservers"
 	} else {
@@ -382,30 +377,34 @@ func (e *exporter) readDistributor(lenient bool) error {
 	return err
 }
 
-// replServersSince tells, from the distributor's ProductVersion, whether its
-// distribution databases have MSreplservers: since SQL Server 2016 SP2 CU3
-// (13.0.5216) and 2017 CU6 (14.0.3025), and in every later version (Learn,
-// MSreplservers). The decision never depends on what the login can see, so a
-// login denied the table gets the permission error of the query that reads it.
-func replServersSince(version string) (bool, error) {
-	parts := strings.Split(version, ".")
-	if len(parts) < 3 {
-		return false, fmt.Errorf("distributor version %q: want major.minor.build", version)
+// probeReplServers decides, once, whether the distribution database dist
+// (quoted) has MSreplservers, by reading it.
+func (e *exporter) probeReplServers(dist string) error {
+	if e.replProbed {
+		return nil
 	}
-	major, err1 := strconv.Atoi(parts[0])
-	build, err2 := strconv.Atoi(parts[2])
-	if err1 != nil || err2 != nil {
-		return false, fmt.Errorf("distributor version %q: want major.minor.build", version)
+	_, err := e.src.Distributor.ExecContext(e.ctx, strings.ReplaceAll(qReplServersProbe, "{dist}", dist))
+	if e.replServers, err = replServersExist(err); err != nil {
+		return err
 	}
+	e.replProbed = true
+	return nil
+}
+
+// replServersExist reads the result of qReplServersProbe: no error means the
+// table exists, error 208 that it does not (a distributor older than 2016 SP2
+// CU3 or 2017 CU6), and any other error, 229 for a login denied the table, is
+// an error. Neither OBJECT_ID, NULL for a table the login cannot see, nor the
+// version, 12.0.2000.8 on a Managed Instance with the current engine, can
+// decide it.
+func replServersExist(err error) (bool, error) {
 	switch {
-	case major > 14:
+	case err == nil:
 		return true, nil
-	case major == 14:
-		return build >= 3025, nil
-	case major == 13:
-		return build >= 5216, nil
+	case errorNumber(err) == 208:
+		return false, nil
 	}
-	return false, nil
+	return false, fmt.Errorf("MSreplservers: %w", err)
 }
 
 func (e *exporter) readProfiles() error {
@@ -664,7 +663,7 @@ func linkSettings(d *model.Distributor, canSee bool, provider sql.NullString, se
 		d.AdminLinkSecurity = model.Ptr("sql")
 	case !canSee:
 		out = append(out, model.Finding{Kind: model.FindingUnreadable, Path: "distributor.admin_link_security",
-			Message: "the login mappings of repl_distributor (sys.linked_logins) are not visible to a login without ALTER ANY LINKED SERVER"})
+			Message: "the login mappings of repl_distributor (sys.linked_logins) are not visible to the login, which has neither ALTER ANY LINKED SERVER nor VIEW ANY DEFINITION"})
 	default:
 		out = append(out, model.Finding{Kind: model.FindingUnreadable, Path: "distributor.admin_link_security",
 			Message: "the login mapping of repl_distributor is neither the current security context nor distributor_admin"})

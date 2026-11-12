@@ -62,7 +62,7 @@ func TestQueriesParse(t *testing.T) {
 		"qAutoIdentityRange": qAutoIdentityRange,
 		"qSubscriptions":     qSubscriptions, "qDistPublisher": qDistPublisher,
 		"qDistributionDB": qDistributionDB, "qDistributorProperties": qDistributorProperties,
-		"qDistributorVersion": qDistributorVersion, "qServerID": qServerID,
+		"qReplServersProbe": qReplServersProbe, "qServerID": qServerID,
 		"qLogReaderAgent": qLogReaderAgent, "qSnapshotAgents": qSnapshotAgents,
 		"qDistributionAgents": qDistributionAgents, "qJob": qJob,
 		"qJobSchedules": qJobSchedules, "qAgentProfiles": qAgentProfiles,
@@ -663,32 +663,22 @@ func TestFactTimeFormat(t *testing.T) {
 	}
 }
 
-func TestReplServersSince(t *testing.T) {
+func TestReplServersExist(t *testing.T) {
 	cases := []struct {
-		version string
-		want    bool
+		name   string
+		err    error
+		exists bool
+		fails  bool
 	}{
-		{"12.0.6024.0", false},
-		{"13.0.5102.14", false}, // 2016 SP2 GDR
-		{"13.0.5153.0", false},  // 2016 SP2 CU2
-		{"13.0.5216.0", true},   // 2016 SP2 CU3
-		{"13.0.6300.2", true},   // 2016 SP3
-		{"14.0.2027.2", false},  // 2017 RTM GDR
-		{"14.0.3022.28", false}, // 2017 CU5
-		{"14.0.3025.34", true},  // 2017 CU6
-		{"15.0.2000.5", true},
-		{"16.0.4305.5", true},
-		{"17.0.1000.7", true},
+		{"read", nil, true, false},
+		{"absent", mssql.Error{Number: 208}, false, false},
+		{"denied", mssql.Error{Number: 229}, false, true},
+		{"other", errors.New("connection reset"), false, true},
 	}
 	for _, c := range cases {
-		got, err := replServersSince(c.version)
-		if err != nil || got != c.want {
-			t.Errorf("replServersSince(%q) = %v, %v, want %v", c.version, got, err, c.want)
-		}
-	}
-	for _, bad := range []string{"", "16", "16.0", "x.0.1"} {
-		if _, err := replServersSince(bad); err == nil {
-			t.Errorf("replServersSince(%q): no error", bad)
+		got, err := replServersExist(c.err)
+		if got != c.exists || (err != nil) != c.fails {
+			t.Errorf("%s: replServersExist = %v, %v, want %v, error %v", c.name, got, err, c.exists, c.fails)
 		}
 	}
 }

@@ -185,13 +185,12 @@ SELECT property, ISNULL(CAST(value AS nvarchar(4000)), N'')
 FROM msdb.dbo.MSdistributor
 ORDER BY property`
 
-	// The version of the distributor instance, which decides whether its
-	// distribution databases have MSreplservers (replServersSince). The table
-	// is not probed with OBJECT_ID: it returns NULL for a table the login
-	// cannot see (measured with DENY SELECT, SQL Server 2022 CU27), and the
-	// fallback would then name the servers from master.sys.servers, whose ids
-	// differ.
-	qDistributorVersion = `SELECT CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(128))`
+	// Whether the distribution database has MSreplservers, told by the
+	// query's error 208 (replServersExist). OBJECT_ID returns NULL for a
+	// table the login cannot see (measured with DENY SELECT, SQL Server 2022
+	// CU27), and the fallback would then name the servers from
+	// master.sys.servers, whose ids differ.
+	qReplServersProbe = `SELECT TOP (0) srvid FROM {dist}.dbo.MSreplservers`
 
 	// fallbackServers replaces MSreplservers on older distributors.
 	fallbackServers = `(SELECT server_id AS srvid, name AS srvname FROM master.sys.servers)`

@@ -315,8 +315,12 @@ func (e *exporter) readProfileUses() error {
 	}
 
 	// Every distribution database of an instance has the same version, so
-	// whether the distributor's version has MSreplservers stands for all of
-	// them.
+	// whether one has MSreplservers stands for all of them. The empty
+	// configuration of a publisher the distributor does not know has not
+	// probed one yet.
+	if err := e.probeReplServers(quoteName(dbs[0])); err != nil {
+		return err
+	}
 	rows, err = e.src.Distributor.QueryContext(e.ctx, profileUsesQuery(dbs, !e.replServers))
 	if err != nil {
 		return err

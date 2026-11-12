@@ -65,7 +65,7 @@ func Load(r io.Reader) (*Config, error) {
 
 // duplicateKeys refuses two elements of a list with the same key, under
 // any list of the model: publications, articles, subscriptions, shared agents,
-// agent profiles, schedules. The key of a subscription or a shared agent
+// agent profiles. Schedules are left out: see below. The key of a subscription or a shared agent
 // names a server and a database, which the reader compares in any case:
 // there it is compared case-insensitively. The enumerations are not checked
 // here: plan 3's normalization does it.
@@ -109,11 +109,18 @@ func duplicateKeys(sv reflect.Value, path string) error {
 				e := fv.Index(j)
 				k := e.Addr().Interface().(interface{ Key() string }).Key()
 				cmp := k
+				check := true
 				switch e.Interface().(type) {
 				case Subscription, SharedDistributionAgent, SharedPullAgent:
 					cmp = strings.ToUpper(k)
+				case Schedule:
+					// msdb allows two schedules of one job with the same name
+					// (measured with sp_add_jobschedule) and the export writes
+					// both; schedules are compared as a list (Agent.Schedules),
+					// so their names need not be unique.
+					check = false
 				}
-				if first, dup := seen[cmp]; dup {
+				if first, dup := seen[cmp]; check && dup {
 					return fmt.Errorf("%s: duplicate key %q (first %q)", p, k, first)
 				}
 				seen[cmp] = k

@@ -43,6 +43,16 @@ func TestWriteOutputsOpensBothFirst(t *testing.T) {
 		t.Errorf("facts = %q", b)
 	}
 
+	// A device is written without being truncated, as either output.
+	if _, err := os.Stat(os.DevNull); err == nil {
+		if err := writeOutputs(nil, os.DevNull, []byte("version: 2\n"), facts, []byte("{}\n")); err != nil {
+			t.Errorf("-o %s: %v", os.DevNull, err)
+		}
+		if err := writeOutputs(nil, out, []byte("version: 2\n"), os.DevNull, []byte("{}\n")); err != nil {
+			t.Errorf("-facts %s: %v", os.DevNull, err)
+		}
+	}
+
 	var stdout bytes.Buffer
 	if err := writeOutputs(&stdout, "", []byte("version: 2\n"), "", nil); err != nil || stdout.String() != "version: 2\n" {
 		t.Errorf("stdout = %q, err = %v", stdout.String(), err)

@@ -229,7 +229,14 @@ func writeOutputs(stdout io.Writer, output string, yaml []byte, factsPath string
 	}
 	var first error
 	for _, t := range ts {
-		err := t.f.Truncate(0)
+		// A device (/dev/null, /dev/stdout) cannot be truncated: only a
+		// regular file is.
+		var err error
+		if fi, serr := t.f.Stat(); serr != nil {
+			err = serr
+		} else if fi.Mode().IsRegular() {
+			err = t.f.Truncate(0)
+		}
 		if err == nil {
 			_, err = t.f.Write(t.data)
 		}

@@ -486,14 +486,15 @@ func TestLoadRejectsDuplicateKeys(t *testing.T) {
 			p.AgentType = "snapshot"
 			c.AgentProfiles = append(c.AgentProfiles, p)
 		}, ""},
+		// msdb allows two schedules of a job with one name: accepted.
 		{"schedule", func(c *Config) {
 			s := c.Publisher.LogReaderAgent.Schedules
 			*s = append(*s, (*s)[0])
-		}, "publisher.log_reader_agent.schedules"},
+		}, ""},
 		{"schedule of a pull agent", func(c *Config) {
 			s := c.Publisher.SharedPullAgents[0].Schedules
 			*s = append(*s, (*s)[1])
-		}, "publisher.shared_pull_agents[SUB2/PullDB].schedules"},
+		}, ""},
 	}
 	for _, c := range cases {
 		cfg := fullConfig()
