@@ -40,7 +40,15 @@ func (b *builder) planArticles(pp pair[model.Publication]) {
 		}
 		if replaced(ap.Des, ap.Cur) {
 			// R20 (06-structural C3): a drop under the drop rules, then an
-			// add under the add rules.
+			// add under the add rules. sp_droparticle deletes the article's
+			// synchronization view, a user's view passed by sp_addarticle
+			// @sync_object included (measured by the Task 11 review): only
+			// sp_articleview, for an article with a filter or columns,
+			// creates it again.
+			if d := ap.Des; d.SyncObject != nil && d.Filter == nil && len(d.Columns) == 0 {
+				b.refuse(ap.path(ppath+".articles"), "re-adding the article needs its view %s, which sp_droparticle deletes (measured)", viewName(d.SyncObject))
+				continue
+			}
 			drops = append(drops, ap.Cur)
 			adds = append(adds, ap.Des)
 			continue
@@ -191,13 +199,14 @@ func (b *builder) addArticle(pd, pc *model.Publication, a *model.Article) bool {
 	}
 	key := pd.Name + sep + "3" + sep + a.Name + sep
 	affects := Affects{Publications: []string{pd.Name}, Articles: []string{a.Name}}
+	created := pc == nil
 
 	op := b.newOp(8, key+"1", "article", "add", apath, call)
-	if !b.withEntry(&op, cost.OpAddArticle, pubType) {
+	if !b.articleEntry(&op, cost.OpAddArticle, pubType, created) {
 		return false
 	}
 	op.Affects = affects
-	op.wideMarkCheck = true
+	op.wideMarkCheck = !created
 	op.Reason = "the file declares an article that does not exist"
 	op.Sources = append(op.Sources, "spec Strategies (Articles)", "lab row 12")
 	b.add(op)
@@ -210,7 +219,7 @@ func (b *builder) addArticle(pd, pc *model.Publication, a *model.Article) bool {
 			return false
 		}
 		op := b.newOp(8, key+"2", "article_filter", "add", apath+".filter", fc)
-		if !b.withEntry(&op, cost.OpArticleFilter, pubType) {
+		if !b.articleEntry(&op, cost.OpArticleFilter, pubType, created) {
 			return false
 		}
 		op.Reason = "the row filter of the added article: the filter procedure the log reader uses"
@@ -237,7 +246,7 @@ func (b *builder) addArticle(pd, pc *model.Publication, a *model.Article) bool {
 				continue
 			}
 			op := b.columnOp(8, fmt.Sprintf("%s3%s%04d", key, sep, i), apath, pd.Name, a.Name, c, "drop")
-			if !b.withEntry(&op, cost.OpArticleColumn, pubType) {
+			if !b.articleEntry(&op, cost.OpArticleColumn, pubType, created) {
 				return false
 			}
 			ops = append(ops, op)
@@ -251,7 +260,7 @@ func (b *builder) addArticle(pd, pc *model.Publication, a *model.Article) bool {
 			return false
 		}
 		op := b.newOp(8, key+"4", "article_view", "add", apath+".sync_object", vc)
-		if !b.withEntry(&op, cost.OpArticleView, pubType) {
+		if !b.articleEntry(&op, cost.OpArticleView, pubType, created) {
 			return false
 		}
 		op.Reason = "the synchronization view the snapshot reads, with the article's clause and columns"
@@ -264,6 +273,22 @@ func (b *builder) addArticle(pd, pc *model.Publication, a *model.Article) bool {
 	}
 	return true
 }
+
+// articleEntry is withEntry, except on a publication this plan creates:
+// there its articles, filters, columns and views cost online without a
+// cost entry, since no snapshot and no subscription exist yet (controller's
+// ruling, Task 11 fix round 1). On an existing snapshot publication the
+// structural entries are missing, and the operations stay refused.
+func (b *builder) articleEntry(op *Operation, change, pubType string, created bool) bool {
+	if created {
+		op.Sources = append(op.Sources, "controller ruling (Task 11 fix 1): a publication of this plan has no snapshot and no subscription")
+		return true
+	}
+	return b.withEntry(op, change, pubType)
+}
+
+// viewName writes a view's name for a message.
+func viewName(o *model.ObjectName) string { return o.Schema + "." + o.Name }
 
 func hasFold(xs []string, s string) bool {
 	for _, x := range xs {
@@ -402,6 +427,9 @@ func (b *builder) dropArticle(pd, pc *model.Publication, a *model.Article) {
 	if subscribed {
 		op.Costs = []Cost{CostSubscriberObjectLeft}
 	}
+	if w := dropViewWarning(a); w != "" {
+		op.Warnings = append(op.Warnings, w)
+	}
 	op.Reason = "the file omits the article"
 	op.Sources = append(op.Sources, "spec Strategies (Articles)")
 	b.add(op)
@@ -449,7 +477,21 @@ func (b *builder) changeArticle(pd *model.Publication, ppath string, ap pair[mod
 	}
 	replaces := destructive(d.PreCreationCmd)
 	for _, ch := range props {
+		isView := strings.TrimPrefix(ch.Pattern, artPrefix) == "sync_object"
+		if isView && (d.Filter != nil || len(d.Columns) > 0 || c.Filter != nil || len(c.Columns) > 0) {
+			// sp_articleview makes this view; sp_changearticle sync_object
+			// fails with 15001 when the new view does not exist, and a
+			// rename through sp_articleview was not measured (Task 11
+			// review).
+			b.refuse(ch.Path, "change of the synchronization view name of %s not measured", d.Name)
+			continue
+		}
+		n := len(b.ops)
 		b.articleProperty(pd, d, ch, key, replaces)
+		if isView && len(b.ops) > n {
+			// Plan 4's precheck checks it.
+			b.ops[n].Warnings = append(b.ops[n].Warnings, fmt.Sprintf("view %s must exist at the publisher before apply", viewName(d.SyncObject)))
+		}
 	}
 
 	ctx := articleContext(pd, d)
@@ -509,6 +551,11 @@ func (b *builder) changeArticle(pd *model.Publication, ppath string, ap pair[mod
 		}
 		op := b.newOp(7, key+"4", "article_view", "change", apath+".sync_object", vc)
 		op.Reason = "the synchronization view follows the article's clause and columns"
+		if d.SyncObject != nil {
+			// A view the user made and passed by @sync_object cannot be
+			// told from one sp_articleview made.
+			op.Warnings = append(op.Warnings, fmt.Sprintf("sp_articleview replaces the definition of view %s with the generated one (published columns and clause)", viewName(d.SyncObject)))
+		}
 		ops = append(ops, op)
 	}
 	for _, op := range ops {
@@ -521,6 +568,15 @@ func (b *builder) changeArticle(pd *model.Publication, ppath string, ap pair[mod
 		op.Sources = append(op.Sources, "spec Strategies (Filters and views)", "14-filter-view F4")
 		b.add(op)
 	}
+}
+
+// dropViewWarning: sp_droparticle deletes the article's synchronization
+// view, the user's own included (measured by the Task 11 review).
+func dropViewWarning(a *model.Article) string {
+	if a.SyncObject == nil {
+		return ""
+	}
+	return fmt.Sprintf("dropping article %s deletes its synchronization view %s", a.Name, viewName(a.SyncObject))
 }
 
 func sameObject(a, b *model.ObjectName) bool {

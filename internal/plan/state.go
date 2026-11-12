@@ -228,6 +228,14 @@ func (s *State) apply(op *Operation) {
 		s.addPublication(op)
 		return
 	}
+	if op.Kind == "article" && op.Action == "add" && op.entry == nil {
+		// An article of a publication this plan creates (no entry: Task 11
+		// fix round 1): no subscription exists yet.
+		if ps := s.Pubs[first(op.Affects.Publications)]; ps != nil {
+			ps.Articles[first(op.Affects.Articles)] = ps.ImmediateSync
+		}
+		return
+	}
 	if op.Kind != "generate_and_wait" && (op.entry == nil || scopeOf(op.entry) == scopeNone) {
 		return // distributor, profiles, agents outside a publication, jobs
 	}

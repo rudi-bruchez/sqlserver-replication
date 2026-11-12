@@ -208,6 +208,11 @@ func (b *builder) dropPublication(p *model.Publication) {
 	if len(p.Subscriptions) > 0 {
 		op.Costs = []Cost{CostSubscriberObjectLeft}
 	}
+	for i := range p.Articles {
+		if w := dropViewWarning(&p.Articles[i]); w != "" {
+			op.Warnings = append(op.Warnings, w)
+		}
+	}
 	if a := p.SnapshotAgent; a != nil && a.RunAs != nil && *a.RunAs != "" {
 		op.Warnings = append(op.Warnings, "dropping the publication deletes its snapshot job and the proxy of its job step")
 	}

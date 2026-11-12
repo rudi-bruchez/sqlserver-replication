@@ -506,3 +506,323 @@ func TestDropPublicationProxyWarning(t *testing.T) {
 	wantOpCosts(t, pub, CostOnline, CostSubscriberObjectLeft)
 	wantSource(t, pub, "06-structural C5.nonimm-native")
 }
+
+// Task 11 fix round 1.
+
+func wantRefusal(t *testing.T, p *Plan, path, reason string) {
+	t.Helper()
+	if len(p.Refusals) != 1 || p.Refusals[0].Path != path || p.Refusals[0].Reason != reason {
+		t.Errorf("refusals %v, want one at %s: %s", p.Refusals, path, reason)
+	}
+	if len(p.Operations) != 0 {
+		t.Errorf("a refused plan has operations:\n%s", opsString(p.Operations))
+	}
+}
+
+func wantWarning(t *testing.T, op Operation, w string) {
+	t.Helper()
+	for _, x := range op.Warnings {
+		if x == w {
+			return
+		}
+	}
+	t.Errorf("%s %s: warnings %v, want %q", op.Call.Procedure, op.Path, op.Warnings, w)
+}
+
+func filteredTable(name string) model.Article {
+	a := newTable(name)
+	a.Filter = &model.Filter{Clause: "a > 0", Procedure: &model.ObjectName{Name: "m_flt_" + name}}
+	return a
+}
+
+func TestNewSnapshotPublicationArticles(t *testing.T) {
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		des.Publications = append(des.Publications, model.Publication{Name: "m_s", Type: str("snapshot"),
+			Status: str("active"), SyncMethod: str("native"), Articles: []model.Article{filteredTable("m_t9")}})
+	}))
+	for _, proc := range []string{"sp_addpublication", "sp_addpublication_snapshot", "sp_addarticle", "sp_articlefilter", "sp_articleview"} {
+		op := one(t, ops, proc)
+		wantOpCosts(t, op, CostOnline)
+		wantFlags(t, op, false, false)
+	}
+	if len(ops) != 5 {
+		t.Errorf("%d operations, want 5 (no log reader for a snapshot publication):\n%s", len(ops), opsString(ops))
+	}
+	// On an existing snapshot publication the structural entries are missing.
+	p := buildLab(t, nil, func(des, cur *model.Config) {
+		for _, c := range []*model.Config{des, cur} {
+			pubOf(t, c, "SalesRef").Type = str("snapshot")
+		}
+		addTo(t, des, "SalesRef", newTable("m_t9"))
+	})
+	wantRefusal(t, p, "publications[SalesRef].articles[m_t9]", "cost of add_article on a snapshot publication not measured")
+}
+
+func TestAddArticleCreatesItsView(t *testing.T) {
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		a := filteredTable("m_t9")
+		a.SyncObject = &model.ObjectName{Name: "m_v9"}
+		addTo(t, des, "SalesRef", a)
+		b := newTable("m_t8")
+		b.SyncObject = &model.ObjectName{Schema: "s", Name: "m_v8"}
+		addTo(t, des, "SalesRef", b)
+	}))
+	for _, add := range opsCalling(ops, "sp_addarticle") {
+		switch first(add.Affects.Articles) {
+		case "m_t9": // sp_articleview creates the view
+			noParam(t, add, "@sync_object")
+			noParam(t, add, "@sync_object_owner")
+		case "m_t8": // the user's view, named by sp_addarticle
+			wantParam(t, add, "@sync_object", "N'm_v8'")
+			wantParam(t, add, "@sync_object_owner", "N's'")
+		}
+	}
+	v := one(t, ops, "sp_articleview")
+	wantParam(t, v, "@view_name", "N'm_v9'")
+	wantAffects(t, v, "SalesRef", "m_t9")
+}
+
+func TestFilterAndColumnOpsReplaceData(t *testing.T) {
+	// Customer's pre_creation_cmd is drop (the fixture).
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		articleOf(t, des, "SalesPub", "Customer").Filter.Clause = "Country = 'DE'"
+	}))
+	wantOpCosts(t, one(t, ops, "sp_articlefilter"), CostReinitialization, CostNewSnapshot, CostSubscriberDataReplaced)
+	// The view follows the reinitialization of the same plan and is online.
+	wantOpCosts(t, one(t, ops, "sp_articleview"), CostOnline)
+	ops = planned(t, buildLab(t, customerChecks("Customer"), func(des, _ *model.Config) {
+		a := articleOf(t, des, "SalesPub", "Customer")
+		a.Columns = append(a.Columns, "Notes")
+	}))
+	wantOpCosts(t, one(t, ops, "sp_articlecolumn"), CostReinitialization, CostNewSnapshot, CostSubscriberDataReplaced)
+}
+
+func TestArticleIdentifiersIgnoringCase(t *testing.T) {
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		a := articleOf(t, des, "SalesPub", "Customer")
+		a.SyncObject.Name = "sync_customer"
+		a.Source.Name = "CUSTOMER"
+		a.Filter.Procedure.Name = "fltr_customer"
+	}))
+	if len(ops) != 0 {
+		t.Errorf("a change of case planned:\n%s", opsString(ops))
+	}
+	// A clause is SQL text, compared exactly.
+	ops = planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		articleOf(t, des, "SalesPub", "Customer").Filter.Clause = "country = 'FR'"
+	}))
+	wantParam(t, one(t, ops, "sp_articlefilter"), "@filter_clause", "N'country = ''FR'''")
+}
+
+func TestReturnToGeneratedViewRefused(t *testing.T) {
+	p := buildLab(t, nil, func(des, _ *model.Config) { articleOf(t, des, "SalesPub", "Customer").SyncObject = nil })
+	wantRefusal(t, p, "publications[SalesPub].articles[Customer].sync_object", "returning to a generated view is not measured (R31)")
+}
+
+func TestSchemaOnlyTypeChangeIsDropAndAdd(t *testing.T) {
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		articleOf(t, des, "SalesRef", "vCustomerFR").Type = str("proc_schema_only")
+	}))
+	drop, add := one(t, ops, "sp_droparticle"), one(t, ops, "sp_addarticle")
+	if drop.Step != 5 || add.Step != 8 {
+		t.Errorf("drop in step %d, add in step %d", drop.Step, add.Step)
+	}
+	wantParam(t, add, "@type", "N'proc schema only'")
+	if n := len(opsCalling(ops, "sp_changearticle")); n != 0 {
+		t.Errorf("%d sp_changearticle for a schema-only type change", n)
+	}
+}
+
+func TestDropAndExtendFollowCoverage(t *testing.T) {
+	subset := func(c *model.Config, arts ...string) { pubOf(t, c, "SalesRef").Subscriptions[0].Articles = arts }
+	ops := planned(t, buildLab(t, nil, func(des, cur *model.Config) {
+		subset(des, "vCustomerFR")
+		subset(cur, "vCustomerFR")
+		removeArticle(t, des, "SalesRef", "Product")
+	}))
+	if len(ops) != 1 {
+		t.Fatalf("%d operations, want sp_droparticle alone:\n%s", len(ops), opsString(ops))
+	}
+	// Not subscribed: no subscriber object is left.
+	wantOpCosts(t, one(t, ops, "sp_droparticle"), CostOnline)
+	ops = planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		subset(des, "Product", "vCustomerFR")
+		addTo(t, des, "SalesRef", newTable("m_t9"))
+	}))
+	if n := len(opsCalling(ops, "sp_addsubscription")); n != 0 {
+		t.Errorf("a subscription that does not list the article is extended:\n%s", opsString(ops))
+	}
+}
+
+func TestPullExtension(t *testing.T) {
+	ops := planned(t, buildLab(t, nil, func(des, cur *model.Config) {
+		for _, c := range []*model.Config{des, cur} {
+			p := pubOf(t, c, "SalesRef")
+			p.AllowPull = model.Ptr(true)
+			p.Subscriptions[0].Type = str("pull")
+		}
+		addTo(t, des, "SalesRef", newTable("m_t9"))
+	}))
+	ext := one(t, ops, "sp_addsubscription")
+	wantParam(t, ext, "@subscription_type", "N'pull'")
+	wantParam(t, ext, "@sync_type", "N'automatic'")
+}
+
+func TestAddArticleColumnNotInTable(t *testing.T) {
+	checks := &state.Checks{Tables: []state.TableCheck{{Schema: "dbo", Name: "m_t9", Exists: true, Columns: []string{"id", "a"}}}}
+	p := buildLab(t, checks, func(des, _ *model.Config) {
+		a := newTable("m_t9")
+		a.Columns = []string{"id", "x"}
+		addTo(t, des, "SalesRef", a)
+	})
+	wantRefusal(t, p, "publications[SalesRef].articles[m_t9].columns", `column "x" is not a column of dbo.m_t9`)
+}
+
+func TestColumnsNotRead(t *testing.T) {
+	// Every column against three: the table's columns are needed.
+	p := buildLab(t, nil, func(des, _ *model.Config) { articleOf(t, des, "SalesPub", "Customer").Columns = nil })
+	wantRefusal(t, p, "publications[SalesPub].articles[Customer].columns", "columns of dbo.Customer not read")
+}
+
+func TestLogReaderOfAddedPublications(t *testing.T) {
+	newPub := func(name, typ string) model.Publication {
+		return model.Publication{Name: name, Type: str(typ), Status: str("active"), SyncMethod: str("native"), Articles: []model.Article{newTable("m_t9")}}
+	}
+	// The database has its log reader: none is added (21831).
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		des.Publications = append(des.Publications, newPub("m_p", "transactional"))
+	}))
+	if n := len(opsCalling(ops, "sp_addlogreader_agent")); n != 0 {
+		t.Errorf("%d sp_addlogreader_agent on a database that has one", n)
+	}
+	// No log reader: in step 3 for a transactional publication, none for a
+	// snapshot one.
+	cur := normalized(t, testConfig())
+	for typ, want := range map[string]int{"transactional": 1, "snapshot": 0} {
+		des := testConfig(newPub("m_p", typ))
+		ops := planned(t, Build(Inputs{Desired: des, Current: cur}, Options{}))
+		lr := opsCalling(ops, "sp_addlogreader_agent")
+		if len(lr) != want {
+			t.Errorf("%s: %d sp_addlogreader_agent, want %d:\n%s", typ, len(lr), want, opsString(ops))
+		}
+		if want == 1 && (lr[0].Step != 3 || lr[0].Seq != 1) {
+			t.Errorf("log reader in step %d, seq %d", lr[0].Step, lr[0].Seq)
+		}
+	}
+	// Every current publication dropped: step 5 removes the log reader
+	// (13-transient T02), step 8 adds it back before the publication.
+	ops = planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		des.Publications = []model.Publication{newPub("m_p", "transactional")}
+	}))
+	lr, pub := one(t, ops, "sp_addlogreader_agent"), one(t, ops, "sp_addpublication")
+	if lr.Step != 8 || lr.Seq+1 != pub.Seq {
+		t.Errorf("log reader step %d seq %d, sp_addpublication seq %d", lr.Step, lr.Seq, pub.Seq)
+	}
+}
+
+func TestFilterProcedureChangeAlone(t *testing.T) {
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		articleOf(t, des, "SalesPub", "Customer").Filter.Procedure.Name = "FLTR_Customer2"
+	}))
+	f := one(t, ops, "sp_articlefilter")
+	wantParam(t, f, "@filter_name", "N'[dbo].[FLTR_Customer2]'")
+	wantParam(t, f, "@filter_clause", "N'Country = ''FR'''")
+	wantParam(t, one(t, ops, "sp_articleview"), "@filter_clause", "N'Country = ''FR'''")
+}
+
+func TestFilterDropNamesProcedure(t *testing.T) {
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) { articleOf(t, des, "SalesPub", "Customer").Filter = nil }))
+	f := one(t, ops, "sp_articlefilter")
+	// The form of 14-filter-view F3.
+	wantParam(t, f, "@filter_name", "N'[dbo].[FLTR_Customer]'")
+	wantParam(t, f, "@filter_clause", "NULL")
+}
+
+func TestProcExecArticles(t *testing.T) {
+	// Every property written: no default of a proc_exec article is
+	// measured, so normalization would refuse an omitted one.
+	cmd := func(m string) *model.Command { return &model.Command{Mode: m} }
+	px := model.Article{Name: "m_px", Type: str("proc_exec"), Source: model.ObjectName{Schema: "dbo", Name: "m_px"},
+		Destination: model.Destination{Schema: str("dbo"), Name: str("m_px")}, Description: str(""),
+		PreCreationCmd: str("drop"), SchemaOptions: &[]string{"object_creation"}, CreationScript: str(""),
+		InsertColumnNames: model.Ptr(false), Parameterized: model.Ptr(false), FireTriggersOnSnapshot: model.Ptr(false),
+		Commands: &model.Commands{Insert: cmd("SQL"), Update: cmd("SQL"), Delete: cmd("SQL")}}
+	p := buildLab(t, nil, func(des, cur *model.Config) {
+		addTo(t, cur, "SalesRef", px)
+		d := px
+		d.Description = str("changed")
+		addTo(t, des, "SalesRef", d)
+	})
+	wantRefusal(t, p, "publications[SalesRef].articles[m_px]", "changing a proc_exec article is not measured (R20: no measured defaults or costs)")
+	p = buildLab(t, nil, func(des, _ *model.Config) { addTo(t, des, "SalesRef", px) })
+	wantRefusal(t, p, "publications[SalesRef].articles[m_px]", "creating a proc_exec article is not measured (R20: no measured defaults or costs)")
+}
+
+func TestColumnDropsBeforeView(t *testing.T) {
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		articleOf(t, des, "SalesPub", "Customer").Columns = []string{"CustomerID", "Name"}
+	}))
+	c, v := one(t, ops, "sp_articlecolumn"), one(t, ops, "sp_articleview")
+	wantParam(t, c, "@column", "N'Country'")
+	wantParam(t, c, "@operation", "N'drop'")
+	if c.Seq >= v.Seq || c.Step != 7 || v.Step != 7 {
+		t.Errorf("column seq %d step %d, view seq %d step %d", c.Seq, c.Step, v.Seq, v.Step)
+	}
+}
+
+func TestReaddUserViewRefused(t *testing.T) {
+	p := buildLab(t, nil, func(des, cur *model.Config) {
+		for _, c := range []*model.Config{des, cur} {
+			articleOf(t, c, "SalesPub", "Orders").SyncObject = &model.ObjectName{Schema: "dbo", Name: "vOrders"}
+		}
+		articleOf(t, des, "SalesPub", "Orders").Source.Name = "Orders2"
+	})
+	wantRefusal(t, p, "publications[SalesPub].articles[Orders]", "re-adding the article needs its view dbo.vOrders, which sp_droparticle deletes (measured)")
+}
+
+func TestDropArticleWarnsView(t *testing.T) {
+	const w = "dropping article Customer deletes its synchronization view dbo.SYNC_Customer"
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) { removeArticle(t, des, "SalesPub", "Customer") }))
+	wantWarning(t, one(t, ops, "sp_droparticle"), w)
+	ops = planned(t, buildLab(t, nil, func(des, _ *model.Config) { des.Publications = des.Publications[1:] }))
+	wantWarning(t, one(t, ops, "sp_droppublication"), w)
+}
+
+func TestSyncObjectChange(t *testing.T) {
+	p := buildLab(t, nil, func(des, _ *model.Config) { articleOf(t, des, "SalesPub", "Customer").SyncObject.Name = "SYNC_Other" })
+	wantRefusal(t, p, "publications[SalesPub].articles[Customer].sync_object", "change of the synchronization view name of Customer not measured")
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		articleOf(t, des, "SalesPub", "Orders").SyncObject = &model.ObjectName{Schema: "dbo", Name: "vOrders"}
+	}))
+	op := one(t, ops, "sp_changearticle")
+	wantParam(t, op, "@property", "N'sync_object'")
+	wantParam(t, op, "@value", "N'[dbo].[vOrders]'")
+	wantWarning(t, op, "view dbo.vOrders must exist at the publisher before apply")
+}
+
+func TestViewChangeWarnsReplacement(t *testing.T) {
+	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+		articleOf(t, des, "SalesPub", "Customer").Filter.Clause = "Country = 'DE'"
+	}))
+	wantWarning(t, one(t, ops, "sp_articleview"), "sp_articleview replaces the definition of view dbo.SYNC_Customer with the generated one (published columns and clause)")
+}
+
+// TestCreatedPublicationArticleState: an article added to a publication of
+// this plan has no cost entry, and still enters the predicted state, so a
+// subscription the plan adds with @article = N'all' gets its row.
+func TestCreatedPublicationArticleState(t *testing.T) {
+	st := labState(t)
+	pub := Operation{Step: 8, Order: "m_p\x001", Kind: "publication", Action: "add",
+		Call: Call{Params: []Param{{Name: "@publication", Value: "N'm_p'"}}}}
+	pub.Affects.Publications = []string{"m_p"}
+	art := Operation{Step: 8, Order: "m_p\x003", Kind: "article", Action: "add"}
+	art.Affects = Affects{Publications: []string{"m_p"}, Articles: []string{"m_t9"}}
+	ops, rs := finish([]Operation{pub, art, addSubOp(t, "m_p\x009", "m_p", "S/D", "automatic")}, st)
+	if len(rs) != 0 {
+		t.Fatalf("refusals %v", rs)
+	}
+	wantOpCosts(t, ops[1], CostOnline)
+	if got := rowsOf(st, "m_p", "S/D"); len(got) != 1 || got["m_t9"] != 1 {
+		t.Errorf("rows %v, want m_t9 at 1", got)
+	}
+}
