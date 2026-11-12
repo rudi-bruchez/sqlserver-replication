@@ -17,10 +17,15 @@ type subscriberTable struct {
 	article, cmd string
 }
 
-// key compares two tables without regard to case: the server, database,
-// schema and table names are SQL identifiers (R7).
-func (t subscriberTable) key() string {
-	return strings.ToLower(t.subscriber + sep + t.database + sep + t.schema + sep + t.name)
+// same tells two tables that may be one, names compared without regard to
+// case (SQL identifiers, R7). A NULL destination owner ("") matches any
+// schema: the table lands in the agent's default schema, which the plan
+// does not know, and an unannounced data loss costs more than a false
+// subscriber_data_replaced (controller's ruling on concern 5 of the final
+// fix round).
+func (t subscriberTable) same(u subscriberTable) bool {
+	return strings.EqualFold(t.subscriber, u.subscriber) && strings.EqualFold(t.database, u.database) &&
+		strings.EqualFold(t.name, u.name) && (t.schema == "" || u.schema == "" || strings.EqualFold(t.schema, u.schema))
 }
 
 // tableOf is the subscriber table of article a in subscription s: its
@@ -80,20 +85,25 @@ const (
 // operation all of whose tables the plan delivers again loses its
 // subscriber_object_left.
 func redeliveriesStrategy(b *builder) {
-	left := map[string]bool{}
+	var left, delivered []subscriberTable
 	for i := range b.ops {
-		for _, t := range b.ops[i].leaves {
-			left[t.key()] = true
-		}
+		left = append(left, b.ops[i].leaves...)
 	}
-	delivered := map[string]bool{}
+	matches := func(t subscriberTable, in []subscriberTable) bool {
+		for _, u := range in {
+			if t.same(u) {
+				return true
+			}
+		}
+		return false
+	}
 	for i := range b.ops {
 		op := &b.ops[i]
 		for _, t := range op.delivers {
-			if !left[t.key()] {
+			if !matches(t, left) {
 				continue
 			}
-			delivered[t.key()] = true
+			delivered = append(delivered, t)
 			switch {
 			case destructive(&t.cmd):
 				if !hasCost(op.Costs, CostSubscriberDataReplaced) {
@@ -115,7 +125,7 @@ func redeliveriesStrategy(b *builder) {
 		}
 		all := true
 		for _, t := range op.leaves {
-			all = all && delivered[t.key()]
+			all = all && matches(t, delivered)
 		}
 		if !all {
 			continue

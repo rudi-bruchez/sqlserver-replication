@@ -103,3 +103,16 @@ func TestMovedArticleReplacesData(t *testing.T) {
 	wantOpCosts(t, withArticle(t, ops, "sp_droparticle", "Product"), CostOnline)
 	noObjectLeft(t, ops)
 }
+
+// A NULL destination owner ("") matches any schema: the renamed article
+// delivers to dbo the table its predecessor delivered to the agent's
+// default schema, which may be dbo (concern 5 of the final fix round).
+func TestRedeliveredNullOwnerMatchesAnySchema(t *testing.T) {
+	ops := planned(t, buildLab(t, nil, func(des, cur *model.Config) {
+		articleOf(t, cur, "SalesRef", "Product").Destination.Schema = str("")
+		a := articleOf(t, des, "SalesRef", "Product")
+		a.Name, a.Destination.Schema = "ProductX", str("dbo")
+	}))
+	wantOpCosts(t, withArticle(t, ops, "sp_addsubscription", "ProductX"), CostNewSnapshot, CostSubscriberDataReplaced)
+	noObjectLeft(t, ops)
+}
