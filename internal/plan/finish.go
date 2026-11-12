@@ -223,6 +223,13 @@ func flagsAndCosts(op *Operation, ps *PubState, keepsImm bool) []Cost {
 		if ps.ImmediateSync {
 			for _, sub := range ps.Subs {
 				if sub.Init == initSnapshot {
+					// sp_addarticle subscribes every subscription itself
+					// (C.*.addarticle): the summary names them (minor 6 of
+					// the final review).
+					op.Affects.Subscriptions = nil
+					for _, s := range sortedSubs(ps) {
+						op.Affects.Subscriptions = append(op.Affects.Subscriptions, s.Key)
+					}
 					return []Cost{CostNewSnapshot} // its status 1 rows
 				}
 			}

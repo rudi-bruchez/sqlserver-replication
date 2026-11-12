@@ -150,6 +150,22 @@ var costOrder = []Cost{
 	CostReinitialization, CostDropAndReadd, CostSubscriberDataReplaced, CostSubscriberObjectLeft, CostSharedObjectChanged,
 }
 
+// subscriptionsOf names, after the cost list of an operation that
+// reinitializes, generates a new snapshot or replaces subscriber data, the
+// subscriptions it affects (its Affects.Subscriptions, which the JSON
+// holds; minor 6 of the final review).
+func subscriptionsOf(op Operation) string {
+	if len(op.Affects.Subscriptions) == 0 {
+		return ""
+	}
+	for _, c := range op.Costs {
+		if c == CostReinitialization || c == CostSubscriberDataReplaced || c == CostNewSnapshot {
+			return " (subscriptions " + strings.Join(op.Affects.Subscriptions, ", ") + ")"
+		}
+	}
+	return ""
+}
+
 // Summary is the human summary (R28), every interpolated text on one line
 // (oneLine). A refused plan prints its refusals and "Plan refused." only;
 // an empty section is not printed.
@@ -176,7 +192,7 @@ func (p *Plan) Summary() string {
 	} else {
 		line("Plan for %s.%s: %d operations, %d costly.", p.Publisher, p.Database, p.Totals.Operations, p.Totals.Costly)
 		for _, op := range p.Operations {
-			line("  %d  %s %s %s: %s", op.Seq, op.Action, op.Kind, op.Path, costList(op.Costs))
+			line("  %d  %s %s %s: %s%s", op.Seq, op.Action, op.Kind, op.Path, costList(op.Costs), subscriptionsOf(op))
 			for _, w := range op.Warnings {
 				line("      warning: %s", w)
 			}

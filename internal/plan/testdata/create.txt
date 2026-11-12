@@ -10,7 +10,7 @@ Plan for repllab.Sales: 17 operations, 3 costly.
   9  add article_filter publications[m_p].articles[m_t1].filter: online
   10  add article_view publications[m_p].articles[m_t1].sync_object: online
   11  add article publications[m_p].articles[m_t2]: online
-  12  add subscription publications[m_p].subscriptions[REPLLAB/m_sdb]: new_snapshot
+  12  add subscription publications[m_p].subscriptions[REPLLAB/m_sdb]: new_snapshot (subscriptions REPLLAB/m_sdb)
   13  add push_agent publications[m_p].subscriptions[REPLLAB/m_sdb].distribution_agent: online
   14  change agent_binding publications[m_p].subscriptions[REPLLAB/m_sdb].distribution_agent: online
   15  restore job_restore publications[m_p].snapshot_agent: online

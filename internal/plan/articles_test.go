@@ -167,8 +167,17 @@ func removeArticle(t *testing.T, c *model.Config, pub, name string) {
 }
 
 func TestAddArticleImmediateSync(t *testing.T) {
-	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) { addTo(t, des, "SalesPub", newTable("m_t9")) }))
+	p := buildLab(t, nil, func(des, _ *model.Config) { addTo(t, des, "SalesPub", newTable("m_t9")) })
+	ops := planned(t, p)
 	add := one(t, ops, "sp_addarticle")
+	// sp_addarticle subscribes the subscription itself: the operation and
+	// its summary line name it (minor 6 of the final review).
+	if strings.Join(add.Affects.Subscriptions, ",") != labSub {
+		t.Errorf("sp_addarticle affects subscriptions %v, want %s", add.Affects.Subscriptions, labSub)
+	}
+	if line := "add article publications[SalesPub].articles[m_t9]: new_snapshot (subscriptions " + labSub + ")\n"; !strings.Contains(p.Summary(), line) {
+		t.Errorf("summary lacks %q:\n%s", line, p.Summary())
+	}
 	if add.Kind != "article" || add.Action != "add" || add.Step != 8 {
 		t.Errorf("sp_addarticle is %s %s in step %d", add.Kind, add.Action, add.Step)
 	}
