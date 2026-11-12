@@ -5,6 +5,7 @@ import (
 
 	"github.com/rudi-bruchez/sqlserver-replication/internal/cost"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
+	"github.com/rudi-bruchez/sqlserver-replication/internal/normalize"
 )
 
 func init() { strategies = append(strategies, deferStrategy) }
@@ -59,7 +60,7 @@ func addsArticle(pd, pc *model.Publication) bool {
 		return true
 	}
 	for _, ap := range pairs {
-		if replaced(ap.Des, ap.Cur) {
+		if normalize.ReplacedArticle(ap.Des, ap.Cur) {
 			return true
 		}
 	}

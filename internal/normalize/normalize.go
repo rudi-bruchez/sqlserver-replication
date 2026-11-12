@@ -916,7 +916,7 @@ func (n *normalizer) keepArticleValue(fv reflect.Value, f frame, pattern string)
 		return false
 	}
 	ca := n.currentArticle(f.pub.Name, f.art.Name)
-	if ca == nil || replacedArticle(f.art, ca) {
+	if ca == nil || ReplacedArticle(f.art, ca) {
 		return false
 	}
 	cv := reflect.ValueOf(ca).Elem()
@@ -992,10 +992,13 @@ func (n *normalizer) someMethodDefault(rel string, f frame, ca *model.Article, c
 	return false
 }
 
-// replacedArticle is the planner's R20 rule (internal/plan replaced): the
-// type family or the source changes, or the type of an article that is not
-// a table.
-func replacedArticle(d, c *model.Article) bool {
+// ReplacedArticle is R20's rule, which the planner applies too: the article
+// is dropped and added back when its type family or its source changes, or
+// the type of an article that is not a table. Only the logbased variants
+// change their type in place (the cost table measures them alone, 02-matrix
+// A21); two schema-only types are two kinds of objects. The source is
+// compared without regard to case (a SQL identifier).
+func ReplacedArticle(d, c *model.Article) bool {
 	family := func(t *string) string {
 		s := deref(t)
 		if s == "" {

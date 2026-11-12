@@ -560,7 +560,7 @@ func (b *builder) losesEveryArticle(pd, pc *model.Publication, d, c *model.Subsc
 		had++
 		for j := range pd.Articles {
 			x := &pd.Articles[j]
-			if x.Name == a.Name && !replaced(x, a) && covers(d, x.Name) {
+			if x.Name == a.Name && !normalize.ReplacedArticle(x, a) && covers(d, x.Name) {
 				return false // a current article it keeps
 			}
 		}

@@ -38,7 +38,7 @@ func (b *builder) planArticles(pp pair[model.Publication]) {
 		if b.skip(ap.path(ppath + ".articles")) {
 			continue
 		}
-		if replaced(ap.Des, ap.Cur) {
+		if normalize.ReplacedArticle(ap.Des, ap.Cur) {
 			// R20 (06-structural C3): a drop under the drop rules, then an
 			// add under the add rules. sp_droparticle deletes the article's
 			// synchronization view, a user's view passed by sp_addarticle
@@ -80,19 +80,6 @@ func typeFamily(t *string) string {
 		return "schema_only"
 	}
 	return s
-}
-
-// replaced tells an article the plan drops and adds back (R20): its type
-// family or its source changes. Only the logbased variants change their
-// type in place (the cost table measures them alone, 02-matrix A21); two
-// schema-only types are two kinds of objects. The source is compared without
-// regard to case (a SQL identifier).
-func replaced(d, c *model.Article) bool {
-	dt, ct := stringOr(d.Type, "logbased"), stringOr(c.Type, "logbased")
-	if typeFamily(d.Type) != typeFamily(c.Type) || (typeFamily(d.Type) != "table" && dt != ct) {
-		return true
-	}
-	return !strings.EqualFold(d.Source.Schema, c.Source.Schema) || !strings.EqualFold(d.Source.Name, c.Source.Name)
 }
 
 // articleContext is the defaults context of an article of p.
