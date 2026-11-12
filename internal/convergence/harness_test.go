@@ -379,6 +379,10 @@ func (e *env) run(t *testing.T, p *plan.Plan) {
 			} else {
 				trancount = fmt.Sprintf("@@TRANCOUNT %d", tc)
 			}
+			if terr == nil && tc == 0 && dropWith18752(op, err) {
+				t.Logf("operation %d %s %s %s: tolerated: %v", op.Seq, op.Action, op.Kind, op.Path, err)
+				continue
+			}
 			if terr == nil && tc > 0 {
 				if _, rerr := conn.ExecContext(ctx, "IF @@TRANCOUNT > 0 ROLLBACK"); rerr != nil {
 					t.Logf("rollback: %v", rerr)
@@ -391,6 +395,30 @@ func (e *env) run(t *testing.T, p *plan.Plan) {
 			e.waitAll(t)
 		}
 	}
+}
+
+// dropWith18752 tells the error the harness tolerates (controller's
+// ruling, Task 20 fix round 1): 18752 from sp_droppublication, or from
+// sp_replicationdboption with publish false, with @@TRANCOUNT 0 afterward
+// (checked by the caller). Measured by Task 20: sp_droppublication of the
+// database's last publication, its log reader running, returns 18752 to
+// go-mssqldb as an error, yet the publication, its distributor rows, its
+// log reader and its jobs are gone and the next plan is "no changes". The
+// convergence check that follows the run is what proves the drop. Plan 4's
+// apply treats it as success only when a re-read shows the object gone.
+func dropWith18752(op plan.Operation, err error) bool {
+	var me mssql.Error
+	if !errors.As(err, &me) || me.Number != 18752 {
+		return false
+	}
+	switch procedure(op) {
+	case "sp_droppublication":
+		return true
+	case "sp_replicationdboption":
+		v, _ := param(op, "@value")
+		return strings.EqualFold(v, "N'false'")
+	}
+	return false
 }
 
 // startAndWait starts the snapshot agent of each snapshot ref of
