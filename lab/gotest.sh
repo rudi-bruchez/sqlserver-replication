@@ -33,7 +33,9 @@ for k in ("SQLREPL_TEST_DSN", "SQLREPL_ENC", "MSSQL_SA_PASSWORD"):
 sys.stdout.write(t)
 '
 if [ "$rc" -eq 0 ]; then
-  if printf '%s\n' "$out" | grep -q '\[no tests to run\]' || ! printf '%s\n' "$out" | grep -qE '^--- (PASS|FAIL)'; then
+  # Here-strings, not pipes: under pipefail, grep -q exiting at its first match
+  # gives printf a SIGPIPE and fails the pipeline (181 of 200 replays of a full run).
+  if grep -q '\[no tests to run\]' <<<"$out" || ! grep -qE '^--- (PASS|FAIL)' <<<"$out"; then
     echo "gotest.sh: no test matched $filter" >&2
     exit 3
   fi
