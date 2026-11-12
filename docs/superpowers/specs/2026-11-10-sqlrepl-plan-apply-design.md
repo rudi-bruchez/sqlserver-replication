@@ -81,6 +81,8 @@ The file is the whole truth for its publication database. A publication, article
 
 A property left out of a declared object means the SQL Server default: the value the `sp_add*` procedure stores when the parameter is not passed. If the server holds another value, the plan changes it back.
 
+One exception applies to the article properties whose creation default depends on the publication's `sync_method`: the destination owner and the three commands. `sp_changepublication @property = N'sync_method'` rewrites none of them (measured on the lab, native to character and back: `dest_owner`, `schema_option` and the commands kept). The creation context of an existing article is therefore remembered only by its stored value, and the current `sync_method` cannot stand for it once a change has been applied. For an existing article, such an omitted property keeps the stored value when that value is the creation default of some `sync_method` of the article's group (same publication type and article kind; for a command, its mode only), and otherwise takes the default of the desired context and is compared as above. A new article, or one replaced under R20, takes the defaults of the desired context. The known cost: a hand change to another method's default, such as `SQL` commands on a `native` article, is kept and never corrected. My call, after a plan 3 review measured that the first version of this rule, keeping the stored value unconditionally, removed every correction of drift on these four properties.
+
 Defaults are not one value per property. They depend on the context of the object, measured by the panel:
 
 | Object, context | Default measured (2022 CU27; same on 2019 CU32 and 2025 CU10 where checked) |
