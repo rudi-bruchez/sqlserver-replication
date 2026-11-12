@@ -380,3 +380,315 @@ func TestAgentStatus(t *testing.T) {
 		}
 	}
 }
+
+// stepOp is testOp in a given step.
+func stepOp(t *testing.T, step int, order, change, dir, pub, art string) Operation {
+	t.Helper()
+	op := testOp(t, order, change, dir, pub, art)
+	op.Step = step
+	return op
+}
+
+func costsOf(ops []Operation) [][]Cost {
+	out := make([][]Cost, len(ops))
+	for i, op := range ops {
+		out[i] = op.Costs
+	}
+	return out
+}
+
+func wantCosts(t *testing.T, what string, ops []Operation, want ...[]Cost) {
+	t.Helper()
+	if got := costsOf(ops); !reflect.DeepEqual(got, want) {
+		t.Errorf("%s: costs %v, want %v", what, got, want)
+	}
+}
+
+func on(cs ...Cost) []Cost { return cs }
+
+// Fix round 1, item 1: a backup or lsn subscription's rows start at 2
+// (10-init-modes I2.backup.create, I3.lsn.create: status=2).
+func TestPredictBackupLsnRowsAt2(t *testing.T) {
+	for _, syncType := range []string{"initialize with backup", "initialize from lsn"} {
+		st := labState(t)
+		ops, _ := finish([]Operation{addSubOp(t, "a", "SalesRef", "M_S/m_b", syncType)}, st)
+		if got := rowsOf(st, "SalesRef", "M_S/m_b"); !reflect.DeepEqual(got, map[string]int{"Product": 2, "vCustomerFR": 2}) {
+			t.Errorf("%s: rows %v, want at 2", syncType, got)
+		}
+		if !st.Pubs["SalesRef"].Subs["m_s/m_b"].StartAgent {
+			t.Errorf("%s: StartAgent false", syncType)
+		}
+		if st.Pending("SalesRef") {
+			t.Errorf("%s: SalesRef pending", syncType)
+		}
+		wantCosts(t, syncType, ops, on(CostOnline))
+	}
+}
+
+// Item 2: the first call that drops a ready snapshot of a publication that
+// does not keep immediate_sync carries ready_snapshot_dropped.
+func TestCostReadySnapshotDroppedFirst(t *testing.T) {
+	dropSubArt := stepOp(t, 4, "a", cost.OpDropSubscriptionArticle, "", "SalesPub", "Orders")
+	dropSubArt.Affects.Subscriptions = []string{labSub}
+	ops, _ := finish([]Operation{
+		dropSubArt,
+		stepOp(t, 5, "a", cost.OpDropArticle, "", "SalesPub", "Orders"),
+		stepOp(t, 6, "a", "publications[SalesPub].immediate_sync", "to_false", "SalesPub", ""),
+	}, labState(t))
+	wantCosts(t, "drop then immediate_sync false", ops, on(CostOnline), on(CostReadySnapshotDropped), on(CostOnline))
+	if tt := totals(ops); tt.Costly != 1 {
+		t.Errorf("Costly %d, want 1", tt.Costly)
+	}
+	ops, _ = finish([]Operation{stepOp(t, 6, "a", "publications[SalesPub].immediate_sync", "to_false", "SalesPub", "")}, labState(t))
+	wantCosts(t, "immediate_sync false alone", ops, on(CostReadySnapshotDropped))
+	ops, _ = finish([]Operation{
+		stepOp(t, 6, "a", "publications[SalesPub].snapshot.alt_folder", "set", "SalesPub", ""),
+		stepOp(t, 6, "b", "publications[SalesPub].immediate_sync", "to_false", "SalesPub", ""),
+	}, labState(t))
+	wantCosts(t, "alt_folder then immediate_sync false", ops, on(CostReadySnapshotDropped), on(CostOnline))
+}
+
+// Item 3: every operation has a cost.
+func TestCostDefaultOnline(t *testing.T) {
+	profile := testOp(t, "a", cost.OpAddProfile, "", "", "")
+	profile.Affects.Publications = nil
+	job := Operation{Step: 12, Order: "b", Kind: "job_enabled"}
+	shared := Operation{Step: 12, Order: "c", Kind: "distributor_property", Costs: []Cost{CostSharedObjectChanged}}
+	ops, _ := finish([]Operation{profile, job, shared}, labState(t))
+	wantCosts(t, "outside a publication", ops, on(CostOnline), on(CostOnline), on(CostOnline, CostSharedObjectChanged))
+}
+
+// Item 4: full_generation_deferred from the end state, whatever the order.
+func TestCostFullGenerationEndState(t *testing.T) {
+	creation := func(order string) Operation {
+		return testOp(t, order, "publications[SalesPub].articles[Orders].creation_script", "set", "SalesPub", "Orders")
+	}
+	schema := func(order string) Operation {
+		return testOp(t, order, "publications[SalesPub].articles[Customer].schema_options", "", "SalesPub", "Customer")
+	}
+	ops, _ := finish([]Operation{creation("a"), schema("b")}, labState(t))
+	wantCosts(t, "creation_script then schema_options", ops, on(CostOnline), on(CostReinitialization, CostNewSnapshot))
+	if tt := totals(ops); tt.Costly != 1 {
+		t.Errorf("Costly %d, want 1", tt.Costly)
+	}
+	ops, _ = finish([]Operation{schema("a"), creation("b")}, labState(t))
+	wantCosts(t, "schema_options then creation_script", ops, on(CostReinitialization, CostNewSnapshot), on(CostOnline))
+	ops, _ = finish([]Operation{creation("a")}, labState(t))
+	wantCosts(t, "creation_script alone", ops, on(CostFullGenerationDeferred))
+}
+
+// The deferral keeps its deferred full generation: the generate_and_wait
+// run comes before the restore of immediate_sync.
+func TestCostDeferKeepsDeferred(t *testing.T) {
+	st := labState(t)
+	st.Pubs["SalesPub"].AllowAnonymous = true
+	gen := Operation{Step: 9, Order: "b", Kind: "generate_and_wait"}
+	gen.Affects.Publications = []string{"SalesPub"}
+	ops, _ := finish([]Operation{
+		stepOp(t, 6, "a", "publications[SalesPub].allow_anonymous", "to_false", "SalesPub", ""),
+		stepOp(t, 6, "b", "publications[SalesPub].immediate_sync", "to_false", "SalesPub", ""),
+		addArticleOp(t, "a", "SalesPub", "m_t9"),
+		extendOp(t, "a", "SalesPub", labSub, "m_t9"),
+		gen,
+		stepOp(t, 9, "c", "publications[SalesPub].immediate_sync", "to_true", "SalesPub", ""),
+	}, st)
+	wantCosts(t, "deferral", ops, on(CostFullGenerationDeferred), on(CostOnline), on(CostOnline), on(CostNewSnapshot), on(CostNewSnapshot), on(CostOnline))
+	if st.Pending("SalesPub") {
+		t.Error("SalesPub pending after generate_and_wait")
+	}
+}
+
+// Item 5: an article whose rows this plan created at 1 is counted once.
+func TestCostArticleCountedOnce(t *testing.T) {
+	filter := testOp(t, "b", cost.OpArticleFilter, "", "SalesPub", "m_t9")
+	filter.Step = 8
+	ops, _ := finish([]Operation{addArticleOp(t, "a", "SalesPub", "m_t9"), filter}, labState(t))
+	wantCosts(t, "add then filter on SalesPub", ops, on(CostNewSnapshot), on(CostOnline))
+
+	column := testOp(t, "b", cost.OpArticleColumn, "", "SalesRef", "m_t9")
+	column.Step = 9
+	ops, _ = finish([]Operation{addArticleOp(t, "a", "SalesRef", "m_t9"), extendOp(t, "a", "SalesRef", labSub, "m_t9"), column}, labState(t))
+	wantCosts(t, "add, extend, column on SalesRef", ops, on(CostOnline), on(CostNewSnapshot), on(CostOnline))
+}
+
+// Item 6: contracts fail loudly.
+func TestPredictContractPanics(t *testing.T) {
+	mustPanic := func(what, part string, op Operation) {
+		t.Helper()
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Errorf("%s: no panic", what)
+				return
+			}
+			if msg, _ := r.(string); !strings.Contains(msg, part) {
+				t.Errorf("%s: panic %v, want it to name %q", what, r, part)
+			}
+		}()
+		finish([]Operation{op}, labState(t))
+	}
+	unknown := testOp(t, "a", "publications[Nope].retention_hours", "", "Nope", "")
+	unknown.Kind, unknown.Path = "publication_property", "publications[Nope].retention_hours"
+	mustPanic("unknown publication", "publications[Nope].retention_hours", unknown)
+	noArt := testOp(t, "a", "publications[SalesPub].articles[Customer].description", "set", "SalesPub", "")
+	mustPanic("article entry without article", "Affects.Articles[0]", noArt)
+	noSub := addSubOp(t, "a", "SalesRef", "", "automatic")
+	mustPanic("subscription entry without subscription", "Affects.Subscriptions[0]", noSub)
+}
+
+func TestPredictSnapshotRecurring(t *testing.T) {
+	if !labState(t).Pubs["SalesPub"].SnapshotRecurring {
+		t.Error("the lab's every-5-minutes schedule is not recurring")
+	}
+	sched := func(freq string, jobEnabled bool) *model.Agent {
+		return &model.Agent{JobEnabled: &jobEnabled, Schedules: &[]model.Schedule{{Name: "s", Frequency: freq}}}
+	}
+	for _, c := range []struct {
+		freq    string
+		enabled bool
+		want    bool
+	}{{"daily", true, true}, {"daily", false, false}, {"once", true, false}, {"agent_start", true, false}, {"", true, false}, {"idle", true, true}} {
+		if got := recurring(sched(c.freq, c.enabled)); got != c.want {
+			t.Errorf("%q job enabled %v: recurring %v, want %v", c.freq, c.enabled, got, c.want)
+		}
+	}
+}
+
+// Item 7: the paths the review neutralised without a failure.
+func TestPredictAllowAnonymousFalseClearsReady(t *testing.T) {
+	st := labState(t)
+	st.Pubs["SalesPub"].AllowAnonymous = true
+	ops, _ := finish([]Operation{stepOp(t, 6, "a", "publications[SalesPub].allow_anonymous", "to_false", "SalesPub", "")}, st)
+	if st.Pubs["SalesPub"].Ready || st.Pubs["SalesPub"].AllowAnonymous {
+		t.Errorf("Ready %v AllowAnonymous %v after allow_anonymous false", st.Pubs["SalesPub"].Ready, st.Pubs["SalesPub"].AllowAnonymous)
+	}
+	wantCosts(t, "allow_anonymous false keeping immediate_sync", ops, on(CostFullGenerationDeferred))
+}
+
+func TestPredictDrops(t *testing.T) {
+	st := labState(t)
+	dsa := stepOp(t, 4, "a", cost.OpDropSubscriptionArticle, "", "SalesRef", "Product")
+	dsa.Affects.Subscriptions = []string{labSub}
+	finish([]Operation{dsa}, st)
+	if got := rowsOf(st, "SalesRef", labSub); !reflect.DeepEqual(got, map[string]int{"vCustomerFR": 2}) {
+		t.Errorf("rows after drop_subscription_article %v", got)
+	}
+	da := stepOp(t, 5, "a", cost.OpDropArticle, "", "SalesRef", "Product")
+	finish([]Operation{da}, st)
+	if _, ok := st.Pubs["SalesRef"].Articles["Product"]; ok {
+		t.Error("Product still an article after drop_article")
+	}
+	ds := stepOp(t, 4, "a", cost.OpDropSubscription, "", "SalesRef", "")
+	ds.Affects.Subscriptions = []string{labSub}
+	finish([]Operation{ds}, st)
+	if len(st.Pubs["SalesRef"].Subs) != 0 {
+		t.Errorf("subscriptions after drop_subscription %v", st.Pubs["SalesRef"].Subs)
+	}
+
+	// The drop of the database's last publication removes its log reader
+	// (13-transient T02), not the drop of another.
+	finish([]Operation{stepOp(t, 5, "a", cost.OpDropPublication, "", "SalesRef", "")}, st)
+	if st.Pubs["SalesRef"].Exists || !st.LogReader {
+		t.Errorf("after the first publication drop: Exists %v LogReader %v", st.Pubs["SalesRef"].Exists, st.LogReader)
+	}
+	finish([]Operation{stepOp(t, 5, "a", cost.OpDropPublication, "", "SalesPub", "")}, st)
+	if st.LogReader {
+		t.Error("LogReader true after the last publication drop")
+	}
+}
+
+func TestPredictGenerateAndWait(t *testing.T) {
+	st := labState(t)
+	gen := Operation{Step: 9, Order: "b", Kind: "generate_and_wait"}
+	gen.Affects.Publications = []string{"SalesRef"}
+	ops, _ := finish([]Operation{addArticleOp(t, "a", "SalesRef", "m_t9"), extendOp(t, "a", "SalesRef", labSub, "m_t9"), gen}, st)
+	if got := rowsOf(st, "SalesRef", labSub); !reflect.DeepEqual(got, map[string]int{"Product": 2, "vCustomerFR": 2, "m_t9": 2}) {
+		t.Errorf("rows after generate_and_wait %v", got)
+	}
+	if st.Pending("SalesRef") {
+		t.Error("SalesRef pending after generate_and_wait")
+	}
+	wantCosts(t, "generate_and_wait", ops[2:], on(CostNewSnapshot))
+}
+
+func TestPredictAddArticleActiveBit(t *testing.T) {
+	st := labState(t)
+	finish([]Operation{addArticleOp(t, "a", "SalesRef", "m_t9"), addArticleOp(t, "b", "SalesPub", "m_t9")}, st)
+	if st.Pubs["SalesRef"].Articles["m_t9"] {
+		t.Error("m_t9 active on SalesRef (no immediate_sync)")
+	}
+	if !st.Pubs["SalesPub"].Articles["m_t9"] {
+		t.Error("m_t9 inactive on SalesPub (immediate_sync sets the bit at once, R12)")
+	}
+}
+
+func TestPredictExtensionOfSubscribedArticle(t *testing.T) {
+	st := labState(t)
+	ops, _ := finish([]Operation{extendOp(t, "a", "SalesRef", labSub, "Product")}, st)
+	if got := rowsOf(st, "SalesRef", labSub); !reflect.DeepEqual(got, map[string]int{"Product": 2, "vCustomerFR": 2}) {
+		t.Errorf("rows %v", got)
+	}
+	wantCosts(t, "extension of a subscribed article", ops, on(CostOnline))
+	if st.Pubs["SalesRef"].Subs[strings.ToLower(labSub)].StartAgent {
+		t.Error("StartAgent set by a no-op extension")
+	}
+}
+
+func TestPredictPublicationAbsentFromFacts(t *testing.T) {
+	c, f := loadLab(t)
+	f.Publications = f.Publications[1:] // SalesRef only
+	f.Subscriptions = f.Subscriptions[1:]
+	st := NewState(c, f)
+	ps := st.Pubs["SalesPub"]
+	if !ps.Ready {
+		t.Error("an unobserved immediate_sync publication is not ready")
+	}
+	if !ps.Articles["Customer"] || !ps.Articles["Orders"] {
+		t.Errorf("articles %v, want active", ps.Articles)
+	}
+	if got := rowsOf(st, "SalesPub", labSub); !reflect.DeepEqual(got, map[string]int{"Customer": 2, "Orders": 2}) {
+		t.Errorf("rows %v, want at 2", got)
+	}
+	if st.Pubs["SalesRef"].Ready {
+		t.Error("observed SalesRef ready")
+	}
+}
+
+func TestCostDropsReadyNotReady(t *testing.T) {
+	st := labState(t)
+	st.Pubs["SalesPub"].Ready = false
+	ops, _ := finish([]Operation{stepOp(t, 6, "a", "publications[SalesPub].immediate_sync", "to_false", "SalesPub", "")}, st)
+	wantCosts(t, "immediate_sync false on an unready publication", ops, on(CostOnline))
+}
+
+func TestCostAddSubscriptionNotReady(t *testing.T) {
+	st := labState(t)
+	st.Pubs["SalesPub"].Ready = false
+	ops, _ := finish([]Operation{addSubOp(t, "a", "SalesPub", "M_S/m_db", "automatic")}, st)
+	if got := rowsOf(st, "SalesPub", "M_S/m_db"); !reflect.DeepEqual(got, map[string]int{"Customer": 1, "Orders": 1}) {
+		t.Errorf("rows %v, want at 1", got)
+	}
+	if st.Pubs["SalesPub"].Subs["m_s/m_db"].StartAgent {
+		t.Error("StartAgent on a subscription whose rows are at 1")
+	}
+	wantCosts(t, "add_subscription on an unready immediate_sync publication", ops, on(CostNewSnapshot))
+}
+
+func TestPredictStartAgentRSO(t *testing.T) {
+	st := labState(t)
+	finish([]Operation{addSubOp(t, "a", "SalesRef", "M_S/m_rso", "replication support only"), addSubOp(t, "b", "SalesRef", "M_S/m_snap", "automatic")}, st)
+	if !st.Pubs["SalesRef"].Subs["m_s/m_rso"].StartAgent {
+		t.Error("replication support only: StartAgent false")
+	}
+	if st.Pubs["SalesRef"].Subs["m_s/m_snap"].StartAgent {
+		t.Error("snapshot on SalesRef: StartAgent true")
+	}
+}
+
+func TestPredictAgentFailureBoundary(t *testing.T) {
+	const gen = "2026-11-12 04:05:06.657"
+	a := state.AgentFacts{Job: &state.JobState{Exists: true}, LastHistory: &state.HistoryRow{Time: gen, RunStatus: 6}, LastFailure: &state.HistoryRow{Time: gen, RunStatus: 6}}
+	if got := agentStatus(a, gen); got != "failed" {
+		t.Errorf("last_failure at last_generation: %s, want failed (R13: at or after)", got)
+	}
+}

@@ -24,6 +24,10 @@ type PubState struct {
 	Articles                                     map[string]bool      // name to active bit
 	Subs                                         map[string]*SubState // by lower-cased Subscription.Key()
 	SnapshotRecurring                            bool                 // R25 refusals read it
+	// counted is the articles whose status 1 rows an add or an extension of
+	// this plan created and costed new_snapshot: a later change of the
+	// article does not count its snapshot again (R34).
+	counted map[string]bool
 }
 
 // SubState is the predicted state of one subscription.
@@ -36,11 +40,13 @@ type SubState struct {
 	// replication_support_only, backup, lsn): it decides the status of the
 	// rows an article addition or an extension gives it (R10).
 	Init string
-	// StartAgent is set on a subscription the plan creates whose rows start
-	// at 2 (a ready immediate_sync publication, 05-snapshot-flag S7, or a
+	// StartAgent is set whenever an operation of the plan adds rows at 2 to
+	// the subscription (a new subscription on a ready immediate_sync
+	// publication, 05-snapshot-flag S7; a replication support only, backup
+	// or lsn subscription; an article added to or extended into a
 	// replication support only subscription): no generation is owed, so its
-	// distribution agent has to be started for the delivery (R34; the task
-	// that fills Plan.AgentsToStart reads it).
+	// distribution agent has to be started for the delivery (R34). The
+	// AgentsToStart list reads it after finish.
 	StartAgent bool
 }
 
@@ -49,6 +55,13 @@ const (
 	initSnapshot = "snapshot"
 	initRSO      = "replication_support_only"
 )
+
+// rowsStartAt2 tells whether a subscription of this initialization gets its
+// rows at 2: no snapshot is generated for it. Replication support only:
+// D.sp_addsubscription.push.rso.@status; backup and lsn: 10-init-modes
+// I2.backup.create and I3.lsn.create, status=2 (R10 as amended by the
+// controller, Task 9 fix round 1).
+func rowsStartAt2(init string) bool { return init != initSnapshot }
 
 // NewState is the state observed before the plan: the configuration read
 // from the servers and its facts. Without facts, the state is the one in
@@ -145,20 +158,24 @@ func stringOr(s *string, def string) string {
 	return *s
 }
 
-// recurring tells whether a snapshot agent has an enabled schedule that
-// starts it again by itself: anything but once. An unknown frequency counts
-// as recurring, the cautious reading for the deferral refusal (R25).
+// recurring tells whether a snapshot agent's job starts it again by
+// itself (R25): the job is enabled and has an enabled schedule whose
+// frequency is neither once (one time) nor agent_start, nor empty (on
+// demand: the model has no frequency name for it). An unknown frequency
+// counts as recurring, the cautious reading for the deferral refusal.
 func recurring(a *model.Agent) bool {
-	if a == nil || a.Schedules == nil {
+	if a == nil || a.Schedules == nil || (a.JobEnabled != nil && !*a.JobEnabled) {
 		return false
 	}
 	for _, s := range *a.Schedules {
 		if s.Enabled != nil && !*s.Enabled {
 			continue
 		}
-		if s.Frequency != "once" && s.Frequency != "" {
-			return true
+		switch s.Frequency {
+		case "once", "agent_start", "":
+			continue
 		}
+		return true
 	}
 	return false
 }
@@ -208,10 +225,10 @@ func (s *State) apply(op *Operation) {
 		s.addPublication(op)
 		return
 	}
-	ps := s.Pubs[first(op.Affects.Publications)]
-	if ps == nil || !ps.Exists {
-		return
+	if op.Kind != "generate_and_wait" && (op.entry == nil || scopeOf(op.entry) == scopeNone) {
+		return // distributor, profiles, agents outside a publication, jobs
 	}
+	ps := s.resolve(op)
 	if op.Kind == "generate_and_wait" {
 		// R10: "generate and wait" sets every row of the publication to 2,
 		// and the generation sets every article active.
@@ -223,9 +240,6 @@ func (s *State) apply(op *Operation) {
 				sub.Rows[a] = 2
 			}
 		}
-		return
-	}
-	if op.entry == nil {
 		return
 	}
 	e := op.entry
@@ -337,16 +351,25 @@ func (s *State) addArticle(op *Operation, ps *PubState, art string) {
 		switch sub.Init {
 		case initSnapshot:
 			sub.Rows[art] = 1
+			ps.count(art)
 		case initRSO:
 			sub.Rows[art] = 2
+			sub.StartAgent = true
 			op.Warnings = append(op.Warnings, rsoWarning(art, sub.Key))
 		}
 	}
 }
 
+func (ps *PubState) count(art string) {
+	if ps.counted == nil {
+		ps.counted = map[string]bool{}
+	}
+	ps.counted[art] = true
+}
+
 // addSubscription: rows at 2 when the publication has immediate_sync and is
-// ready (05-snapshot-flag S7) or the subscription is replication support
-// only (D.sp_addsubscription.push.rso.@status), at 1 otherwise (11-defaults
+// ready (05-snapshot-flag S7) or the subscription is not snapshot-initialized
+// (rowsStartAt2), at 1 otherwise (11-defaults
 // D.sp_addsubscription.push.@status).
 func (s *State) addSubscription(op *Operation, ps *PubState) {
 	key := first(op.Affects.Subscriptions)
@@ -357,7 +380,7 @@ func (s *State) addSubscription(op *Operation, ps *PubState) {
 		ps.Subs[subKey(key)] = sub
 	}
 	status := 1
-	if init == initRSO || (ps.ImmediateSync && ps.Ready && init == initSnapshot) {
+	if rowsStartAt2(init) || (ps.ImmediateSync && ps.Ready) {
 		status = 2
 	}
 	added := false
@@ -380,16 +403,80 @@ func (s *State) extendSubscription(op *Operation, ps *PubState) {
 		return
 	}
 	status := 1
-	if sub.Init == initRSO {
-		status = 2
+	if rowsStartAt2(sub.Init) {
+		status = 2 // a backup or lsn extension is refused before finish (R21)
 	}
 	for _, a := range callArticles(op, ps, sub) {
 		sub.Rows[a] = status
 		if status == 2 {
+			sub.StartAgent = true
 			op.Warnings = append(op.Warnings, rsoWarning(a, sub.Key))
+		} else {
+			ps.count(a)
 		}
 	}
 }
+
+// The scopes of a cost entry: what the operation must name in Affects.
+const (
+	scopeNone         = iota // distributor, profiles, log reader, jobs
+	scopePublication         // Affects.Publications[0]
+	scopeArticle             // and Affects.Articles[0]
+	scopeSubscription        // and Affects.Subscriptions[0]
+)
+
+func scopeOf(e *cost.Entry) int {
+	switch e.Change {
+	case cost.OpAddArticle, cost.OpDropArticle, cost.OpArticleFilter, cost.OpArticleView, cost.OpArticleColumn:
+		return scopeArticle
+	case cost.OpAddSubscription, cost.OpExtendSubscription, cost.OpDropSubscription, cost.OpDropSubscriptionArticle:
+		return scopeSubscription
+	case cost.OpDropPublication:
+		return scopePublication
+	}
+	switch {
+	case strings.HasPrefix(e.Change, "publications[*].articles[*]."):
+		return scopeArticle
+	case strings.HasPrefix(e.Change, "publications[*]."):
+		return scopePublication
+	}
+	return scopeNone
+}
+
+// resolve returns the state of the publication an operation acts on, and
+// panics when the operation does not name what its entry's scope needs: a
+// programmer error of the strategies (Tasks 10 to 15), never user input.
+func (s *State) resolve(op *Operation) *PubState {
+	name := first(op.Affects.Publications)
+	ps := s.Pubs[name]
+	if ps == nil || !ps.Exists {
+		panic("plan: " + opName(op) + ": Affects.Publications[0] " + strconvQuote(name) + " names no publication of the predicted state")
+	}
+	if op.entry == nil {
+		return ps
+	}
+	sc := scopeOf(op.entry)
+	if sc == scopeArticle && first(op.Affects.Articles) == "" {
+		panic("plan: " + opName(op) + ": no Affects.Articles[0] for an article-scoped entry")
+	}
+	if sc == scopeSubscription && first(op.Affects.Subscriptions) == "" {
+		panic("plan: " + opName(op) + ": no Affects.Subscriptions[0] for a subscription-scoped entry")
+	}
+	if op.entry.Change == cost.OpDropSubscriptionArticle && first(op.Affects.Articles) == "" {
+		panic("plan: " + opName(op) + ": no Affects.Articles[0] for drop_subscription_article")
+	}
+	return ps
+}
+
+func opName(op *Operation) string {
+	n := op.Kind + " " + op.Action + " " + op.Path
+	if op.entry != nil {
+		n += " (" + op.entry.Change + ")"
+	}
+	return n
+}
+
+func strconvQuote(s string) string { return "\"" + s + "\"" }
 
 func rsoWarning(art, sub string) string {
 	return "the table of article " + art + " must exist at the subscriber of " + sub + ": a replication support only subscription receives no snapshot of it"
