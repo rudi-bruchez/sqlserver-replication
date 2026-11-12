@@ -847,3 +847,39 @@ func TestNormalizeDuplicateNames(t *testing.T) {
 		t.Errorf("articles %v, want nil", got)
 	}
 }
+
+// TestNormalizeFoldedKeys (R7): two desired profiles, subscriptions or
+// shared agents whose keys are equal without regard to case would match
+// one current object, and are refused, as two publications are.
+func TestNormalizeFoldedKeys(t *testing.T) {
+	fx := loadFixture(t)
+	d := loadFixture(t)
+	pr := d.AgentProfiles[0]
+	pr.Name = "LAB-DISTRIB"
+	d.AgentProfiles = append(d.AgentProfiles, pr)
+	s := d.Publications[0].Subscriptions[0]
+	s.Subscriber, s.Database = "repllab", "salessub"
+	d.Publications[0].Subscriptions = append(d.Publications[0].Subscriptions, s)
+	a := d.Publisher.SharedDistributionAgents[0]
+	a.Subscriber = "repllab"
+	d.Publisher.SharedDistributionAgents = append(d.Publisher.SharedDistributionAgents, a)
+	d.Publisher.SharedPullAgents = []model.SharedPullAgent{{Subscriber: "S", Database: "D"}, {Subscriber: "s", Database: "d"}}
+	_, rs := Normalize(d, fx)
+	var got []Refusal
+	for _, r := range rs {
+		if strings.Contains(r.Reason, "(R7)") {
+			got = append(got, r)
+		}
+	}
+	want := []Refusal{
+		{Path: "agent_profiles[distribution/LAB-DISTRIB]", Reason: `profiles "distribution/lab-distrib" and "distribution/LAB-DISTRIB" are equal without regard to case, as they are matched (R7)`},
+		{Path: "publisher.shared_distribution_agents[repllab/SalesSub]", Reason: `shared distribution agents "REPLLAB/SalesSub" and "repllab/SalesSub" are equal without regard to case, as they are matched (R7)`},
+		{Path: "publisher.shared_pull_agents[s/d]", Reason: `shared pull agents "S/D" and "s/d" are equal without regard to case, as they are matched (R7)`},
+		{Path: "publications[SalesPub].subscriptions[repllab/salessub]", Reason: `subscriptions "REPLLAB/SalesSub" and "repllab/salessub" are equal without regard to case, as they are matched (R7)`},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("refusals %+v, want %+v", got, want)
+	}
+	_, rs = Normalize(loadFixture(t), fx)
+	noRefusal(t, "fixture", rs)
+}

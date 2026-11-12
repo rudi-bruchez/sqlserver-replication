@@ -444,6 +444,42 @@ func (n *normalizer) names(c *model.Config) {
 			}
 		}
 	}
+	// Two objects whose keys are equal without regard to case would match
+	// one current object (R7); model.Load refuses the duplicate
+	// subscriptions and shared agents, a Config built in code does not.
+	folded := func(list string, keys []string, what string) {
+		seen := map[string]string{}
+		for _, k := range keys {
+			if first, ok := seen[strings.ToUpper(k)]; ok {
+				n.refuse(list+model.Element(k), "%s %q and %q are equal without regard to case, as they are matched (R7)", what, first, k)
+				continue
+			}
+			seen[strings.ToUpper(k)] = k
+		}
+	}
+	var keys []string
+	for _, pr := range c.AgentProfiles {
+		keys = append(keys, pr.Key())
+	}
+	folded("agent_profiles", keys, "profiles")
+	keys = nil
+	for _, a := range c.Publisher.SharedDistributionAgents {
+		keys = append(keys, a.Key())
+	}
+	folded("publisher.shared_distribution_agents", keys, "shared distribution agents")
+	keys = nil
+	for _, a := range c.Publisher.SharedPullAgents {
+		keys = append(keys, a.Key())
+	}
+	folded("publisher.shared_pull_agents", keys, "shared pull agents")
+	for i := range c.Publications {
+		p := &c.Publications[i]
+		keys = nil
+		for _, s := range p.Subscriptions {
+			keys = append(keys, s.Key())
+		}
+		folded(pubPath(p)+".subscriptions", keys, "subscriptions")
+	}
 	for i := range c.AgentProfiles {
 		pr := &c.AgentProfiles[i]
 		byName := map[string][]string{}

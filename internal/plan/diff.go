@@ -307,13 +307,38 @@ func (w *walker) mapKeys(path, pattern string, dv, cv reflect.Value) {
 		}
 		return e
 	}
+	// Keys in sorted order, so that two current names differing only in
+	// case (normalization refuses them only on the desired side) give the
+	// same result at every run: the first in sorted order wins, an exact
+	// match of the desired name before it.
+	ordered := func(m reflect.Value, prefer map[string]bool) []string {
+		var ks []string
+		for _, k := range m.MapKeys() {
+			ks = append(ks, k.String())
+		}
+		sort.Slice(ks, func(i, j int) bool {
+			if prefer[ks[i]] != prefer[ks[j]] {
+				return prefer[ks[i]]
+			}
+			return ks[i] < ks[j]
+		})
+		return ks
+	}
+	desKeys := map[string]bool{}
+	for _, k := range dv.MapKeys() {
+		desKeys[k.String()] = true
+	}
 	if cv.IsValid() {
-		for it := cv.MapRange(); it.Next(); {
-			get(it.Key().String()).before = model.Ptr(it.Value().String())
+		for _, k := range ordered(cv, desKeys) {
+			if e := get(k); e.before == nil {
+				e.before = model.Ptr(cv.MapIndex(reflect.ValueOf(k)).String())
+			}
 		}
 	}
-	for it := dv.MapRange(); it.Next(); {
-		get(it.Key().String()).after = model.Ptr(it.Value().String())
+	for _, k := range ordered(dv, nil) {
+		if e := get(k); e.after == nil {
+			e.after = model.Ptr(dv.MapIndex(reflect.ValueOf(k)).String())
+		}
 	}
 	folded := map[string]bool{}
 	for k := range byKey {
@@ -338,7 +363,8 @@ func (w *walker) mapKeys(path, pattern string, dv, cv reflect.Value) {
 // frequency, interval, subday and subday_interval when the defaults table
 // has it for the agent, and not compared otherwise. A declared schedule is
 // compared on every other field, start_date and start_time only when not
-// zero (R37). Lists of different lengths are one change of the list.
+// zero (R37). Lists of different lengths are one change of the list. A
+// schedule field's path names the current schedule.
 func (w *walker) schedules(path string, d, c reflect.Value) {
 	cv := indirect(c)
 	if !cv.IsValid() {
@@ -366,11 +392,9 @@ func (w *walker) schedules(path string, d, c reflect.Value) {
 		return
 	}
 	for i := range des {
-		name := des[i].Name
-		if name == "" {
-			name = cur[i].Name
-		}
-		w.scheduleFields(path+model.Element(name), des[i], cur[i], declaredFields)
+		// The current schedule's name, as pair.path uses the current key:
+		// the name an unreadable finding writes (R26).
+		w.scheduleFields(path+model.Element(cur[i].Name), des[i], cur[i], declaredFields)
 	}
 }
 

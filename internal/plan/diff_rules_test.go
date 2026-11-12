@@ -392,7 +392,7 @@ func TestDiffScheduleDefaultByPublicationType(t *testing.T) {
 // TestDiffPairsSorted: pairs, desired-only and current-only objects are
 // sorted by key, a folded key without regard to case.
 func TestDiffPairsSorted(t *testing.T) {
-	des := []model.Publication{{Name: "b"}, {Name: "c"}, {Name: "a"}, {Name: "z"}}
+	des := []model.Publication{{Name: "b"}, {Name: "z"}, {Name: "c"}, {Name: "a"}, {Name: "m"}}
 	cur := []model.Publication{{Name: "y"}, {Name: "a"}, {Name: "c"}, {Name: "b"}, {Name: "x"}}
 	pairs, dOnly, cOnly := matchPublications(des, cur)
 	var keys []string
@@ -405,7 +405,7 @@ func TestDiffPairsSorted(t *testing.T) {
 	for _, p := range cOnly {
 		keys = append(keys, "-"+p.Name)
 	}
-	if got := strings.Join(keys, " "); got != "a=a b=b c=c +z -x -y" {
+	if got := strings.Join(keys, " "); got != "a=a b=b c=c +m +z -x -y" {
 		t.Errorf("publications: %s", got)
 	}
 	ds := []model.Subscription{{Subscriber: "S2", Database: "d"}, {Subscriber: "s1", Database: "D"}}
@@ -526,5 +526,45 @@ func TestDiffRefusesLogins(t *testing.T) {
 	}
 	if got := strings.Join(pats, " "); got != "distributor.publisher_connection.login publications[*].snapshot.ftp.login publications[*].snapshot_agent.distributor_connection.login" {
 		t.Errorf("login changes %s", got)
+	}
+}
+
+// TestDiffScheduleNameFromCurrent (R26): a declared schedule's fields are
+// diffed at the path of the current schedule's name, the one an unreadable
+// finding writes, whatever name the file gives it.
+func TestDiffScheduleNameFromCurrent(t *testing.T) {
+	des, cur := labPair(t)
+	ds := &(*pubOf(t, des, "SalesPub").SnapshotAgent.Schedules)[0]
+	ds.Name, ds.SubdayInterval = "mine", 10
+	fp := "publications[SalesPub].snapshot_agent.schedules[Replication agent schedule.]"
+	cur.Findings = append(cur.Findings, model.Finding{Kind: model.FindingUnreadable, Path: fp, Message: "x"})
+	pp := pubPathOf("SalesPub")
+	noChanges(t, "unreadable schedule", diffObject(pp, pubOf(t, des, "SalesPub"), pubOf(t, cur, "SalesPub"), unreadable(cur)))
+	if got := diffObject(pp, pubOf(t, des, "SalesPub"), pubOf(t, cur, "SalesPub"), never); len(got) != 1 || got[0].Path != fp+".subday_interval" {
+		t.Errorf("without the skip: got %s, want one change at %s.subday_interval", changesString(got), fp)
+	}
+}
+
+// TestDiffParametersCurrentCase: a current profile holding two parameter
+// names that differ only in case is compared the same way at every run,
+// the exact name of the desired file first, otherwise the first in sorted
+// order.
+func TestDiffParametersCurrentCase(t *testing.T) {
+	pp := "agent_profiles[distribution/p]"
+	cur := &model.AgentProfile{Parameters: map[string]string{"-PollingInterval": "5", "-pollinginterval": "7"}}
+	for _, x := range []struct {
+		des  map[string]string
+		want string
+	}{
+		{map[string]string{"-PollingInterval": "5"}, "[]"},
+		{map[string]string{"-pollinginterval": "7"}, "[]"},
+		{map[string]string{"-POLLINGINTERVAL": "7"}, "[" + pp + ".parameters[-PollingInterval] (agent_profiles[*].parameters): \"5\" -> \"7\"]"},
+	} {
+		for range 50 {
+			got := changesString(diffObject(pp, &model.AgentProfile{Parameters: x.des}, cur, never))
+			if got != x.want {
+				t.Fatalf("desired %v: got %s, want %s", x.des, got, x.want)
+			}
+		}
 	}
 }
