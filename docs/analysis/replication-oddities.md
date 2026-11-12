@@ -125,6 +125,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: an omitted `@destination_owner` is `dbo`, or the source schema, whatever the sync method.
 - Observed: it depends on the sync method. Under `native`, `concurrent`, `database snapshot` and `database snapshot character` it is the source schema (`m_s` for a source in schema `m_s`); under `character` and `concurrent_c` it is NULL, for table, view, procedure and function articles alike, on transactional and snapshot publications.
+- Also observed: `sp_changepublication @property = 'sync_method'` (`native` to `character` and back) rewrites neither `sysarticles.dest_owner`, nor `schema_option`, nor `ins_cmd`, `upd_cmd` and `del_cmd` of the existing articles. An article added under `character` gets `dest_owner` NULL and SQL commands, and keeps them after a return to `native`. Source: Task 19 and Task 20 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 - Source: measured, `O16` (GLM, the fix review, the controller); `11-defaults D.sp_addarticle.*.@destination_owner`, and the rows `D.sp_addarticle.*.nondbo.*` (commit `3541324`), which cover all six sync methods on a source in `m_s`, including `dbsnap_c` (`database snapshot character`, `m_s`).
 
 ### Schema-only articles and the active bit
@@ -394,6 +395,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected: a scheduled snapshot agent generates only what someone awaits.
 - Observed: an `immediate_sync` publication generates every article at every run. The default schedule of `sp_addpublication_snapshot` is every 5 minutes: `SalesPub` generated its 2 articles at each of 12 runs in an hour, `SalesRef` (no `immediate_sync`) none. Each run also writes new snapshot commands into `MSrepl_commands` for a subscription that awaits nothing.
 - Also observed: `sp_addpublication_snapshot` with no schedule parameters creates a recurring schedule: daily, every 5 minutes (`freq_type` 4, `freq_subday_type` 4, interval 5). Source: Task 15 review of plan 3, measured on 2022 CU27 (2026-11-12).
+- Also observed: for a new publication whose snapshot schedule never fires, no snapshot runs on its own. Neither `sp_addpublication` nor `sp_addsubscription` started one, and the subscriber tables were never created within 120 s; only an explicit start (`sp_startpublication_snapshot`) generated it. Source: Task 19 and Task 20 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 - Source: measured, design "Blocking" (lab count); `lab/README.md` "Observed outside the campaign".
 
 ### immediate_sync_ready on a new publication
@@ -497,7 +499,8 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 ### Starting a snapshot agent that is already running
 
 - Expected: `sp_startpublication_snapshot` raises an error when the job is already running.
-- Observed: it returns 1 with `@@ERROR` 0 and nothing for `TRY...CATCH`. The only message is an informational "HResult 0x5606, Level 16, State 1" line followed by the Agent's "Request to run job ... refused because the job is already running", not a `Msg` line. A second start right after a run's runstatus 2 row, while the job is still finishing, is refused the same way.
+- Observed: on a job that is running it can return 1 with `@@ERROR` 0 and nothing for `TRY...CATCH`, the only message being an informational "HResult 0x5606, Level 16, State 1" line followed by the Agent's "Request to run job ... refused because the job is already running", not a `Msg` line. That is not the whole behavior: while the previous generation's job still runs, or a start is pending, it returns error 22022, class 16, which go-mssqldb reports as an error. Retrying every second until the start is accepted works. A second start right after a run's runstatus 2 row, while the job is still finishing, is refused the same way.
+- Source of the correction: Task 19 and Task 20 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 - Also observed: `msdb.dbo.sp_start_job` on a distribution agent job that is running, or that its creation has just started (`sp_addpushsubscription_agent` starts its continuous job), fails with 22022 ("already running" or "already has a pending request", HResult 0x5606). Source: Task 15 review of plan 3, measured on 2022 CU27 (2026-11-12).
 - Source: measured, `16-snapshot-report-sources RS.*.start_running` under three methods; p2 task-11-fix-1-report.
 
@@ -613,6 +616,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Observed: `sp_addsubscription` to an unregistered server registers it (`MSsubscriber_info.type` 0) and adds a `sys.servers` row. `sp_dropsubscriber` ("The Subscriber was dropped.") leaves the `sys.servers` row, which only `sp_dropserver` removes. A refused `sp_addsubscription` (14124, no article) also leaves the `sys.servers` and `MSsubscriber_info` rows.
 - Also observed: `sp_addsubscription` of a pull subscription for an unknown server adds `sys.servers` and `MSreplservers` rows. `sp_dropsubscriber` only clears `is_subscriber`. The `MSreplservers` rows survive everything: no procedure deletes them, and the lab keeps `RV_T4F0D5_GHOST`, `RV_COPUSK7Q2_FRESH` and `M_FRESHSUB` as residue, harmless.
 - Also observed: `sp_addsubscription` of a pull subscription accepts a subscriber name that resolves to no host. It adds that name to `sys.servers`, `distribution.dbo.MSreplservers`, `MSsubscriber_info` and `MSsubscriber_schedule`. Removing it leaves rows behind: `sp_dropsubscriber` removes the `sys.servers`, `MSsubscriber_info` and `MSsubscriber_schedule` rows but leaves the `MSreplservers` row, and `sp_dropsubscription` of that subscriber's last subscription prints "The Subscriber was dropped." yet leaves both the `MSreplservers` row and the `sys.servers` row (`is_subscriber` 0). No procedure deletes the `MSreplservers` row. Source: Task 18 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
+- Also observed: `sp_addsubscription @subscription_type = N'pull'` to a subscriber name registered nowhere stores `MSsubscriber_info.type` 0 (SQL Server), the same as the push case. Row `D.sp_addsubscription.pull.fresh-subscriber.@subscriber_type` of `lab/results/2022/11-defaults.txt`. Source: Task 19 and Task 20 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 - Source: measured, panel 3 Opus, verified item 5; plan 3 task 4 review, measured.
 
 ### sp_addsubscription without @subscriber
@@ -664,6 +668,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: one row per publication in `MSreplication_subscriptions`.
 - Observed: an anonymous row (type 2) can stand beside the type 1 row, since the unique index `uc1MSReplication_subscriptions` includes `subscription_type`.
+- Also observed: a push subscription writes a row with `subscription_type` 0 in the subscriber database's `MSreplication_subscriptions`, and `sp_droppullsubscription` fails on that row. Source: Task 19 and Task 20 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 - Source: measured by the fix review of plan 2's panel fold (p2 triage, last section); `internal/reader/queries.go:425-428`.
 
 ### independent_agent and immediate_sync at the subscriber
@@ -731,6 +736,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: a pull agent started too early waits for the snapshot or fails.
 - Observed: a pull agent's job has no schedule (on demand). Started before the snapshot generation has ended, it runs once, finds no snapshot and exits without delivering; a second start after the generation delivers.
+- Also observed: repeating `msdb.dbo.sp_start_job` on the pull job every 3 s, and reading 22022 as "already running", delivered after 1 or 2 accepted starts, in 6 to 12 s. Source: Task 19 and Task 20 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 - Source: Task 15 review of plan 3, measured on 2022 CU27 (2026-11-12).
 
 ### Where the pull procedures run
@@ -1157,6 +1163,8 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Also observed: `sp_droppublication` of a database's last publication printed two Msg 18752 from `sys.sp_replcmds` and completed. `sp_articlefilter` with `@force_reinit_subscription = 1` printed it from `sys.sp_repldone` in two of five tries, with the log reader running, and completed (see "sp_articlefilter with a new clause"). Source: plan 3 task 9 review, measured (2026-11-12).
 - Also observed: the same `sp_droppublication` of a database's last publication while its log reader runs, already recorded as `O14`, aborts the rest of a script under `sqlcmd -b`. Source: Task 14 review of plan 3, measured on 2022 CU27 (2026-11-12).
 - Also observed: `sp_droppublication` with the log reader running printed Msg 18752 twice, and the publication and its jobs were dropped all the same. Source: Task 18 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
+- Also observed: `sp_droppublication` raised its 18752 from `sys.sp_replcmds`, nested in the call, twice, with `@@TRANCOUNT` 0; the publication and its jobs were gone afterward. Source: Task 19 and Task 20 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
+- Also observed: not only drops. `sp_changepublication @property = 'sync_method'` to `concurrent` with `@force_reinit_subscription = 1`, on a `native` publication whose log reader runs, returned Msg 18752 with `@@TRANCOUNT` 0, 3 times out of 3. `syspublications.sync_method` was 3 (`concurrent`) afterward: the change was stored despite the error. Until then 18752 had been recorded only on drops. Source: Task 19 and Task 20 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 - Also observed: `sp_replicationdboption @optname = N'publish', @value = N'false'` right after `sp_droppublication` of the database's last publication returned 18752 (the log reader's session still connected); it succeeded on a retry a few seconds later, or dropping the database cleared it. Source: Task 16 review of plan 3, measured on 2022 CU27 (2026-11-12).
 - Source: measured, `O14` (Claude, controller, fix review), `O21`, panel 3 Opus; `13-transient T01` to `T10`; `06-structural C5.*`.
 
@@ -1176,6 +1184,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: each refusal has its own error number.
 - Observed: some refusals come as error 50000 (`@job_login must be a non-null/non-empty value`), some from an inner procedure (14043 from `sp_MSrepl_addsubscriber`, 20026 from `sys.sp_MSreinit_article` after 14027), and the agents' failures as 14151, "agent ... failed", whose cause is elsewhere (see "The error of a history row").
+- Also observed: `RAISERROR(18752, 16, 1, @s)` needs `@s` to be `bigint`, because the message uses `%I64d`; any other type gives error 2786. Source: Task 19 and Task 20 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 - Source: measured, `07-changes AGT.*.job_password`; panel 2 Claude item 7; panel 3 GLM item 1; `10-init-modes I2.backup.gap-original`.
 
 ### The go-mssqldb driver
@@ -1282,6 +1291,7 @@ The numbers met, with their meaning in this context. The agent messages met in t
 | 1205 | subscription drops | deadlock, met once by the panel, not reproduced |
 | 2601 | distribution agent, inside 20253 | duplicate key in the subscriber table during a bulk copy |
 | 2627 | inside 14151 | primary key violation when a re-add replays delivered rows |
+| 2786 | `RAISERROR(18752, ...)` | the message uses `%I64d`, so the argument must be `bigint` |
 | 2812 | 2025 hidden helpers | the procedure cannot be found, though `sp_adddistributor` calls it |
 | 3217 | `sp_change_subscription_properties` | invalid property (`publisher_*`, `subscriber_*`, `dynamic_snapshot_location`, an unknown name) |
 | 3624 | `sp_changearticle filter` | engine assertion, severity 20, connection ended |
@@ -1315,7 +1325,7 @@ The numbers met, with their meaning in this context. The agent messages met in t
 | 15002 | `sp_addsubscription` | cannot run inside a transaction |
 | 15006 | `sp_addpublication`, `sp_addarticle` | `[` or `]` in the publication or article name ("not a valid name because it contains invalid characters") |
 | 15251 | `sp_addarticle`, `sp_changearticle` | `upd_cmd = 'SCALL'` without a procedure name; `ins_cmd N'XCALL ...'` (leaves `@@TRANCOUNT` at 0) |
-| 18752 | publication drops, `sp_articlefilter`, `sp_replicationdboption` | another log reader or log-related procedure (`sp_replcmds`, `sp_repldone`); the call may still complete, but under `sqlcmd -b` the script stops; `sp_replicationdboption false` right after the last drop fails until a retry |
+| 18752 | publication drops, `sp_articlefilter`, `sp_replicationdboption` | another log reader or log-related procedure (`sp_replcmds`, `sp_repldone`); the call may still complete, but under `sqlcmd -b` the script stops; `sp_replicationdboption false` right after the last drop fails until a retry; also `sp_changepublication sync_method` to `concurrent` with the reinitialization flag, the change being stored |
 | 18757 | `sp_addpublication_snapshot` | the database is not published |
 | 18787 | `sp_changepublication` | initialization from backup on a snapshot publication |
 | 20011 | `sp_changepublication` | `allow_anonymous` without `immediate_sync`, or `immediate_sync` false while `allow_anonymous` is true |
@@ -1355,8 +1365,8 @@ The numbers met, with their meaning in this context. The agent messages met in t
 | 21854 | `sp_addarticle` | a snapshot is being generated |
 | 21861 | `sp_articlefilter` | would deactivate an article while a snapshot is generated |
 | 21866 | `sp_changepublication` | `replicate_partition_switch` without `allow_partition_switch` |
-| 22022 | `msdb.dbo.sp_start_job` | the distribution agent job is running or has a pending request (HResult 0x5606) |
+| 22022 | `msdb.dbo.sp_start_job`, `sp_startpublication_snapshot` | the job is running or has a pending request (HResult 0x5606); retry until accepted |
 | 22547 | `sp_changepublication`, creation | `concurrent` on a snapshot publication |
 | 41989 | agent changes | `@job_security_mode` is Managed Instance only |
 | 50000 | `job_password` changes | generic `RAISERROR`: `@job_login` must be non-null |
-| HResult 0x5606 | `sp_startpublication_snapshot` | the job is already running; informational line, not an error |
+| HResult 0x5606 | `sp_startpublication_snapshot` | the job is already running; an informational line, or the 22022 error |
