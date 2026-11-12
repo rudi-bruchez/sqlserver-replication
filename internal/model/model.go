@@ -259,6 +259,11 @@ type Article struct {
 	Filter                 *Filter     `yaml:"filter,omitempty"`
 	SyncObject             *ObjectName `yaml:"sync_object,omitempty"`
 	FireTriggersOnSnapshot *bool       `yaml:"fire_triggers_on_snapshot,omitempty"`
+	// IdentityRangeManagement is none or manual (sp_addarticle
+	// @identityrangemanagementoption), read the way sp_helparticle derives
+	// it: manual when the table's identity column is NOT FOR REPLICATION.
+	// auto is out of scope and reported as a finding.
+	IdentityRangeManagement *string `yaml:"identity_range_management,omitempty"`
 	// Columns lists the published columns, only when the article is
 	// vertically filtered. Omitted and empty both mean every column.
 	Columns []string `yaml:"columns,omitempty"`

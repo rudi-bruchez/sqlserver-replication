@@ -86,8 +86,18 @@ SELECT a.pubid, a.artid, a.name, a.type, a.status, a.pre_creation_cmd, a.schema_
        (SELECT COUNT(*) FROM sys.columns AS c WHERE c.object_id = a.objid),
        CASE WHEN a.sync_objid IS NULL OR a.sync_objid = 0 OR a.sync_objid = a.objid THEN NULL
             ELSE OBJECT_DEFINITION(a.sync_objid) END,
-       CASE WHEN a.sync_objid IS NULL OR a.sync_objid = 0 OR a.sync_objid = a.objid THEN 0 ELSE 1 END
+       CASE WHEN a.sync_objid IS NULL OR a.sync_objid = 0 OR a.sync_objid = a.objid THEN 0 ELSE 1 END,
+       CASE WHEN EXISTS (SELECT 1 FROM sys.identity_columns AS ic
+                         WHERE ic.object_id = a.objid AND ic.is_not_for_replication = 1) THEN 1 ELSE 0 END
 FROM dbo.sysarticles AS a`
+
+	// The tables whose identity range the publisher manages
+	// (@identityrangemanagementoption = 'auto'). The table only exists in
+	// some publication databases, hence the guard: with deferred name
+	// resolution the batch compiles without it and returns no result set.
+	qAutoIdentityRange = `
+IF OBJECT_ID(N'dbo.MSpub_identity_range') IS NOT NULL
+	SELECT objid FROM dbo.MSpub_identity_range`
 
 	qSchemaArticles = `
 SELECT a.pubid, a.artid, a.name, a.type, a.pre_creation_cmd, a.schema_option,

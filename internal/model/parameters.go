@@ -159,7 +159,7 @@ var Parameters = concat(
 
 func agentProfileParameters() []ParamMapping {
 	const add, upd = "sp_add_agent_profile", "sp_update_agent_profile"
-	agentKey := "the agent is named by its place in the file, not by a key field"
+	agentKey := "the agent is named by its place in the file, not by a key field; the type code (1 snapshot, 2 log reader, 3 distribution, 4 merge, 9 queue reader) comes from which agent path it is"
 	return []ParamMapping{
 		field("sp_add_agent_parameter", "@profile_id", pProfiles+".name"),
 		field("sp_add_agent_parameter", "@parameter_name", pProfiles+".parameters"),
@@ -213,7 +213,12 @@ func articleParameters() []ParamMapping {
 		excluded(p, "@threshold", rIdentity),
 		excluded(p, "@force_invalidate_snapshot", rFlag),
 		excluded(p, "@use_default_datatypes", rNonSQL),
-		excluded(p, "@identityrangemanagementoption", rIdentity),
+		{
+			Procedure: p, Parameter: "@identityrangemanagementoption", Kind: ParamField,
+			Paths:  []string{pArts + ".identity_range_management"},
+			Reason: "none or manual; read as sp_helparticle derives it, from the identity column's NOT FOR REPLICATION, since schema option 0x04 alone is refused (21830) and dropping it later leaves manual (Task 12 fix 1); auto needs updating subscribers (21231) and is reported as out_of_scope",
+			Since:  sinceDefault,
+		},
 		excluded(p, "@publisher", rPublisher),
 		field(p, "@fire_triggers_on_snapshot", pArts+".fire_triggers_on_snapshot"),
 	}
@@ -355,7 +360,7 @@ func pullParameters() []ParamMapping {
 			field(ps, "@publisher_db", "publisher.database"),
 			field(ps, "@publication", pPubs+".name"),
 			{Procedure: ps, Parameter: "@independent_agent", Kind: ParamField, Paths: []string{pPubs + ".independent_agent"}, Reason: stored, Since: sinceDefault},
-			excluded(ps, "@subscription_type", "not stored and not needed: the subscription's type is publications[*].subscriptions[*].type, from sp_addsubscription (11-defaults D.sp_addpullsubscription.pull.@subscription_type)"),
+			{Procedure: ps, Parameter: "@subscription_type", Kind: ParamField, Paths: []string{pSubs + ".type"}, Reason: "stored in MSreplication_subscriptions.subscription_type (11-defaults D.sp_addpullsubscription.pull.@subscription_type) but derived, not a property of its own: plan 3 passes the subscription's type", Since: sinceDefault},
 			field(ps, "@description", under("description", pullAgents...)...),
 			excluded(ps, "@update_mode", rOutOfScope),
 			{Procedure: ps, Parameter: "@immediate_sync", Kind: ParamField, Paths: []string{pPubs + ".immediate_sync"}, Reason: stored, Since: sinceDefault},
@@ -387,7 +392,7 @@ func pullParameters() []ParamMapping {
 			field(pa, "@alt_snapshot_folder", under("alt_snapshot_folder", pullAgents...)...),
 			field(pa, "@working_directory", under("working_directory", pullAgents...)...),
 			field(pa, "@use_ftp", under("use_ftp", pullAgents...)...),
-			excluded(pa, "@publication_type", "not needed: stored in MSsubscription_properties.publication_type, 0 for a transactional publication, which publications[*].type gives (11-defaults D.sp_addpullsubscription_agent.pull.@publication_type)"),
+			{Procedure: pa, Parameter: "@publication_type", Kind: ParamField, Paths: []string{pPubs + ".type"}, Reason: "stored in MSsubscription_properties.publication_type (11-defaults D.sp_addpullsubscription_agent.pull.@publication_type, 0 transactional) but derived, not a property of its own: plan 3 passes the code of the publication's type", Since: sinceDefault},
 			excluded(pa, "@dts_package_name", rOutOfScope),
 			excluded(pa, "@dts_package_password", rOutOfScope),
 			excluded(pa, "@dts_package_location", rOutOfScope),

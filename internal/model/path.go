@@ -234,7 +234,7 @@ var schemaOnlyTypes = map[string]bool{
 // or synchronization object is "none".
 func (a Article) OmittedOK(key string, parents []Step) bool {
 	switch key {
-	case "insert_column_names", "parameterized", "commands", "fire_triggers_on_snapshot":
+	case "insert_column_names", "parameterized", "commands", "fire_triggers_on_snapshot", "identity_range_management":
 		return a.Type != nil && schemaOnlyTypes[*a.Type]
 	case "filter", "sync_object":
 		return true

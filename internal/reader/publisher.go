@@ -137,7 +137,30 @@ func (e *exporter) readArticleColumns() (map[int][]string, error) {
 	return cols, rows.Err()
 }
 
+// readAutoIdentityRange returns the object ids of the tables whose identity
+// range is managed automatically.
+func (e *exporter) readAutoIdentityRange() (map[int]bool, error) {
+	auto := map[int]bool{}
+	rows, err := e.src.Publisher.QueryContext(e.ctx, qAutoIdentityRange)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var objid int
+		if err := rows.Scan(&objid); err != nil {
+			return nil, err
+		}
+		auto[objid] = true
+	}
+	return auto, rows.Err()
+}
+
 func (e *exporter) readTableArticles(columns map[int][]string) error {
+	autoIdentity, err := e.readAutoIdentityRange()
+	if err != nil {
+		return err
+	}
 	rows, err := e.src.Publisher.QueryContext(e.ctx, qTableArticles)
 	if err != nil {
 		return err
@@ -149,7 +172,7 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 			schemaOption                                                                         []byte
 			insCmd, updCmd, delCmd, filterSchema, filterName                                     string
 			filterClauseNull, syncDefinition                                                     sql.NullString
-			hasSyncView                                                                          int
+			hasSyncView, identityNFR                                                             int
 			syncSchema, syncName                                                                 string
 			t                                                                                    articleText
 			a                                                                                    model.Article
@@ -160,7 +183,7 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 			&insCmd, &updCmd, &delCmd,
 			&filterClauseNull, &filterSchema, &filterName,
 			&syncObjID, &objID, &syncSchema, &syncName,
-			&t.creationScript, &fireTriggers, &tableColumns, &syncDefinition, &hasSyncView)
+			&t.creationScript, &fireTriggers, &tableColumns, &syncDefinition, &hasSyncView, &identityNFR)
 		if err != nil {
 			return err
 		}
@@ -210,6 +233,21 @@ func (e *exporter) readTableArticles(columns map[int][]string) error {
 			a.SyncObject = &model.ObjectName{Schema: syncSchema, Name: syncName}
 		}
 		a.FireTriggersOnSnapshot = model.Ptr(fireTriggers != 0)
+
+		// sp_helparticle derives identityrangemanagementoption from the
+		// table, not from the article: 1 (auto) with a MSpub_identity_range
+		// row, 2 (manual) when the identity column is NOT FOR REPLICATION,
+		// whatever the schema option 0x04, and 0 (none) otherwise, a table
+		// without an identity column included. Measured on SQL Server 2022
+		// (Task 12 fix 1 report).
+		switch {
+		case autoIdentity[objID]:
+			e.find(model.FindingOutOfScope, model.Join(articlePath(p.Name, a.Name), "identity_range_management"), "article %s.%s: automatic identity range management serves updatable subscriptions, out of scope", p.Name, a.Name)
+		case identityNFR != 0:
+			a.IdentityRangeManagement = model.Ptr("manual")
+		default:
+			a.IdentityRangeManagement = model.Ptr("none")
+		}
 
 		// sysarticlecolumns lists the published columns; the article is
 		// vertically filtered when it lists fewer columns than the table has.

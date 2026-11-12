@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/url"
 	"os"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -1001,10 +1002,84 @@ func uncoveredNils(cfg *model.Config, own func(string) bool) []string {
 	return out
 }
 
+// checkLabMaps compares the maps of the export, which NilProperties does
+// not judge, with the server: distributor.properties with the rows of
+// msdb.dbo.MSdistributor (every key present, none empty), and the parameters
+// of the lab's profile lab-distrib with its rows of msdb.dbo.MSagent_parameters.
+func checkLabMaps(t *testing.T, label string, cfg *model.Config) {
+	t.Helper()
+	ctx := context.Background()
+	master := labDB(t, "master")
+	read := func(q string) map[string]string {
+		rows, err := master.QueryContext(ctx, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		m := map[string]string{}
+		for rows.Next() {
+			var k, v string
+			if err := rows.Scan(&k, &v); err != nil {
+				t.Fatal(err)
+			}
+			m[k] = v
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+
+	props := read(`SELECT property, ISNULL(CAST(value AS nvarchar(4000)), N'') FROM msdb.dbo.MSdistributor`)
+	if len(props) == 0 {
+		t.Fatalf("%s: msdb.dbo.MSdistributor has no row", label)
+	}
+	if cfg.Distributor == nil {
+		t.Fatalf("%s: no distributor exported", label)
+	}
+	got := cfg.Distributor.Properties
+	for k := range props {
+		if v, ok := got[k]; !ok {
+			t.Errorf("%s: distributor.properties lacks %s", label, k)
+		} else if v == "" {
+			t.Errorf("%s: distributor.properties.%s is empty", label, k)
+		}
+	}
+	for k := range got {
+		if _, ok := props[k]; !ok {
+			t.Errorf("%s: distributor.properties.%s is not a row of MSdistributor", label, k)
+		}
+	}
+
+	want := read(`SELECT p.parameter_name, ISNULL(p.value, N'')
+FROM msdb.dbo.MSagent_parameters AS p
+JOIN msdb.dbo.MSagent_profiles AS f ON f.profile_id = p.profile_id
+WHERE f.profile_name = N'lab-distrib' AND f.agent_type = 3`)
+	var prof *model.AgentProfile
+	for i := range cfg.AgentProfiles {
+		if cfg.AgentProfiles[i].Key() == "distribution/lab-distrib" {
+			prof = &cfg.AgentProfiles[i]
+		}
+	}
+	if prof == nil {
+		t.Fatalf("%s: profile lab-distrib not exported", label)
+	}
+	if len(want) == 0 {
+		t.Fatalf("%s: lab-distrib has no parameter row", label)
+	}
+	if !reflect.DeepEqual(prof.Parameters, want) {
+		t.Errorf("%s: lab-distrib parameters = %v, want %v", label, prof.Parameters, want)
+	}
+}
+
 // The export writes every property of the lab's own objects: a nil property
 // that no finding covers is one the reader does not read. The second read
-// adds the pull subscription of testdata/pull-setup.sql, read at its
-// subscriber.
+// adds the pull subscription of testdata/pull-setup.sql, the third the shared
+// pull agent of testdata/pull-shared-setup.sql, both read at their
+// subscriber. NilProperties only judges pointer fields: the maps are
+// compared with the server by checkLabMaps, and the non-pointer fields
+// (plain strings, the ints of a schedule, lists of strings) stay outside the
+// check, by ruling of the review of Task 12.
 func TestReadLabExportsEveryProperty(t *testing.T) {
 	// Profiles of other sessions are on the same distributor: only the
 	// lab's own profile is judged.
@@ -1014,17 +1089,68 @@ func TestReadLabExportsEveryProperty(t *testing.T) {
 		}
 		return labFinding(p)
 	}
-	if got := uncoveredNils(labRead(t).Config, labOwn); len(got) != 0 {
+	cfg := labRead(t).Config
+	if got := uncoveredNils(cfg, labOwn); len(got) != 0 {
 		t.Errorf("Sales: properties not exported: %q", got)
 	}
+	checkLabMaps(t, "Sales", cfg)
 
 	pullSetup(t)
-	cfg := labReadWith(t, map[string]*sql.DB{"repllab": labDB(t, "master")}).Config
+	cfg = labReadWith(t, map[string]*sql.DB{"repllab": labDB(t, "master")}).Config
 	pullSubscription(t, cfg)
 	withPull := func(p string) bool {
 		return labOwn(p) || strings.HasPrefix(p, "publications[m_pp]")
 	}
 	if got := uncoveredNils(cfg, withPull); len(got) != 0 {
 		t.Errorf("Sales with the pull subscription: properties not exported: %q", got)
+	}
+	checkLabMaps(t, "Sales with the pull subscription", cfg)
+
+	labScripts(t, "pull-shared", "pull-shared-agent1.sql")
+	cfg = labReadWith(t, map[string]*sql.DB{"repllab": labDB(t, "master")}).Config
+	shared := false
+	for _, a := range cfg.Publisher.SharedPullAgents {
+		if strings.EqualFold(a.Database, "m_pssub") {
+			shared = true
+		}
+	}
+	if !shared {
+		t.Fatal("no shared pull agent for m_pssub")
+	}
+	withShared := func(p string) bool {
+		return withPull(p) || strings.HasPrefix(p, "publications[m_ps1]") ||
+			strings.HasPrefix(p, "publications[m_ps2]") || strings.HasPrefix(p, sharedPullPath)
+	}
+	if got := uncoveredNils(cfg, withShared); len(got) != 0 {
+		t.Errorf("Sales with the shared pull agent: properties not exported: %q", got)
+	}
+	checkLabMaps(t, "Sales with the shared pull agent", cfg)
+}
+
+// identity_range_management is read the way sp_helparticle derives it: manual
+// when the identity column is NOT FOR REPLICATION, none otherwise, a table
+// without an identity column included.
+func TestReadLabIdentityRangeManagement(t *testing.T) {
+	labScripts(t, "idr")
+	cfg := labRead(t).Config
+	got := map[string]string{}
+	for _, p := range cfg.Publications {
+		if p.Name != "m_idr" {
+			continue
+		}
+		for _, a := range p.Articles {
+			v := "<nil>"
+			if a.IdentityRangeManagement != nil {
+				v = *a.IdentityRangeManagement
+			}
+			got[a.Name] = v
+		}
+	}
+	want := map[string]string{"m_id0": "none", "m_idm": "manual", "m_idn": "none"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("identity_range_management = %v, want %v", got, want)
+	}
+	for _, f := range findingsUnder(cfg, "publications[m_idr].articles") {
+		t.Errorf("unexpected finding %s %s: %s", f.Kind, f.Path, f.Message)
 	}
 }
