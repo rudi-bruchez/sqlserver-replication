@@ -297,21 +297,24 @@ type rootListing struct {
 // fromListings fills the folder, the run folders, unlisted and noRun of
 // pub from the listings of its roots at T (R50, R50a). A folder found in
 // no listing: for a publication the plan creates, nothing (an empty
-// listing); for one that exists before the plan, noRun when a listing
-// shows <root>/unc (the root is readable and the publication has no run
+// listing); for one that exists before the plan, noRun when every listing
+// shows its <root>/unc (a root that lists 0 rows beside one that shows unc
+// could hold the old runs: Task 12 review, Important 1) (the root is readable and the publication has no run
 // yet: a folder that cannot be read still shows as a child of its parent,
 // measured by the controller on repllab with chmod 000), else unlisted,
 // "snapshot folder of <publication> cannot be listed at <roots>" (a
 // missing or unreadable root lists 0 rows).
 func (m *moment) fromListings(ls []rootListing, publisher, database, pub string) {
-	unc := false
+	// Every root must show its unc directory (fix round 2 of Task 12): a
+	// root that lists 0 rows may hold old runs the engine cannot see.
+	unc := len(ls) > 0
 	var roots []string
 	for _, l := range ls {
 		roots = append(roots, l.root)
 		path, err := pubFolder(l.entries, l.root, publisher, database, pub)
 		switch {
 		case isNoFolder(err):
-			unc = unc || hasUnc(l.entries, l.root)
+			unc = unc && hasUnc(l.entries, l.root)
 			continue
 		case err != nil:
 			m.unlisted = err.Error()

@@ -420,6 +420,21 @@ func TestNoRunYet(t *testing.T) {
 			t.Errorf("%s: no run %v, unlisted %q, want %q", c.name, m.noRun, m.unlisted, noFolder)
 		}
 	}
+	// Two roots (the plan changes the root): every one must show unc. The
+	// old root listing 0 rows may hold runs the engine cannot see (review
+	// of fix round 1, Important 1).
+	const newRoot = "/var/opt/mssql/data/NewRepl"
+	withUnc := func(root string) []fsEntry { return []fsEntry{dir(root+"/", "unc")} }
+	m = moment{}
+	m.fromListings([]rootListing{{newRoot, withUnc(newRoot)}, {labRoot, nil}}, "repllab", "m_pdb_x", "m_p")
+	if want := "snapshot folder of m_p cannot be listed at " + newRoot + " and " + labRoot; m.noRun || m.unlisted != want {
+		t.Errorf("new root with unc, old root 0 rows: no run %v, unlisted %q, want %q", m.noRun, m.unlisted, want)
+	}
+	m = moment{}
+	m.fromListings([]rootListing{{newRoot, withUnc(newRoot)}, {labRoot, withUnc(labRoot)}}, "repllab", "m_pdb_x", "m_p")
+	if !m.noRun || m.unlisted != "" || len(m.listing) != 0 {
+		t.Errorf("both roots with unc and no folder: %+v, want no run yet", m)
+	}
 	// A publication the plan creates: an empty listing, never unlisted.
 	m = moment{created: true}
 	m.fromListings([]rootListing{{labRoot, nil}}, "repllab", "m_pdb_x", "m_p")

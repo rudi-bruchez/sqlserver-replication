@@ -30,6 +30,13 @@ type fakeServer struct {
 	// failRestore makes every sp_update_job with @enabled = 1 fail
 	// (TestRunFailedRestore).
 	failRestore bool
+	// failDisable makes every sp_update_job with @enabled = 0 fail, as a
+	// disable that committed while its call returned an error
+	// (TestRunArmsBeforeDisable).
+	failDisable bool
+	// echoSecret makes every statement with a bound secret fail with a
+	// server message that holds the bound value (TestRunMasksEchoedSecret).
+	echoSecret bool
 }
 
 func (f *fakeServer) add(b string) {
@@ -81,7 +88,15 @@ func (c *applyFakeConn) Prepare(q string) (driver.Stmt, error) {
 func (*applyFakeConn) Close() error              { return nil }
 func (*applyFakeConn) Begin() (driver.Tx, error) { return nil, fmt.Errorf("fake: no transactions") }
 
-func (c *applyFakeConn) ExecContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Result, error) {
+func (c *applyFakeConn) ExecContext(_ context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
+	if c.f.echoSecret {
+		for _, a := range args {
+			if strings.HasPrefix(a.Name, "secret_") {
+				c.f.add("exec " + q)
+				return nil, mssql.Error{Number: 50000, Class: 16, Message: fmt.Sprintf("the value %v is refused", a.Value)}
+			}
+		}
+	}
 	if strings.HasPrefix(q, "USE ") {
 		c.f.add(q)
 		return driver.RowsAffected(0), nil
@@ -91,6 +106,9 @@ func (c *applyFakeConn) ExecContext(_ context.Context, q string, _ []driver.Name
 		c.f.add("exec " + q)
 		if c.f.failRestore && strings.Contains(q, "@enabled = 1") {
 			return nil, fmt.Errorf("fake: restore refused")
+		}
+		if c.f.failDisable && strings.Contains(q, "@enabled = 0") {
+			return nil, fmt.Errorf("fake: disable refused")
 		}
 		return driver.RowsAffected(0), nil
 	}
@@ -612,5 +630,121 @@ func TestRunFailedRestore(t *testing.T) {
 	}
 	if len(res.JobsLeftDisabled) != 1 {
 		t.Errorf("jobs left disabled %v, want the snapshot agent's\n%s", res.JobsLeftDisabled, out.String())
+	}
+}
+
+// jobPlan is a plan of REPLLAB.Sales: a job_disable of SalesPub's snapshot
+// job, an online operation, and the job_restore (Task 12 fix round 2).
+func jobPlan() *plan.Plan {
+	job := func(seq, step int, kind, action, enabled string) plan.Operation {
+		return plan.Operation{Seq: seq, Step: step, Kind: kind, Action: action, Path: "publications[SalesPub].snapshot_agent",
+			Server: "REPLLAB", Database: "msdb", Affects: plan.Affects{Publications: []string{"SalesPub"}},
+			Call: plan.Call{Procedure: "msdb.dbo.sp_update_job", Prologue: "DECLARE @job_id uniqueidentifier;",
+				Params: []plan.Param{{Name: "@job_id", Value: "@job_id"}, {Name: "@enabled", Value: enabled}}},
+			Costs: []plan.Cost{plan.CostOnline}}
+	}
+	return &plan.Plan{Publisher: "REPLLAB", Database: "Sales", DistributionDB: "distribution",
+		SnapshotJobs: map[string]string{"SalesPub": "DECLARE @job_id uniqueidentifier;"},
+		Operations: []plan.Operation{
+			job(1, 0, "job_disable", "disable", "0"),
+			opOf(2, "publication_property", "change", "publications[SalesPub].retention"),
+			job(3, 12, "job_restore", "restore", "1"),
+		},
+		Totals: plan.Totals{Operations: 3, ByCost: map[plan.Cost]int{plan.CostOnline: 3}}}
+}
+
+// index is the position of the first batch of log that starts with
+// prefix and holds part, -1 when there is none.
+func index(log []string, prefix, part string) int {
+	for i, b := range log {
+		if strings.HasPrefix(b, prefix) && strings.Contains(b, part) {
+			return i
+		}
+	}
+	return -1
+}
+
+// TestRunUnlocksAfterRestores: on a way out, the restores run before the
+// lock is released (R45: the unlock runs after the restores).
+func TestRunUnlocksAfterRestores(t *testing.T) {
+	db, f := newFakeServer(t)
+	var out bytes.Buffer
+	tg := Target{Server: "REPLLAB", Database: "Sales", Servers: Servers{"REPLLAB": db},
+		Plan: func(context.Context) (*plan.Plan, error) { return jobPlan(), nil }}
+	res, err := Run(context.Background(), tg, Options{Wait: time.Minute, Timeout: 5 * time.Second, AutoApprove: true, Out: &out,
+		BeforeStatement: func(seq int) error {
+			if seq == 2 {
+				return fmt.Errorf("stop at 2")
+			}
+			return nil
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := f.log()
+	restore := index(log, "exec ", "@enabled = 1")
+	unlock := index(log, "unlock ", lockResource)
+	if res.Outcome != OutcomeFailed || restore < 0 || unlock < 0 || restore > unlock {
+		t.Errorf("outcome %s, restore at %d, unlock at %d, want the restore before the unlock: %q", res.Outcome, restore, unlock, log)
+	}
+}
+
+// TestRunArmsBeforeDisable: a job_disable whose call returns an error may
+// have committed, so its restore is armed before it is sent and runs on
+// the way out (R48, panel XD, XN).
+func TestRunArmsBeforeDisable(t *testing.T) {
+	db, f := newFakeServer(t)
+	f.failDisable = true
+	var out bytes.Buffer
+	tg := Target{Server: "REPLLAB", Database: "Sales", Servers: Servers{"REPLLAB": db},
+		Plan: func(context.Context) (*plan.Plan, error) { return jobPlan(), nil }}
+	res, err := Run(context.Background(), tg, Options{Wait: time.Minute, Timeout: 5 * time.Second, AutoApprove: true, Out: &out})
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := f.log()
+	disable := index(log, "exec ", "@enabled = 0")
+	restore := index(log, "exec ", "@enabled = 1")
+	if res.Outcome != OutcomeFailed || res.Failure == nil || res.Failure.Seq != 1 || disable < 0 || restore < disable {
+		t.Errorf("outcome %s, failure %+v, disable at %d, restore at %d, want a failure at 1 and its restore after it: %q\n%s",
+			res.Outcome, res.Failure, disable, restore, log, out.String())
+	}
+	if fmt.Sprint(res.Ran) != "[3]" || len(res.JobsLeftDisabled) != 0 {
+		t.Errorf("ran %v, jobs left disabled %v, want [3] and none", res.Ran, res.JobsLeftDisabled)
+	}
+}
+
+// TestRunMasksEchoedSecret: a server message that echoes a bound value is
+// masked in the output and in the Failure (R53).
+func TestRunMasksEchoedSecret(t *testing.T) {
+	db, f := newFakeServer(t)
+	f.echoSecret = true
+	const value = "p'w;--d"
+	op := opOf(1, "publication_property", "change", "publications[SalesPub].password")
+	op.Call.Params = append(op.Call.Params, plan.Param{Name: "@password", Secret: "SQLREPL_SQL_M"})
+	p := &plan.Plan{Publisher: "REPLLAB", Database: "Sales", DistributionDB: "distribution",
+		Operations: []plan.Operation{op},
+		Secrets:    []plan.SecretUse{{Name: "SQLREPL_SQL_M", Set: true, Operations: []int{1}}},
+		Totals:     plan.Totals{Operations: 1, ByCost: map[plan.Cost]int{plan.CostOnline: 1}}}
+	var out bytes.Buffer
+	tg := Target{Server: "REPLLAB", Database: "Sales", Servers: Servers{"REPLLAB": db},
+		Plan: func(context.Context) (*plan.Plan, error) { return p, nil }}
+	res, err := Run(context.Background(), tg, Options{Wait: time.Minute, Timeout: 5 * time.Second, AutoApprove: true, Out: &out,
+		Secret: func(name string) (string, bool) { return value, name == "SQLREPL_SQL_M" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if index(f.log(), "exec ", "@password = @secret_1") < 0 {
+		t.Fatalf("the statement with the secret was not sent: %q", f.log())
+	}
+	o := out.String()
+	if res.Outcome != OutcomeFailed || res.Failure == nil || res.Failure.Number != 50000 {
+		t.Fatalf("outcome %s, failure %+v\n%s", res.Outcome, res.Failure, o)
+	}
+	if strings.Contains(o, value) || strings.Contains(res.Failure.Message, value) {
+		t.Errorf("the bound value is printed:\n%s\nfailure %q", o, res.Failure.Message)
+	}
+	if !strings.Contains(o, "  failed: Msg 50000: the value **** is refused\n") {
+		t.Errorf("output lacks the masked failure line:\n%s", o)
 	}
 }
