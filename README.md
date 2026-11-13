@@ -162,6 +162,8 @@ Output, on standard output, each line with fixed words:
 |---|---|
 | `lock taken on SERVER.DATABASE` | each lock taken |
 | the summary of `plan`, then the question | before any operation |
+| `refused: precondition NAME OBJECT at SERVER is STATUS: DETAIL` | after the summary, each precondition that stops the run (step 4) |
+| `secret NAME is not set` | after the summary, each secret of the plan whose variable is missing or empty |
 | `[SEQ/N] ACTION KIND PATH at SERVER, database DATABASE` | before each statement, followed by its text, each line indented two spaces |
 | `  ok (MS ms)` | a statement that succeeded |
 | `  18752 tolerated, KIND PATH re-read` | a drop or `sync_method` change that returned 18752, done all the same as a re-read shows |
@@ -173,6 +175,8 @@ Output, on standard output, each line with fixed words:
 | `started KIND PUBLICATION` or `KIND PUBLICATION already running` | each agent start, a distribution agent followed by `SUBSCRIBER/DATABASE` |
 | `delivery PUBLICATION to SUBSCRIBER/DATABASE: ...` | each delivery owed, at the end: `confirmed (run FOLDER\RUN)`, `unconfirmed (REASON; job STATE; last history: COMMENTS)` or `not awaited` |
 | `job left disabled: JOB` | a snapshot job whose restore failed: enable it by hand |
+| `lock lost with the connection` | a lock whose session ended with its connection |
+| `lock release failed on SERVER.DATABASE: MESSAGE` | a lock release that failed (exit 1) |
 | `Failed at operation SEQ: Msg NUMBER: MESSAGE`, `Remaining: SEQ LIST` | a run that stopped before its last operation |
 | `Applied RAN of N operations; deliveries: K confirmed, U unconfirmed, A not awaited.` | last, for a run that got past the question |
 
@@ -196,7 +200,7 @@ Known limits:
 
 - The check of a subscription created with `initialization: lsn` reads `msdb.dbo.restorehistory`, which keys on the destination name: a backup restored under a temporary name and then renamed into place is checked against an older restore of the target name, whose LSN it accepts.
 - The snapshot folder of a publisher on a named instance (a name with `\`) is not measured: its deliveries are reported `unconfirmed`, and apply exits 3.
-- The distributor is the publisher's own instance: a remote distributor is out of scope for now.
+- Setting up a remote distributor is out of scope for now (R17): apply connects to an existing remote distributor and locks it like a local one, but the plan refuses to create its configuration.
 
 Required permissions: those of `plan`, those of every call the plan runs, and, at each server where it runs a job operation, the permission to update and start the agent jobs in `msdb`, which the `msdb job permission` precondition checks.
 

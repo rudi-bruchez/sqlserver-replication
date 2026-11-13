@@ -34,6 +34,10 @@ func TestApplyFlags(t *testing.T) {
 		if code := runApply([]string{"-f", "x.yaml", "-auto-approve", bad}, nil, &bytes.Buffer{}, &stderr); code != 2 {
 			t.Errorf("%s: exit %d, want 2 (a usage error)", bad, code)
 		}
+		// The message once: the flag package prints it (minor 10).
+		if n := strings.Count(stderr.String(), "flag provided but not defined"); n != 1 {
+			t.Errorf("%s: message printed %d times:\n%s", bad, n, stderr.String())
+		}
 	}
 }
 
@@ -75,6 +79,26 @@ func TestConfirmer(t *testing.T) {
 		if got := strings.Count(out.String(), "Apply? Type yes to apply: "); got != 1 || out.Len() != len("Apply? Type yes to apply: ") {
 			t.Errorf("%q: question written %d times, output %q", in, got, out.String())
 		}
+	}
+	// Through the run's writer, a question that no line ended (end of
+	// input, Ctrl-C) is followed by a newline (minor 2).
+	const q = "Apply? Type yes to apply: "
+	for in, want := range map[string]string{"yes\n": q, "no\n": q, "": q + "\n", "yes": q + "\n"} {
+		var out bytes.Buffer
+		if _, err := confirmer(strings.NewReader(in), &promptWriter{w: &out})(q); err != nil {
+			t.Fatal(err)
+		}
+		if out.String() != want {
+			t.Errorf("%q: output %q, want %q", in, out.String(), want)
+		}
+	}
+	var out bytes.Buffer
+	pw := &promptWriter{w: &out}
+	pw.prompt(q)
+	fmt.Fprintln(pw, "Apply cancelled.")
+	fmt.Fprintln(pw, "next")
+	if want := q + "\nApply cancelled.\nnext\n"; out.String() != want {
+		t.Errorf("interrupt at the question: %q, want %q", out.String(), want)
 	}
 }
 

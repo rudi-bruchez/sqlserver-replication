@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/rudi-bruchez/sqlserver-replication/internal/apply"
@@ -92,16 +93,17 @@ func runApply(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	intr := make(chan os.Signal, 1)
 	signal.Notify(intr, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(intr)
+	out := &promptWriter{w: stdout}
 	o := apply.Options{
 		Wait:        f.wait,
 		Timeout:     f.timeout,
 		AutoApprove: f.autoApprove,
 		Secret:      secretEnv,
-		Out:         stdout,
+		Out:         out,
 		Interrupt:   intr,
 	}
 	if !f.autoApprove {
-		o.Confirm = confirmer(stdin, stdout)
+		o.Confirm = confirmer(stdin, out)
 	}
 	res, err := applyRun(ctx, t, o)
 	if err != nil {
@@ -113,8 +115,10 @@ func runApply(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 // servers is Target.Servers: every subscriber to its pool, the distributor
-// to its pool and the publisher to its master pool, the publisher set last
-// so that it keeps its own pool when a name is also a subscriber's.
+// to its pool and the publisher to its master pool. The publisher is set
+// last, which decides only an identical key: apply's session folds names to
+// lower case and keeps the first of a case variant in sorted order, whose
+// pool reaches the same server (the -server lookup ignores case).
 func (w *wiring) servers() apply.Servers {
 	s := apply.Servers{}
 	for name, db := range w.subs {
@@ -148,17 +152,71 @@ func (w *wiring) distributionDB(ctx context.Context) (string, error) {
 }
 
 // confirmer is Options.Confirm (R44): it writes the question, reads one
-// line, and is true only for the line yes.
+// line, and is true only for the line yes. Through a promptWriter, the
+// question stays open until a line ends it, so that what is printed next
+// (Apply cancelled. after Ctrl-C or end of input) starts on a line of its
+// own.
 func confirmer(r io.Reader, w io.Writer) func(string) (bool, error) {
 	br := bufio.NewReader(r)
 	return func(question string) (bool, error) {
-		if _, err := io.WriteString(w, question); err != nil {
+		pw, _ := w.(*promptWriter)
+		var err error
+		if pw != nil {
+			err = pw.prompt(question)
+		} else {
+			_, err = io.WriteString(w, question)
+		}
+		if err != nil {
 			return false, err
 		}
 		line, err := br.ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
 			return false, err
 		}
+		if pw != nil {
+			// A terminated line was echoed by the terminal; one ended by
+			// end of input was not.
+			pw.answered(strings.HasSuffix(line, "\n"))
+		}
 		return strings.TrimRight(line, "\r\n") == "yes", nil
 	}
+}
+
+// promptWriter is standard output during a run: after a question no line
+// has ended, it writes a newline before anything else.
+type promptWriter struct {
+	mu   sync.Mutex
+	w    io.Writer
+	open bool // a question awaits its line
+}
+
+func (p *promptWriter) Write(b []byte) (int, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.open && len(b) > 0 {
+		p.open = false
+		if _, err := io.WriteString(p.w, "\n"); err != nil {
+			return 0, err
+		}
+	}
+	return p.w.Write(b)
+}
+
+func (p *promptWriter) prompt(question string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_, err := io.WriteString(p.w, question)
+	p.open = err == nil
+	return err
+}
+
+// answered closes the question: echoed tells that the terminal ended its
+// line, else the newline is written now.
+func (p *promptWriter) answered(echoed bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.open && !echoed {
+		io.WriteString(p.w, "\n")
+	}
+	p.open = false
 }

@@ -81,7 +81,11 @@ func parseFlags(command string, args []string, stderr io.Writer) (*planFlags, er
 		fs.DurationVar(&f.timeout, "timeout", 2*time.Minute, "timeout of each connection and of the read that follows them")
 	}
 	if err := fs.Parse(args); err != nil {
-		return nil, err
+		if errors.Is(err, flag.ErrHelp) {
+			return nil, err
+		}
+		// The flag package has printed it, with the usage.
+		return nil, printedError{err}
 	}
 	if fs.NArg() > 0 {
 		return nil, fmt.Errorf("unexpected argument %q", fs.Arg(0))
@@ -99,9 +103,17 @@ func usageExit(err error, stderr io.Writer) int {
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
-	fmt.Fprintln(stderr, "sqlrepl:", err)
+	if !errors.As(err, new(printedError)) {
+		fmt.Fprintln(stderr, "sqlrepl:", err)
+	}
 	return 2
 }
+
+// printedError is a flag error the flag package has printed already: a
+// usage error prints its message once.
+type printedError struct{ error }
+
+func (e printedError) Unwrap() error { return e.error }
 
 // errorExit prints an error that ends a command and returns 1.
 func errorExit(err error, stderr io.Writer) int {
