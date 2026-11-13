@@ -230,9 +230,29 @@ func TestLabDeferFullSnapshot(t *testing.T) {
 		t.Errorf("notes of the deferral plan %q, want %q", p.Notes, want)
 	}
 
-	// apply's generate_and_wait waits for the delivery of m_t2 before the
-	// restore of immediate_sync (R51).
+	// apply waits for the delivery of m_t2 before the restore of
+	// immediate_sync (R51, spec "-defer-full-snapshot" step 3). On the lab
+	// a restore before the delivery does not block it, so the data checks
+	// cannot see the order: it is read when the restore is sent.
+	hooked := 0
+	e.hook = func(op plan.Operation) {
+		prop, _ := param(op, "@property")
+		val, _ := param(op, "@value")
+		if procedure(op) != "sp_changepublication" || prop != "N'immediate_sync'" || val != "N'true'" {
+			return
+		}
+		hooked++
+		var n int
+		err := e.master.QueryRow(e.replace("SELECT COUNT(*) FROM {sub}.dbo.m_t2")).Scan(&n)
+		if err != nil || n != 20 {
+			t.Errorf("operation %d restores immediate_sync before the delivery of m_t2: %d rows (%v), want 20", op.Seq, n, err)
+		}
+	}
 	res := e.apply(t, des, plan.Options{DeferFullSnapshot: true, Wait: 10 * time.Minute}, apply.OutcomeApplied)
+	e.hook = nil
+	if hooked != 1 {
+		t.Errorf("the restore of immediate_sync was sent %d times through the hook, want 1", hooked)
+	}
 	e.wantDelivered(t, res, "m_pi")
 	e.deliveries = []delivery{{"m_t2", 20}}
 	e.checkDelivered(t)
@@ -281,7 +301,25 @@ func TestLabPullSubscription(t *testing.T) {
 	}
 	jobsAround(t, p)
 	wantAgents(t, p, []plan.AgentRef{snapshotRef("m_pp"), e.pullRef("m_pp")})
+	// R51: the pull agent's job_start is sent only once the generation has
+	// ended; a pull agent started before exits without delivering. The
+	// second start (again) would hide a start in plan order from the data
+	// checks, so the order is read when the statement is sent.
+	hooked := 0
+	e.hook = func(op plan.Operation) {
+		if op.Kind != "job_start" || !strings.HasSuffix(op.Path, ".pull_agent") {
+			return
+		}
+		hooked++
+		if why := e.generationEnded("m_pp"); why != "" {
+			t.Errorf("operation %d %s sent before the generation of m_pp ended: %s", op.Seq, op.Path, why)
+		}
+	}
 	res := e.apply(t, des, plan.Options{}, apply.OutcomeApplied)
+	e.hook = nil
+	if hooked != 1 {
+		t.Errorf("the pull agent's job_start was sent %d times through the hook, want 1", hooked)
+	}
 	e.wantDelivered(t, res, "m_pp")
 	e.deliveries = []delivery{{"m_t1", 20}}
 	e.checkDelivered(t)

@@ -421,6 +421,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 
 - Expected: adding an article to an `immediate_sync` publication regenerates every article and delivers the whole publication again, unless the generation is deferred.
 - Observed: with the sequence `allow_anonymous` and `immediate_sync` off, add the article, named extension of the subscription, run the snapshot agent, `immediate_sync` and `allow_anonymous` back on, a `native` publication generates only the added articles ("A snapshot of 2 article(s)") and the data of the existing subscription is not delivered again. The next scheduled run of the snapshot agent then makes the full `immediate_sync` generation ("A snapshot of 3 article(s)") and still does not deliver it again to the real subscription. The same sequence combined with a `sync_method` change from `native` to `concurrent` generates every article and reinitializes the subscriber.
+- Also observed: restoring `immediate_sync` and `allow_anonymous` right after the generation of the added articles, before the distribution agent had delivered it (the subscriber table not yet created), did not block the delivery: the running push agent delivered the new article alone a few seconds later, apply confirmed it, and the next plan was empty. Measured on 4 runs of `TestLabDeferFullSnapshot` with apply's wait for the deferral's deliveries removed (plan 4 Task 11 break step, 2022 CU27, 2026-11-13); in one of them the agent had already delivered before the restore. `apply` keeps the spec's order (wait for the deliveries, then restore) as the conservative rule, not because a measurement needs it.
 - Source: measured, plan 3 task 12 and task 13 reviews, 2022 CU27 (2026-11-12); see also "Restoring immediate_sync too early" and "sync_method changes".
 
 ### Latest generation folder and last delivered folder
@@ -811,6 +812,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected: a pull agent started too early waits for the snapshot or fails.
 - Observed: a pull agent's job has no schedule (on demand). Started before the snapshot generation has ended, it runs once, finds no snapshot and exits without delivering; a second start after the generation delivers.
 - Also observed: repeating `msdb.dbo.sp_start_job` on the pull job every 3 s, and reading 22022 as "already running", delivered after 1 or 2 accepted starts, in 6 to 12 s. Source: Task 19 and Task 20 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
+- Also observed: the pull agent that exits too early writes, as its last history row, "The initial snapshot for article 'm_t1' is not yet available." Started in plan order right after the snapshot start, the trap bit in two runs of three; in the third the single-table snapshot was ready before the agent got there (plan 4 Task 11 break step, 2026-11-13).
 - Source: Task 15 review of plan 3, measured on 2022 CU27 (2026-11-12).
 
 ### Where the pull procedures run

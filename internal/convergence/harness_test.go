@@ -35,6 +35,14 @@ type env struct {
 	// deliveries is what startAndWait and a generate_and_wait operation
 	// wait for, set by the test before it calls them.
 	deliveries []delivery
+	// hook, when set, is called by e.apply before apply sends each
+	// statement (Options.BeforeStatement), with the operation; it fails the
+	// test itself (t.Errorf) and never stops the run.
+	hook func(op plan.Operation)
+	// applied is the plan apply built under its locks, and applyT the
+	// server's GETDATE() when it was read: what a hook compares with.
+	applied *plan.Plan
+	applyT  time.Time
 }
 
 // delivery is a subscriber table and the row count it must reach.
@@ -387,11 +395,15 @@ func (e *env) target(des *model.Config, opt plan.Options) apply.Target {
 		if distErr != nil {
 			return nil, fmt.Errorf("distribution database: %w", distErr)
 		}
+		if err := e.master.QueryRowContext(ctx, "SELECT GETDATE()").Scan(&e.applyT); err != nil {
+			return nil, err
+		}
 		in, err := e.read(ctx, des)
 		if err != nil {
 			return nil, err
 		}
-		return plan.Build(in, opt), nil
+		e.applied = plan.Build(in, opt)
+		return e.applied, nil
 	}
 	return t
 }
@@ -405,8 +417,18 @@ const applyWait = 5 * time.Minute
 func (e *env) apply(t *testing.T, des *model.Config, opt plan.Options, want apply.Outcome) *apply.Result {
 	t.Helper()
 	out := &lineLog{t: t}
-	res, err := apply.Run(context.Background(), e.target(des, opt), apply.Options{
-		Wait: applyWait, AutoApprove: true, Secret: secretEnv, Out: out})
+	o := apply.Options{Wait: applyWait, AutoApprove: true, Secret: secretEnv, Out: out}
+	if e.hook != nil {
+		o.BeforeStatement = func(seq int) error {
+			for _, op := range e.applied.Operations {
+				if op.Seq == seq {
+					e.hook(op)
+				}
+			}
+			return nil
+		}
+	}
+	res, err := apply.Run(context.Background(), e.target(des, opt), o)
 	out.flush()
 	if err != nil {
 		t.Fatalf("apply: %v", err)
@@ -450,6 +472,36 @@ func (e *env) checkDelivered(t *testing.T) {
 	for _, d := range e.deliveries {
 		e.waitRows(t, d.table, d.want, checkTimeout)
 	}
+}
+
+// generationEnded tells whether the generation of pub that apply's run
+// started has ended at this moment (R51): its snapshot job reads idle
+// (plan.JobIdle through the plan's lookup) and MSsnapshot_history has a
+// completed row (runstatus 2, "[100%] A snapshot of <n> article(s) was
+// generated.") of a run started after the plan was read. It returns why
+// not, "" when it has.
+func (e *env) generationEnded(pub string) string {
+	lookup, ok := e.applied.SnapshotJobLookup(pub)
+	if !ok {
+		return "no snapshot job lookup for " + pub
+	}
+	var idle int
+	if err := e.master.QueryRow(lookup + "\nSELECT CASE WHEN " + plan.JobIdle + " THEN 1 ELSE 0 END;").Scan(&idle); err != nil {
+		return "job idle read: " + err.Error()
+	}
+	var done int
+	err := e.master.QueryRow(`SELECT COUNT(*) FROM distribution.dbo.MSsnapshot_history AS h
+JOIN distribution.dbo.MSsnapshot_agents AS a ON a.id = h.agent_id
+WHERE a.publisher_db = @db AND a.publication = @pub AND h.runstatus = 2 AND h.start_time >= @t`,
+		sql.Named("db", e.db), sql.Named("pub", pub), sql.Named("t", e.applyT)).Scan(&done)
+	if err != nil {
+		return "snapshot history read: " + err.Error()
+	}
+	if idle != 1 || done == 0 {
+		return fmt.Sprintf("snapshot job idle %d, completed runs since %s: %d",
+			idle, e.applyT.Format("15:04:05.000"), done)
+	}
+	return ""
 }
 
 // lineLog is Options.Out: each line apply prints goes to t.Log.

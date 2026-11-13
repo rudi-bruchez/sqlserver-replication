@@ -752,6 +752,31 @@ func (t *tracker) describe(ctx context.Context, s *session, p *plan.Plan) {
 			r.jobState = "running"
 		case states["idle"]:
 			r.jobState = "idle"
+		default:
+			// A pull agent's job is at its subscriber, where the distributor's
+			// msdb does not have it: read it there, through the lookup of the
+			// plan's job_start of that agent (Task 11 fix round 1).
+			if op, ok := pullStartFor(p, r.Publication, r.Subscription); ok {
+				if c, err := s.conn(ctx, op.Server); err == nil {
+					var idle int
+					if c.QueryRowContext(ctx, idleQuery(op.Call.Prologue)).Scan(&idle) == nil {
+						r.jobState = map[int]string{0: "running", 1: "idle"}[idle]
+					}
+				}
+			}
 		}
 	}
+}
+
+// pullStartFor is the plan's job_start of the pull agent of a
+// subscription, whose prologue finds the job at the subscriber.
+func pullStartFor(p *plan.Plan, publication, subscription string) (plan.Operation, bool) {
+	for _, op := range p.Operations {
+		if op.Kind == "job_start" && strings.HasSuffix(op.Path, ".pull_agent") && op.Call.Prologue != "" &&
+			strings.EqualFold(firstString(op.Affects.Publications), publication) &&
+			hasFold(op.Affects.Subscriptions, subscription) {
+			return op, true
+		}
+	}
+	return plan.Operation{}, false
 }

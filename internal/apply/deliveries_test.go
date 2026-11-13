@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rudi-bruchez/sqlserver-replication/internal/plan"
 )
 
 // The unit tests of the deliveries owed (R50). The listings are shaped as
@@ -349,5 +351,26 @@ func TestApplyQueriesParse(t *testing.T) {
 	}
 	if n == 0 {
 		t.Fatal("no query parsed")
+	}
+}
+
+// The unconfirmed line of a pull delivery reads the job at the subscriber
+// through the plan's job_start of that pull agent (Task 11 fix round 1).
+func TestPullStartFor(t *testing.T) {
+	start := func(seq int, path, pub, sub, prologue string) plan.Operation {
+		return plan.Operation{Seq: seq, Kind: "job_start", Path: path, Server: "SUBSRV", Call: plan.Call{Prologue: prologue},
+			Affects: plan.Affects{Publications: []string{pub}, Subscriptions: []string{sub}}}
+	}
+	p := &plan.Plan{Operations: []plan.Operation{
+		start(1, "publications[P].snapshot_agent", "P", "", "DECLARE @job_id uniqueidentifier;"),
+		start(2, "publications[P].subscriptions[SUBSRV/D].distribution_agent", "P", "SUBSRV/D", "DECLARE @job_id uniqueidentifier;"),
+		start(3, "publications[Q].subscriptions[SUBSRV/D].pull_agent", "Q", "SUBSRV/D", "DECLARE @job_id uniqueidentifier;"),
+		start(4, "publications[P].subscriptions[SUBSRV/D].pull_agent", "P", "SUBSRV/D", "DECLARE @job_id uniqueidentifier;"),
+	}}
+	if op, ok := pullStartFor(p, "p", "subsrv/D"); !ok || op.Seq != 4 {
+		t.Errorf("pullStartFor(p, subsrv/D) = %d %v, want operation 4", op.Seq, ok)
+	}
+	if _, ok := pullStartFor(p, "P", "SUBSRV/E"); ok {
+		t.Errorf("pullStartFor found a job_start for a subscription the plan does not start")
 	}
 }

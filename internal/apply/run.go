@@ -34,7 +34,9 @@ type Options struct {
 	Out           io.Writer
 	Interrupt     <-chan os.Signal // nil: none
 	// BeforeStatement is a test hook (Task 12): an error stops the run
-	// before that statement, as a failure.
+	// before that statement, as a failure. It fires when the statement is
+	// about to be sent: for a held job_start of step 12, after the wait for
+	// its generation (R51). A second start (again) does not call it.
 	BeforeStatement func(seq int) error
 }
 
@@ -1090,14 +1092,17 @@ func (r *runner) heldPhase() bool {
 			r.stop(OutcomeInterrupted, nil)
 			return false
 		}
+		if r.o.Wait > 0 && !r.awaitGeneration(op) {
+			return false
+		}
+		// The hook fires when the statement is sent, after the wait for
+		// its generation (Task 11 fix round 1: the scenario's hook reads
+		// the generation's end at that moment).
 		if r.o.BeforeStatement != nil {
 			if err := r.o.BeforeStatement(op.Seq); err != nil {
 				r.failStep(op.Seq, err)
 				return false
 			}
-		}
-		if r.o.Wait > 0 && !r.awaitGeneration(op) {
-			return false
 		}
 		if !r.runAgentStart(op, false) {
 			return false
