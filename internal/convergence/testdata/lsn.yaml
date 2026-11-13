@@ -1,0 +1,35 @@
+# The publication m_p of {db}: m_t1, allow_initialize_from_backup, pushed
+# to {sub} initialized from the LSN {lsn}, the last_lsn of the COPY_ONLY
+# backup of {db} that lsn-setup.sql restores over {sub} (R57, 10-init-modes
+# I3). The test writes the LSN, and first applies the file without its
+# subscription: the backup is taken once the publication exists, as I3
+# takes it.
+# The snapshot agent's schedule never fires. The distributor is the lab's,
+# not compared (R4).
+version: 2
+publisher:
+  server: {server}
+  database: {db}
+publications:
+  - name: m_p
+    type: transactional
+    status: active
+    sync_method: native
+    independent_agent: true
+    immediate_sync: false
+    allow_initialize_from_backup: true
+    snapshot_agent:
+      schedules:
+        - frequency: once
+          start_date: 99991231
+    articles:
+      - name: m_t1
+        source:
+          schema: dbo
+          name: m_t1
+    subscriptions:
+      - subscriber: {server}
+        database: {sub}
+        type: push
+        initialization: lsn
+        lsn: "{lsn}"

@@ -3,7 +3,11 @@
 -- the errors are returned at the end. The order: the pull subscriptions,
 -- subscriber first (lab/campaign/08-pull.sh, P3.subscriber-first), the
 -- subscriptions at the publisher with @article = N'all', the publications,
--- the profiles {prof}, the publish option, then the two databases.
+-- the profiles {prof}, the publish option, the two databases, then what
+-- the apply scenarios of Task 12 add: the login {login} (its sessions
+-- killed first: a distribution agent may still be connected as it), the
+-- backup and restore history of the two databases and the backup file
+-- {bak}.
 SET NOCOUNT ON;
 USE master;
 DECLARE @errors nvarchar(max) = N'';
@@ -120,6 +124,38 @@ BEGIN TRY
 END TRY
 BEGIN CATCH
     SET @errors += N'DROP DATABASE {db}: ' + ERROR_MESSAGE() + NCHAR(10);
+END CATCH;
+
+BEGIN TRY
+    DECLARE @kill nvarchar(max) = N'';
+    SELECT @kill += N'KILL ' + CONVERT(nvarchar(10), session_id) + N';'
+    FROM sys.dm_exec_sessions WHERE login_name = N'{login}';
+    IF @kill <> N'' EXEC (@kill);
+    IF SUSER_ID(N'{login}') IS NOT NULL
+        DROP LOGIN [{login}];
+END TRY
+BEGIN CATCH
+    SET @errors += N'DROP LOGIN {login}: ' + ERROR_MESSAGE() + NCHAR(10);
+END CATCH;
+
+BEGIN TRY
+    IF EXISTS (SELECT 1 FROM msdb.dbo.backupset WHERE database_name IN (N'{db}', N'{sub}'))
+        OR EXISTS (SELECT 1 FROM msdb.dbo.restorehistory WHERE destination_database_name IN (N'{db}', N'{sub}'))
+    BEGIN
+        EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = N'{db}';
+        EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = N'{sub}';
+    END;
+END TRY
+BEGIN CATCH
+    SET @errors += N'sp_delete_database_backuphistory: ' + ERROR_MESSAGE() + NCHAR(10);
+END CATCH;
+
+BEGIN TRY
+    IF EXISTS (SELECT 1 FROM sys.dm_os_file_exists(N'{bak}') WHERE file_exists = 1)
+        EXEC master.sys.xp_delete_files N'{bak}';
+END TRY
+BEGIN CATCH
+    SET @errors += N'xp_delete_files {bak}: ' + ERROR_MESSAGE() + NCHAR(10);
 END CATCH;
 
 IF @errors <> N''

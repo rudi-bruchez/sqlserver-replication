@@ -39,6 +39,12 @@ type env struct {
 	// statement (Options.BeforeStatement), with the operation; it fails the
 	// test itself (t.Errorf) and never stops the run.
 	hook func(op plan.Operation)
+	// stop, when set, is called after hook; its error stops the run before
+	// that statement, as Options.BeforeStatement's does.
+	stop func(op plan.Operation) error
+	// vars are placeholders of the test's own, replaced in its files after
+	// those of every test.
+	vars map[string]string
 	// applied is the plan apply built under its locks, and applyT the
 	// server's GETDATE() when it was read: what a hook compares with.
 	applied *plan.Plan
@@ -142,9 +148,22 @@ func labEnv(t *testing.T, name string) *env {
 
 // replace substitutes the placeholders of a test file.
 func (e *env) replace(s string) string {
-	return strings.NewReplacer("{server}", e.server, "{db}", e.db, "{sub}", e.sub,
-		"{prof}", "m_prof_"+e.name).Replace(s)
+	s = strings.NewReplacer("{server}", e.server, "{db}", e.db, "{sub}", e.sub,
+		"{prof}", "m_prof_"+e.name, "{login}", e.login(), "{bak}", e.backupFile()).Replace(s)
+	for k, v := range e.vars {
+		s = strings.ReplaceAll(s, k, v)
+	}
+	return s
 }
+
+// login is the SQL login a test may create, m_login_<name> (Task 12):
+// teardown.sql drops it.
+func (e *env) login() string { return "m_login_" + e.name }
+
+// backupFile is the backup a test may write of {db} (Task 12):
+// teardown.sql deletes it and the backup and restore history of {db} and
+// {sub}.
+func (e *env) backupFile() string { return "/var/opt/mssql/data/" + e.db + ".bak" }
 
 // script runs a script of testdata on conn, batch by batch, split on the
 // lines that hold only GO, its placeholders replaced.
@@ -216,17 +235,23 @@ func (e *env) teardown(t *testing.T) error {
 // jobs (REPLLAB-m_pdb_create-49, REPLLAB-m_pdb_create-m_p-2356,
 // repllab-m_pdb_create-m_p-repllab-2321, read on the lab), so the match
 // is on "-<db>-": a bare substring would also take the jobs of a test whose
-// name extends this one's (create and createx).
+// name extends this one's (create and createx). Task 12 adds the login
+// m_login_<name>, the backup file of {db} and the backup and restore
+// history of the two databases.
 const residueQuery = `
 SELECT N'database ' + name FROM sys.databases WHERE name IN (@db, @sub)
 UNION ALL SELECT N'publication ' + publication FROM distribution.dbo.MSpublications WHERE publisher_db = @db
 UNION ALL SELECT N'subscription to ' + subscriber_db FROM distribution.dbo.MSsubscriptions WHERE subscriber_db = @sub OR publisher_db = @db
 UNION ALL SELECT N'job ' + name FROM msdb.dbo.sysjobs WHERE CHARINDEX(N'-' + @db + N'-', name) > 0 OR CHARINDEX(N'-' + @sub + N'-', name) > 0
-UNION ALL SELECT N'profile ' + profile_name FROM msdb.dbo.MSagent_profiles WHERE profile_name = @prof`
+UNION ALL SELECT N'profile ' + profile_name FROM msdb.dbo.MSagent_profiles WHERE profile_name = @prof
+UNION ALL SELECT N'login ' + name FROM sys.server_principals WHERE name = @login
+UNION ALL SELECT N'backup history of ' + database_name FROM msdb.dbo.backupset WHERE database_name IN (@db, @sub)
+UNION ALL SELECT N'restore history of ' + destination_database_name FROM msdb.dbo.restorehistory WHERE destination_database_name IN (@db, @sub)
+UNION ALL SELECT N'backup file ' + @bak FROM sys.dm_os_file_exists(@bak) WHERE file_exists = 1`
 
 func (e *env) residue() ([]string, error) {
 	rows, err := e.master.Query(residueQuery, sql.Named("db", e.db), sql.Named("sub", e.sub),
-		sql.Named("prof", "m_prof_"+e.name))
+		sql.Named("prof", "m_prof_"+e.name), sql.Named("login", e.login()), sql.Named("bak", e.backupFile()))
 	if err != nil {
 		return nil, err
 	}
@@ -411,25 +436,49 @@ func (e *env) target(des *model.Config, opt plan.Options) apply.Target {
 // applyWait is R60's -wait.
 const applyWait = 5 * time.Minute
 
-// apply runs des through apply.Run (R60): auto-approved, -wait 5 minutes,
-// every line it prints to t.Log. It fails the test unless the run ends
-// with want and, for applied, with every delivery owed confirmed.
-func (e *env) apply(t *testing.T, des *model.Config, opt plan.Options, want apply.Outcome) *apply.Result {
-	t.Helper()
+// applyRun runs des through apply.Run (R60): auto-approved, -wait 5
+// minutes, unless edit changes the options, every line it prints to t.Log
+// and returned. It never fails the test, and may run in a goroutine.
+func (e *env) applyRun(t *testing.T, des *model.Config, opt plan.Options, edit func(*apply.Options)) (*apply.Result, []string, error) {
 	out := &lineLog{t: t}
 	o := apply.Options{Wait: applyWait, AutoApprove: true, Secret: secretEnv, Out: out}
-	if e.hook != nil {
+	if e.hook != nil || e.stop != nil {
 		o.BeforeStatement = func(seq int) error {
 			for _, op := range e.applied.Operations {
-				if op.Seq == seq {
+				if op.Seq != seq {
+					continue
+				}
+				if e.hook != nil {
 					e.hook(op)
+				}
+				if e.stop != nil {
+					return e.stop(op)
 				}
 			}
 			return nil
 		}
 	}
+	if edit != nil {
+		edit(&o)
+	}
 	res, err := apply.Run(context.Background(), e.target(des, opt), o)
 	out.flush()
+	return res, out.lines, err
+}
+
+// apply is applyRun with the default options. It fails the test unless
+// the run ends with want and, for applied, with every delivery owed
+// confirmed.
+func (e *env) apply(t *testing.T, des *model.Config, opt plan.Options, want apply.Outcome) *apply.Result {
+	t.Helper()
+	res, _, err := e.applyRun(t, des, opt, nil)
+	e.wantRun(t, res, err, want)
+	return res
+}
+
+// wantRun is the check of e.apply on a run of applyRun.
+func (e *env) wantRun(t *testing.T, res *apply.Result, err error, want apply.Outcome) {
+	t.Helper()
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -451,7 +500,6 @@ func (e *env) apply(t *testing.T, des *model.Config, opt plan.Options, want appl
 				res.JobsLeftDisabled, res.LockLost, res.LockReleaseFailures)
 		}
 	}
-	return res
 }
 
 // wantDelivered checks that res holds exactly one confirmed delivery per
@@ -517,10 +565,12 @@ WHERE a.publisher_db = @db AND a.publication = @pub AND h.runstatus = 2 AND h.st
 	return ""
 }
 
-// lineLog is Options.Out: each line apply prints goes to t.Log.
+// lineLog is Options.Out: each line apply prints goes to t.Log, and is
+// kept in lines.
 type lineLog struct {
-	t   *testing.T
-	buf []byte
+	t     *testing.T
+	buf   []byte
+	lines []string
 }
 
 func (w *lineLog) Write(b []byte) (int, error) {
@@ -531,6 +581,7 @@ func (w *lineLog) Write(b []byte) (int, error) {
 			return len(b), nil
 		}
 		w.t.Log(string(w.buf[:i]))
+		w.lines = append(w.lines, string(w.buf[:i]))
 		w.buf = w.buf[i+1:]
 	}
 }
@@ -538,6 +589,7 @@ func (w *lineLog) Write(b []byte) (int, error) {
 func (w *lineLog) flush() {
 	if len(w.buf) > 0 {
 		w.t.Log(string(w.buf))
+		w.lines = append(w.lines, string(w.buf))
 		w.buf = nil
 	}
 }
