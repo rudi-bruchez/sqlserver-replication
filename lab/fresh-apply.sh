@@ -24,8 +24,10 @@
 #                     "no changes.", else rc<code> and the line
 #   FA.file_plan      sqlrepl plan of the same create.yaml, read the same way
 # The sa password reaches sqlrepl through SQLREPL_PASSWORD, the admin password through its
-# own variable; neither is on a command line. Every sqlrepl call gets -env with a missing
-# file, so that no .env of the working directory is read.
+# own variable; neither is on a command line. The apply and plan calls get -env with a
+# missing file, so that no .env of the working directory is read (export has no -env and
+# reads none). create.yaml omits working_directory, so the delivery is confirmed through
+# the root apply reads at the distributor (R50b).
 #
 # It writes lab/results/VERSION/fresh-apply.txt in the result format only when every row
 # has its expected value; otherwise it prints the rows on stderr and exits 1. On success
@@ -117,6 +119,8 @@ conn=(-user sa -param encrypt=disable -env "$noenv")
 
 rows=()
 r() { rows+=("R|$1|$2|$3"); }
+# The expected values, which the controls at the end compare and the details print.
+want_delivered=20
 
 # first_line FILE: the first line of a plan's output, for the rows and the detail.
 first_line() { sed -n '1p' "$1"; }
@@ -139,7 +143,7 @@ cat "$work/apply.out"
 r FA.apply "$rc" "expected=0 last_line=$(tail -n 1 "$work/apply.out")"
 
 delivered=$(sql_value "SELECT COUNT(*) FROM m_fresh_sub.dbo.m_t1" 2>/dev/null) || delivered=error
-r FA.delivered "$delivered" "expected=20 table=m_fresh_sub.dbo.m_t1"
+r FA.delivered "$delivered" "expected=$want_delivered table=m_fresh_sub.dbo.m_t1"
 
 rc=0
 "$bin" export -publisher "$address" -database m_fresh_pub -server "$server=$address" \
@@ -162,7 +166,7 @@ cat "$work/file-plan.out"
 plan_row FA.file_plan "$rc" "$work/file-plan.out"
 
 # Controls.
-expected=(FA.apply=0 FA.delivered=20 "FA.export_plan=no changes" "FA.file_plan=no changes")
+expected=(FA.apply=0 "FA.delivered=$want_delivered" "FA.export_plan=no changes" "FA.file_plan=no changes")
 bad=0
 for i in "${!expected[@]}"; do
     id=${expected[$i]%%=*} want=${expected[$i]#*=}

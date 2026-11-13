@@ -4,7 +4,9 @@
 # password (model.SecretName: SQLREPL_SQL_<server>_DISTRIBUTOR_ADMIN).
 # From an instance with no replication: the local distributor (R17), the
 # publication m_p of m_fresh_pub with the article m_t1, and its push
-# subscription to m_fresh_sub on the same instance.
+# subscription to m_fresh_sub on the same instance. working_directory is
+# omitted, as in a common file: sp_adddistpublisher takes its default, and
+# apply reads that root at the distributor to confirm the delivery (R50b).
 version: 2
 publisher:
   server: {server}
@@ -12,7 +14,6 @@ publisher:
 distributor:
   server: {server}
   database: distribution
-  working_directory: /var/opt/mssql/ReplData
   admin_password_secret: {admin_secret}
 publications:
   - name: m_p
