@@ -143,6 +143,7 @@ type tracker struct {
 	servers     string // {servers}: "" for MSreplservers, else fallbackServers
 	probed      bool
 	records     []*record
+	roots       map[string]string // by publication, the root read at T when the plan gives none (R50b)
 	lines       map[lineKey]line
 	order       []lineKey // lines in the order seen
 }
@@ -153,7 +154,7 @@ type tracker struct {
 // Publisher: Build has checked it equal to the publisher's @@SERVERNAME
 // without regard to case (R7), and the folder match ignores case.
 func newTracker(distributor, publisher string) *tracker {
-	return &tracker{distributor: distributor, publisher: publisher, lines: map[lineKey]line{}}
+	return &tracker{distributor: distributor, publisher: publisher, roots: map[string]string{}, lines: map[lineKey]line{}}
 }
 
 // keep adds a line not seen yet.
@@ -257,10 +258,19 @@ func concurrentMethod(ctx context.Context, s *session, p *plan.Plan, pub string)
 // exists before the plan and whose folder no root shows can never be
 // confirmed, unless a root's listing shows its unc directory (R50a,
 // fromListings); one the plan creates has no run before T, and its folder
-// is identified by a later poll.
+// is identified by a later poll. A publication whose plan gives no root is
+// listed under the publisher's working_directory read now (R50b).
 func (t *tracker) list(ctx context.Context, s *session, p *plan.Plan, pub string, m *moment) error {
+	root := p.SnapshotRoots[pub]
+	if root == "" {
+		var err error
+		if root, err = t.publisherRoot(ctx, s); err != nil {
+			return err
+		}
+		t.roots[pub] = root
+	}
 	var roots []string
-	for _, r := range []string{p.SnapshotRoots[pub], p.SnapshotRootsBefore[pub]} {
+	for _, r := range []string{root, p.SnapshotRootsBefore[pub]} {
 		if r == "" {
 			continue
 		}
@@ -286,6 +296,25 @@ func (t *tracker) list(ctx context.Context, s *session, p *plan.Plan, pub string
 	}
 	m.fromListings(ls, t.publisher, p.Database, pub)
 	return nil
+}
+
+// publisherRoot reads the publisher's working_directory at the distributor
+// (R50b): the root of a publication whose plan gives none, because the file
+// omitted working_directory and the distributor took its default (Task 13).
+// "" when the row is missing or NULL: the root stays unknown.
+func (t *tracker) publisherRoot(ctx context.Context, s *session) (string, error) {
+	conn, err := s.conn(ctx, t.distributor)
+	if err != nil {
+		return "", err
+	}
+	var wd sql.NullString
+	switch err := conn.QueryRowContext(ctx, qPublisherRoot, t.publisher).Scan(&wd); {
+	case errors.Is(err, sql.ErrNoRows):
+		return "", nil
+	case err != nil:
+		return "", fmt.Errorf("read the working_directory of %s: %w", t.publisher, err)
+	}
+	return wd.String, nil
 }
 
 // rootListing is the listing of one snapshot root at T.
@@ -633,6 +662,9 @@ func (t *tracker) distStatus(ctx context.Context, conn *sql.Conn, p *plan.Plan, 
 // record unconfirmed.
 func (t *tracker) identify(ctx context.Context, s *session, p *plan.Plan, r *record) error {
 	root := p.SnapshotRoots[r.Publication]
+	if root == "" {
+		root = t.roots[r.Publication] // read at T (R50b)
+	}
 	if root == "" {
 		r.unlisted = fmt.Sprintf("snapshot folder of %s cannot be listed: its snapshot root is unknown", r.Publication)
 		return nil

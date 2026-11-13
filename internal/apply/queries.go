@@ -118,6 +118,13 @@ WHERE a.id = @p1`
 	qListing = `
 SELECT full_filesystem_path, parent_directory, file_or_directory_name, CAST(is_directory AS int)
 FROM sys.dm_os_enumerate_filesystem(@p1, N'*')`
+
+	// The publisher's working_directory at the distributor (R50b), read at
+	// T for a publication whose plan gives no snapshot root: the file
+	// omitted working_directory, and the distributor took its default. The
+	// name compares without regard to case. @p1 the publisher.
+	qPublisherRoot = `
+SELECT working_directory FROM msdb.dbo.MSdistpublishers WHERE UPPER(name) = UPPER(@p1)`
 )
 
 // Queries run at the publisher, in the publication database.
