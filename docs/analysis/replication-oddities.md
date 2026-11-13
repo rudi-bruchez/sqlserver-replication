@@ -471,6 +471,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected (panel C): recursive, level 1 names without their parent, 0 rows for a missing folder.
 - Observed: the listing is recursive and `level` counts from the children of the folder listed, which are level 0. Listing `<working_directory>` (as R50 does): `unc` 0, the publication folders 1, the run folders 2, the files 3, which is panel C's reading; listing `<working_directory>/unc`: the publication folders 0, the run folders 1, the files 2. A rule therefore matches on `parent_directory` and `full_filesystem_path`, never on a level number. `file_or_directory_name` never holds a path; on Linux `parent_directory` always ends with `/` and the separator is `/`, so a run folder's `parent_directory` is its publication folder's `full_filesystem_path` plus `/` (a Windows distributor is not measured). The publication folder is named `<SERVER>_<DATABASE>_<PUBLICATION>` upper-cased, a space kept (`REPLLAB_M_PR_DB_M_PR SP` for database `m_pr_Db` and publication `m_pr sp`, Task 3 review probe 2): compare it without regard to case, or with the name read from the listing. The argument with or without a trailing slash lists the same rows, and a folder that does not exist gives 0 rows and no error. Columns: `full_filesystem_path`, `parent_directory`, `file_or_directory_name`, `level`, `is_directory`, `is_read_only`, `is_system`, `is_hidden`, `has_integrity_stream`, `is_temporary`, `is_sparse`, `creation_time`, `last_access_time`, `last_write_time`, `size_in_bytes`.
 - Source: measured, `21-deliveries DL.listing` (plan 4 Task 3, 2022 CU27, Linux, 2026-11-12).
+- Also observed: on Linux, a folder the server cannot read (`chmod 000`) is listed as a child of its parent; only its own children are missing. A missing folder lists 0 rows, with no error. So when the parent is listed, a child absent from the listing is really absent, while missing children of a listed folder do not prove it is empty. Source: plan 4 Task 12, measured on 2022 CU27, container repllab (2026-11-13).
 
 ### Snapshot folder names are not unique by suffix
 
@@ -636,6 +637,12 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected: the LSN a database restored from a backup starts from has to be read from the backup file.
 - Observed: the `msdb.dbo.restorehistory` row of the restored database, joined to `backupset`, gives the backup's `last_lsn` (the same `backupset` row as the backup file's media family); that row's `database_name` is the source database and its `server_name` equals `@@SERVERNAME`, in the same case. `sys.dm_db_log_stats(...).log_end_lsn` is text of the form `XXXXXXXX:XXXXXXXX:XXXX`, upper-case hexadecimal.
 - Source: measured, `20-apply AP.lsn.restorehistory`, `AP.lsn.backupset_database`, `AP.lsn.log_end_format`. A backup restored on another instance is not measured.
+
+### A push subscription initialized from a restored backup
+
+- Expected: a subscription created with `@sync_type = N'initialize from lsn'` needs a snapshot, or replaces what the subscriber holds.
+- Observed: it delivered with no snapshot history. The subscriber database was a `COPY_ONLY` backup of the publisher database restored over an existing subscriber database `WITH REPLACE`, and a row held only at the subscriber survived the delivery. The publication was created before the backup, as in the measured `I3` order; a backup taken before the publication is not measured.
+- Source: measured, plan 4 Task 12, 2022 CU27, container repllab (2026-11-13).
 
 ### A restore stopped at a point in time
 
@@ -1268,6 +1275,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Also observed: `sp_droppublication` raised its 18752 from `sys.sp_replcmds`, nested in the call, twice, with `@@TRANCOUNT` 0; the publication and its jobs were gone afterward. Source: Task 19 and Task 20 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 - Also observed: not only drops. `sp_changepublication @property = 'sync_method'` to `concurrent` with `@force_reinit_subscription = 1`, on a `native` publication whose log reader runs, returned Msg 18752 with `@@TRANCOUNT` 0, 3 times out of 3. `syspublications.sync_method` was 3 (`concurrent`) afterward: the change was stored despite the error. Until then 18752 had been recorded only on drops. Source: Task 19 and Task 20 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 - Also observed: `sp_replicationdboption @optname = N'publish', @value = N'false'` right after `sp_droppublication` of the database's last publication returned 18752 (the log reader's session still connected); it succeeded on a retry a few seconds later, or dropping the database cleared it. Source: Task 16 review of plan 3, measured on 2022 CU27 (2026-11-12).
+- Also observed: `sp_reinitsubscription @article = N'all'` returned Msg 18752 while the log reader ran, and the subscription was marked for reinitialization all the same: its rows read status 1 afterward. Measured twice. Another procedure of the `O14` family, neither a drop nor a change of publication. Source: plan 4 Task 12, measured on 2022 CU27, container repllab (2026-11-13).
 - Source: measured, `O14` (Claude, controller, fix review), `O21`, panel 3 Opus; `13-transient T01` to `T10`; `06-structural C5.*`.
 
 ### Deadlock during subscription drops
