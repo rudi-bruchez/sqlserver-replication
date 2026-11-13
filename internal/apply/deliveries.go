@@ -64,7 +64,8 @@ const (
 
 // parseDelivered reads the publication folder and the run of a "Delivered
 // snapshot" line; ok is false for any other comment. A name with a space
-// is kept (O19). The separator is \ on the lab; / is accepted too.
+// is kept (O19). Only \ is measured as the separator (the lab, Linux
+// included); / is accepted too, unmeasured.
 func parseDelivered(comments string) (pubFolder, run string, ok bool) {
 	if !strings.HasPrefix(comments, deliveredPrefix) {
 		return "", "", false
@@ -127,6 +128,7 @@ type lineKey struct {
 // kept.
 type tracker struct {
 	distributor string // the distributor's server name, its pinned connection
+	publisher   string // the publisher's name, the first part of its folder names
 	servers     string // {servers}: "" for MSreplservers, else fallbackServers
 	probed      bool
 	records     []*record
@@ -135,9 +137,12 @@ type tracker struct {
 }
 
 // newTracker reads at distributor, the server name of the distributor as
-// the file writes it.
-func newTracker(distributor string) *tracker {
-	return &tracker{distributor: distributor, lines: map[lineKey]line{}}
+// the file writes it, and names the snapshot folders after publisher, the
+// publisher's name (fix round 1 of Task 8). Task 9 passes the plan's
+// Publisher: Build has checked it equal to the publisher's @@SERVERNAME
+// without regard to case (R7), and the folder match ignores case.
+func newTracker(distributor, publisher string) *tracker {
+	return &tracker{distributor: distributor, publisher: publisher, lines: map[lineKey]line{}}
 }
 
 // keep adds a line not seen yet.
@@ -212,19 +217,26 @@ func (t *tracker) take(ctx context.Context, s *session, p *plan.Plan, pub string
 	if err := t.list(ctx, s, p, pub, &m); err != nil {
 		return m, err
 	}
-	pc, err := t.publisher(ctx, s, p)
+	m.concurrent, err = concurrentMethod(ctx, s, p, pub)
+	return m, err
+}
+
+// concurrentMethod tells whether the sync_method of pub is concurrent or
+// concurrent_c (codes 3 and 4), read at the publisher; false when the
+// publication does not exist.
+func concurrentMethod(ctx context.Context, s *session, p *plan.Plan, pub string) (bool, error) {
+	conn, err := s.connIn(ctx, p.Publisher, p.Database)
 	if err != nil {
-		return m, err
+		return false, err
 	}
 	var method int
-	switch err := pc.QueryRowContext(ctx, qSyncMethod, pub).Scan(&method); {
+	switch err := conn.QueryRowContext(ctx, qSyncMethod, pub).Scan(&method); {
 	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
 	case err != nil:
-		return m, fmt.Errorf("read the sync_method of %s: %w", pub, err)
-	default:
-		m.concurrent = method == 3 || method == 4
+		return false, fmt.Errorf("read the sync_method of %s: %w", pub, err)
 	}
-	return m, nil
+	return method == 3 || method == 4, nil
 }
 
 // list fills the folder and the run folders of pub at T. When the plan
@@ -256,7 +268,7 @@ func (t *tracker) list(ctx context.Context, s *session, p *plan.Plan, pub string
 		if err != nil {
 			return err
 		}
-		path, err := pubFolder(entries, root, p.Database, pub)
+		path, err := pubFolder(entries, root, t.publisher, p.Database, pub)
 		switch {
 		case isNoFolder(err):
 			continue
@@ -290,12 +302,6 @@ func firstString(xs []string) string {
 		return ""
 	}
 	return xs[0]
-}
-
-// publisher is the publisher's pinned connection in the publication
-// database.
-func (t *tracker) publisher(ctx context.Context, s *session, p *plan.Plan) (*sql.Conn, error) {
-	return s.connIn(ctx, p.Publisher, p.Database)
 }
 
 // connIn is the pinned connection of server with database current.
@@ -466,11 +472,14 @@ func splitKey(key string) (subscriber, database string) {
 	return subscriber, database
 }
 
-// poll is one pass (R50): for every record still pending, its agent rows
-// until found, the history lines of its agents above its mark, kept; the
-// status of its MSsubscriptions rows under concurrent and concurrent_c;
-// the folder of a publication the plan creates, until identified. Then
-// every pending record is matched against every kept line.
+// poll is one pass (R50): for every record still pending, its agent rows,
+// read again at every pass so that a shared agent recreated after a pass is
+// seen (DL.shared_readd measured a new id); the history lines of its agents
+// above its mark, kept; the publication's sync_method, read again at every
+// pass so that the gate follows a change made after the record, and under
+// concurrent and concurrent_c the status of its MSsubscriptions rows; the
+// folder of a publication the plan creates, until identified. Then every
+// pending record is matched against every kept line.
 func (t *tracker) poll(ctx context.Context, s *session, p *plan.Plan) error {
 	servers, err := t.serversTable(ctx, s, p)
 	if err != nil {
@@ -485,18 +494,20 @@ func (t *tracker) poll(ctx context.Context, s *session, p *plan.Plan) error {
 			continue
 		}
 		sub, subDB := splitKey(r.Subscription)
-		if len(r.agents) == 0 {
-			ids, err := t.agentRows(ctx, conn, p, servers, r.Publication, sub, subDB)
-			if err != nil {
-				return err
-			}
-			r.agents = ids
+		ids, err := t.agentRows(ctx, conn, p, servers, r.Publication, sub, subDB)
+		if err != nil {
+			return err
 		}
+		r.agents = ids
 		for _, a := range r.agents {
 			if err := t.history(ctx, conn, p, a, r.Mark); err != nil {
 				return err
 			}
 		}
+		if r.Concurrent, err = concurrentMethod(ctx, s, p, r.Publication); err != nil {
+			return err
+		}
+		r.concurrentOK = false
 		if r.Concurrent {
 			ok, err := t.distStatus(ctx, conn, p, servers, r.Publication, sub, subDB)
 			if err != nil {
@@ -582,7 +593,14 @@ func (t *tracker) identify(ctx context.Context, s *session, p *plan.Plan, r *rec
 	if err != nil {
 		return err
 	}
-	path, err := pubFolder(entries, root, p.Database, r.Publication)
+	r.identifyIn(entries, root, t.publisher, p.Database)
+	return nil
+}
+
+// identifyIn sets the folder of r from a listing of root: found, its name;
+// absent, nothing yet; not identified, r can never be confirmed.
+func (r *record) identifyIn(entries []fsEntry, root, publisher, database string) {
+	path, err := pubFolder(entries, root, publisher, database, r.Publication)
 	switch {
 	case isNoFolder(err):
 	case err != nil:
@@ -590,7 +608,6 @@ func (t *tracker) identify(ctx context.Context, s *session, p *plan.Plan, r *rec
 	default:
 		r.Folder = folderName(path)
 	}
-	return nil
 }
 
 // confirm matches every pending record against the kept lines, in the
@@ -639,8 +656,10 @@ func (t *tracker) pending(pub string) []owed {
 }
 
 // results is the outcome of every delivery owed, in the order recorded:
-// confirmed with its run, or, with notAwaited (-wait 0, R52), not_awaited,
-// otherwise unconfirmed with the reason.
+// confirmed with its run; unconfirmed with its reason when it can never be
+// confirmed (its folder not identified or not listable), with notAwaited
+// too, since waiting would not have changed it; otherwise, with notAwaited
+// (-wait 0, R52), not_awaited, else unconfirmed with the reason.
 func (t *tracker) results(notAwaited bool) []Delivery {
 	out := make([]Delivery, 0, len(t.records))
 	for _, r := range t.records {
@@ -648,6 +667,8 @@ func (t *tracker) results(notAwaited bool) []Delivery {
 		switch {
 		case r.run != "":
 			d.Status, d.Run = deliveryConfirmed, r.run
+		case r.unlisted != "":
+			d.Status, d.Detail = deliveryUnconfirmed, r.unlisted
 		case notAwaited:
 			d.Status = deliveryNotAwaited
 		default:

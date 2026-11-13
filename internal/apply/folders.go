@@ -8,19 +8,26 @@ import (
 	"strings"
 )
 
-// The folder rule of R50 (panel C): a publication's snapshot folder is
-// found from its own path, never from a "Delivered snapshot" line, which a
-// shared agent writes for every publication it serves. The listing is
-// sys.dm_os_enumerate_filesystem of the snapshot root (Task 3, row
-// DL.listing and lab/README.md "Deliveries"): recursive, levels counted
-// from the children of the folder listed, so that a level number moves
-// with the argument and is never matched on. The folder is the directory
-// whose parent_directory is <root>/unc/ and whose name ends with
-// _<database>_<publication>, without regard to case (SQL Server writes the
-// name upper-cased, spaces kept); its runs are the directories whose
-// parent_directory is the folder's full path. Separators are matched
-// whatever they are, / or \: the Linux lab writes /, and a Windows
-// distributor is not measured.
+// The folder rule of R50 (panel C, amended by the controller in fix round
+// 1 of Task 8): a publication's snapshot folder is found from its own path,
+// never from a "Delivered snapshot" line, which a shared agent writes for
+// every publication it serves. The listing is sys.dm_os_enumerate_filesystem
+// of the snapshot root (Task 3, row DL.listing and lab/README.md
+// "Deliveries"): recursive, levels counted from the children of the folder
+// listed, so that a level number moves with the argument and is never
+// matched on. The folder is the one directory whose parent_directory is
+// <root>/unc/ and whose whole name is <PUBLISHER>_<DB>_<PUB> without regard
+// to case (SQL Server writes it upper-cased, spaces kept), PUBLISHER the
+// publisher's name, which Build has checked equal to its @@SERVERNAME
+// without regard to case (R7); its runs are the directories whose
+// parent_directory is the folder's full path. A suffix _<DB>_<PUB> is not
+// enough: folder names are not unique by suffix (x_m_db_m_p of m_db has the
+// folder REPLLAB_M_DB_X_M_DB_M_P, which ends with _M_DB_M_P, and two
+// publishers with the same database and publication names share a root).
+// The folder form of a named instance (SRV\INST) is not measured: such a
+// publisher's folder is never identified. Separators are matched whatever
+// they are, / or \: the Linux lab writes /, and a Windows distributor is
+// not measured.
 
 // fsEntry is one row of the listing, the columns of DL.listing the rule
 // uses.
@@ -58,16 +65,21 @@ func normPath(p string) string {
 }
 
 // pubFolder is the full path of the publication's folder in a listing of
-// root: the one directory whose parent is <root>/unc and whose name ends
-// with _<database>_<publication>, without regard to case. None is an
+// root: the one directory whose parent is <root>/unc and whose name is
+// <publisher>_<database>_<publication>, without regard to case. None is an
 // errNoFolder, "snapshot folder of <publication> cannot be listed at
-// <root>"; several are "snapshot folder of <publication> not identified".
-func pubFolder(entries []fsEntry, root, database, publication string) (string, error) {
+// <root>"; several (names differing in case) are "snapshot folder of
+// <publication> not identified", and so is a publisher name with a \ (a
+// named instance, whose folder form is not measured).
+func pubFolder(entries []fsEntry, root, publisher, database, publication string) (string, error) {
+	if strings.Contains(publisher, `\`) {
+		return "", fmt.Errorf("snapshot folder of %s not identified: the folder form of a named instance is not measured", publication)
+	}
 	unc := normPath(root) + "/unc"
-	suffix := strings.ToLower("_" + database + "_" + publication)
+	name := publisher + "_" + database + "_" + publication
 	var found []string
 	for _, e := range entries {
-		if e.IsDir && samePath(e.Parent, unc) && strings.HasSuffix(strings.ToLower(e.Name), suffix) {
+		if e.IsDir && samePath(e.Parent, unc) && strings.EqualFold(e.Name, name) {
 			found = append(found, e.FullPath)
 		}
 	}
