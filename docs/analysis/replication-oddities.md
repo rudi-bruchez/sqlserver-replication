@@ -947,6 +947,12 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Observed: dropping a publication with its distribution agent running can leave one history row whose agent is gone, depending on whether the agent writes one more row after its agent row is gone; the same case showed both outcomes across runs.
 - Source: measured, `13-transient T03` to `T06`, `T10` (`orphan_dist_history` 0 or 1), lab README "Reading the results files".
 
+### A snapshot job owned by a non-sysadmin login
+
+- Expected: a snapshot agent job whose owner is an ordinary login runs, or fails with a message that says so where one looks for the failed agent.
+- Observed: the job fails at once. Its step 2 history row reads "Non-SysAdmins have been denied permission to run replication jobsteps without a proxy account" and steps 1 and 3 carry error 14260. The job outcome row (step 0) names only the last step that ran: "The job failed.  The Job was invoked by User sa.  The last step to run was step 3 (Detect nonlogged agent shutdown.).", so the cause is in the failed step's own row. Meanwhile the distribution agent reports only "The initial snapshot for article 'm_t4' is not yet available.", and the log of the generation shows no run. A tool or a reader that follows the distribution agent debugs the wrong agent.
+- Source: measured on SQL Server 2022 CU27, repllab, in the plan 4 final review of sqlrepl (finding I2, `sp_update_job @owner_login_name` to a non-sysadmin SQL login on the snapshot job, then a plan adding an article), 2026-11-13; the step 0 text and steps 1 and 3 in the fix report.
+
 ## Profiles
 
 ### A new profile
