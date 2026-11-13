@@ -8,8 +8,9 @@ import (
 	"fmt"
 )
 
-// errLocked is the lock held by another session (R45).
-var errLocked = errors.New("another sqlrepl apply holds the lock")
+// ErrLocked is the lock held by another session (R45); Run returns it
+// wrapped, "another sqlrepl apply holds the lock on <server>.<database>".
+var ErrLocked = errors.New("another sqlrepl apply holds the lock")
 
 // lockBatch takes the application lock (R45), the literal batch: without
 // the DECLARE it fails with Msg 137 (panel XD). The resource is bound as
@@ -21,7 +22,7 @@ const lockBatch = "DECLARE @rc int; EXEC @rc = sp_getapplock @Resource = @resour
 const unlockBatch = "DECLARE @rc int; EXEC @rc = sp_releaseapplock @Resource = @resource, @LockOwner = N'Session'; SELECT @rc;"
 
 // lock takes resource in database on conn (R45): USE database, then
-// lockBatch; a return code below 0 is errLocked.
+// lockBatch; a return code below 0 is ErrLocked.
 func lock(ctx context.Context, conn *sql.Conn, database, resource string) error {
 	if _, err := conn.ExecContext(ctx, "USE "+quoteName(database)+";"); err != nil {
 		return fmt.Errorf("USE %s: %w", database, err)
@@ -31,7 +32,7 @@ func lock(ctx context.Context, conn *sql.Conn, database, resource string) error 
 		return err
 	}
 	if rc < 0 {
-		return fmt.Errorf("%w on %s (sp_getapplock returned %d)", errLocked, database, rc)
+		return fmt.Errorf("%w on %s (sp_getapplock returned %d)", ErrLocked, database, rc)
 	}
 	return nil
 }

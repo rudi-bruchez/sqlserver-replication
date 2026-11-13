@@ -171,15 +171,15 @@ func TestLabAppLock(t *testing.T) {
 	if err := s.lock(ctx, labServer, execDB, resource); err != nil {
 		t.Fatalf("lockBatch as written: %v", err)
 	}
-	if err := otherLock(t, other, resource); !errors.Is(err, errLocked) {
-		t.Fatalf("second pool while held: err = %v, want errLocked", err)
+	if err := otherLock(t, other, resource); !errors.Is(err, ErrLocked) {
+		t.Fatalf("second pool while held: err = %v, want ErrLocked", err)
 	}
 
 	if err := s.exec(ctx, stmt(execDB, "BEGIN TRAN; RAISERROR(N'm', 16, 1);"), noSecret); err == nil {
 		t.Fatal("the refused statement succeeded")
 	}
-	if err := otherLock(t, other, resource); !errors.Is(err, errLocked) {
-		t.Fatalf("after a refused call and its rollback: err = %v, want errLocked", err)
+	if err := otherLock(t, other, resource); !errors.Is(err, ErrLocked) {
+		t.Fatalf("after a refused call and its rollback: err = %v, want ErrLocked", err)
 	}
 
 	holder, err := s.conn(ctx, labServer)
@@ -189,8 +189,8 @@ func TestLabAppLock(t *testing.T) {
 	if _, err := holder.ExecContext(ctx, "USE master"); err != nil {
 		t.Fatal(err)
 	}
-	if err := otherLock(t, other, resource); !errors.Is(err, errLocked) {
-		t.Fatalf("after USE master on the holder: err = %v, want errLocked", err)
+	if err := otherLock(t, other, resource); !errors.Is(err, ErrLocked) {
+		t.Fatalf("after USE master on the holder: err = %v, want ErrLocked", err)
 	}
 
 	if err := s.unlock(ctx, labServer, execDB, resource); err != nil {

@@ -43,6 +43,22 @@ const (
 type Failure struct {
 	Seq, Number int // Number 0: not a server error
 	Message     string
+	// Step is the text of the step that wrapped the server error (a read
+	// apply needs, a wait), "" for a statement's own error.
+	Step string
+}
+
+// text is the failure as printed (R53): the step's text, then Msg
+// <number>: <message> for a server error.
+func (f *Failure) text() string {
+	t := f.Message
+	if f.Number != 0 {
+		t = fmt.Sprintf("Msg %d: %s", f.Number, f.Message)
+	}
+	if f.Step != "" {
+		t = f.Step + ": " + t
+	}
+	return t
 }
 
 // Result is what a run did (R52, R53).
@@ -99,22 +115,14 @@ func (r *Result) deliveriesCode() int {
 	return 0
 }
 
-// costOrder is plan's order of the costs (spec "What a plan is"), which
-// the plan package does not export.
-var costOrder = []plan.Cost{
-	plan.CostOnline, plan.CostPendingSnapshotStart, plan.CostNewSnapshot, plan.CostFullGenerationDeferred,
-	plan.CostReadySnapshotDropped, plan.CostReinitialization, plan.CostDropAndReadd,
-	plan.CostSubscriberDataReplaced, plan.CostSubscriberObjectLeft, plan.CostSharedObjectChanged,
-}
-
 // question is the confirmation of R44, exactly: the parenthesis lists
-// Totals.ByCost in costOrder without online, and is left out when no
+// Totals.ByCost in plan.CostOrder() without online, and is left out when no
 // operation is costly.
 func question(p *plan.Plan) string {
 	q := fmt.Sprintf("Apply %d operations to %s.%s, %d costly", p.Totals.Operations, p.Publisher, p.Database, p.Totals.Costly)
 	if p.Totals.Costly > 0 {
 		var parts []string
-		for _, c := range costOrder {
+		for _, c := range plan.CostOrder() {
 			if c == plan.CostOnline {
 				continue
 			}
@@ -166,4 +174,29 @@ func seqList(xs []int) string {
 		parts[i] = fmt.Sprint(x)
 	}
 	return strings.Join(parts, ", ")
+}
+
+// deliveryLine is the end-of-run line of a delivery owed (R53), on one
+// line whatever its history comments hold.
+func deliveryLine(d Delivery) string {
+	line := fmt.Sprintf("delivery %s to %s: ", d.Publication, d.Subscription)
+	switch d.Status {
+	case deliveryConfirmed:
+		return line + "confirmed (run " + d.Run + ")"
+	case deliveryNotAwaited:
+		return line + "not awaited"
+	}
+	state, history := d.JobState, oneLine(d.LastHistory)
+	if state == "" {
+		state = "unknown"
+	}
+	if history == "" {
+		history = "none"
+	}
+	return line + "unconfirmed (" + oneLine(d.Detail) + "; job " + state + "; last history: " + history + ")"
+}
+
+// oneLine flattens the line breaks of a server text.
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(s)), " ")
 }

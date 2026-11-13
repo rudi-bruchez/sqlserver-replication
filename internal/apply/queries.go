@@ -86,6 +86,32 @@ JOIN {servers} AS ss ON ss.srvid = mss.subscriber_id
 WHERE UPPER(ps.srvname) = UPPER(@p1) AND mss.publisher_db = @p2 AND msp.publication = @p3
   AND UPPER(ss.srvname) = UPPER(@p4) AND mss.subscriber_db = @p5 AND mss.subscriber_id >= 0`
 
+	// The last history row of an agent, for the unconfirmed line (R53):
+	// its rowversion, to keep the latest of several agents, and its
+	// comments. @p1 agent id.
+	qLastHistory = `
+SELECT TOP (1) h.[timestamp], ISNULL(h.comments, N'')
+FROM {dist}.dbo.MSdistribution_history AS h
+WHERE h.agent_id = @p1
+ORDER BY h.[timestamp] DESC`
+
+	// The state of an agent's job at the distributor, for the unconfirmed
+	// line (R53): running by plan.JobIdle's test, idle, or unknown when
+	// msdb has no such job there (a pull agent's job is at its
+	// subscriber). @p1 agent id.
+	qAgentJobState = `
+SELECT CASE
+  WHEN j.job_id IS NULL THEN N'unknown'
+  WHEN EXISTS (SELECT 1 FROM msdb.dbo.sysjobactivity AS ja
+               WHERE ja.job_id = j.job_id
+                 AND ja.session_id = (SELECT MAX(ss.session_id) FROM msdb.dbo.syssessions AS ss)
+                 AND (ja.run_requested_date IS NOT NULL OR ja.start_execution_date IS NOT NULL)
+                 AND ja.stop_execution_date IS NULL) THEN N'running'
+  ELSE N'idle' END
+FROM {dist}.dbo.MSdistribution_agents AS a
+LEFT JOIN msdb.dbo.sysjobs AS j ON j.job_id = CAST(a.job_id AS uniqueidentifier)
+WHERE a.id = @p1`
+
 	// The listing of a snapshot root (R50, Task 3 row DL.listing):
 	// recursive, 0 rows and no error for a folder missing, unreadable or
 	// unreachable. Only the columns the folder rule uses. @p1 the root.
@@ -140,6 +166,7 @@ func applyQueries() map[string]string {
 	return map[string]string{
 		"qReplServersProbe": qReplServersProbe, "qTMark": qTMark, "qAgentRow": qAgentRow,
 		"qHistoryAfter": qHistoryAfter, "qDistSubStatus": qDistSubStatus, "qListing": qListing,
+		"qLastHistory": qLastHistory, "qAgentJobState": qAgentJobState,
 		"qSubStatus": qSubStatus, "pendingQuery": pendingQuery,
 		"qImmediateSyncReady": qImmediateSyncReady, "qSyncMethod": qSyncMethod,
 	}

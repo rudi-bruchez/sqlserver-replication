@@ -38,6 +38,11 @@ func restoreFor(p *plan.Plan, disable plan.Operation) (plan.Operation, bool) {
 type jobs struct {
 	armed []int        // Seq of restores, in plan order
 	ran   map[int]bool // Seq of restores run successfully
+	// before and after, when set, print a restore restoreRemaining runs as
+	// any statement is printed (R53, spec anti-goal 2): its line and text
+	// before, its outcome after.
+	before func(seq int)
+	after  func(seq int, t0 time.Time, err error)
 }
 
 // arm records the restore of disable; the caller arms it before the
@@ -105,7 +110,15 @@ func (j *jobs) restoreRemaining(s *session, p *plan.Plan, timeout time.Duration,
 			left = append(left, paths[seq])
 			continue
 		}
-		if err := s.restore(st, timeout, secret); err != nil {
+		if j.before != nil {
+			j.before(seq)
+		}
+		t0 := time.Now()
+		err := s.restore(st, timeout, secret)
+		if j.after != nil {
+			j.after(seq, t0, err)
+		}
+		if err != nil {
 			left = append(left, paths[seq])
 			continue
 		}

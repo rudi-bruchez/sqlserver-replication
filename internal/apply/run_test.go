@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	mssql "github.com/microsoft/go-mssqldb"
+
 	"github.com/rudi-bruchez/sqlserver-replication/internal/plan"
 )
 
@@ -81,6 +83,11 @@ func (c *applyFakeConn) ExecContext(_ context.Context, q string, _ []driver.Name
 		c.f.add(q)
 		return driver.RowsAffected(0), nil
 	}
+	if strings.Contains(q, "EXEC msdb.dbo.sp_update_job") {
+		// The job operations of TestRunRestoreLogged.
+		c.f.add("exec " + q)
+		return driver.RowsAffected(0), nil
+	}
 	c.f.add("exec " + q)
 	return nil, fmt.Errorf("fake: unexpected exec %q", q)
 }
@@ -106,6 +113,10 @@ func (c *applyFakeConn) QueryContext(_ context.Context, q string, args []driver.
 			v = 0
 		}
 		return &applyFakeRows{rows: [][]driver.Value{{v}}}, nil
+	}
+	if strings.HasSuffix(q, "SELECT CASE WHEN "+plan.JobIdle+" THEN 1 ELSE 0 END;") {
+		c.f.add("idle")
+		return &applyFakeRows{rows: [][]driver.Value{{int64(1)}}}, nil
 	}
 	c.f.add("query " + q)
 	return nil, fmt.Errorf("fake: unexpected query %q", q)
@@ -178,6 +189,7 @@ func TestRunRefusals(t *testing.T) {
 		confirm func(sig chan os.Signal) func(string) (bool, error)
 		want    Outcome
 		out     string // a line the output holds
+		noWait  bool   // -wait 0
 	}
 	never := func(called *bool) func(chan os.Signal) func(string) (bool, error) {
 		return func(chan os.Signal) func(string) (bool, error) {
@@ -223,6 +235,12 @@ func TestRunRefusals(t *testing.T) {
 				return true, nil
 			}
 		}, want: OutcomeCancelled, out: "Apply cancelled."},
+		{name: "generate_and_wait with -wait 0", plan: func() *plan.Plan {
+			p := onePlan()
+			p.Operations = append(p.Operations, opOf(2, "generate_and_wait", "start", "publications[SalesPub].snapshot_agent"))
+			p.Totals.Operations = 2
+			return p
+		}, noWait: true, want: OutcomeRefused, out: "refused: -defer-full-snapshot needs -wait above 0"},
 		{name: "agent_profiles without the distributor lock", plan: func() *plan.Plan {
 			p := onePlan()
 			p.Operations = append(p.Operations, opOf(2, "profile", "add", "agent_profiles[m_prof]"))
@@ -248,9 +266,13 @@ func TestRunRefusals(t *testing.T) {
 		done := make(chan struct{})
 		var res *Result
 		var err error
+		wait := time.Minute
+		if c.noWait {
+			wait = 0
+		}
 		go func() {
 			defer close(done)
-			res, err = Run(context.Background(), tg, Options{Wait: time.Minute, Timeout: 5 * time.Second,
+			res, err = Run(context.Background(), tg, Options{Wait: wait, Timeout: 5 * time.Second,
 				Confirm: confirm(sig), Secret: secret, Out: &out, Interrupt: sig})
 		}()
 		select {
@@ -439,5 +461,111 @@ func TestQuestion(t *testing.T) {
 	want = "Apply 5 operations to REPLLAB.Sales, 0 costly? Type yes to apply: "
 	if got := question(p); got != want {
 		t.Errorf("question\n got %q\nwant %q", got, want)
+	}
+}
+
+// A restore run on a way out is a printed statement: it is logged with its
+// line and its outcome, and counted as ran (fix round 1, Important 1).
+func TestRunRestoreLogged(t *testing.T) {
+	db, f := newFakeServer(t)
+	job := func(seq, step int, kind, action, enabled string) plan.Operation {
+		return plan.Operation{Seq: seq, Step: step, Kind: kind, Action: action, Path: "publications[SalesPub].snapshot_agent",
+			Server: "REPLLAB", Database: "msdb", Affects: plan.Affects{Publications: []string{"SalesPub"}},
+			Call: plan.Call{Procedure: "msdb.dbo.sp_update_job", Prologue: "DECLARE @job_id uniqueidentifier;",
+				Params: []plan.Param{{Name: "@job_id", Value: "@job_id"}, {Name: "@enabled", Value: enabled}}},
+			Costs: []plan.Cost{plan.CostOnline}}
+	}
+	p := &plan.Plan{Publisher: "REPLLAB", Database: "Sales", DistributionDB: "distribution",
+		SnapshotJobs: map[string]string{"SalesPub": "DECLARE @job_id uniqueidentifier;"},
+		Operations: []plan.Operation{
+			job(1, 0, "job_disable", "disable", "0"),
+			opOf(2, "publication_property", "change", "publications[SalesPub].retention"),
+			job(3, 12, "job_restore", "restore", "1"),
+		},
+		Totals: plan.Totals{Operations: 3, ByCost: map[plan.Cost]int{plan.CostOnline: 3}}}
+	var out bytes.Buffer
+	tg := Target{Server: "REPLLAB", Database: "Sales", Servers: Servers{"REPLLAB": db},
+		Plan: func(context.Context) (*plan.Plan, error) { return p, nil }}
+	res, err := Run(context.Background(), tg, Options{Wait: time.Minute, Timeout: 5 * time.Second, AutoApprove: true, Out: &out,
+		BeforeStatement: func(seq int) error {
+			if seq == 2 {
+				return fmt.Errorf("stop at 2")
+			}
+			return nil
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := out.String()
+	if res.Outcome != OutcomeFailed || fmt.Sprint(res.Ran) != "[1 3]" || fmt.Sprint(res.Remaining) != "[2]" {
+		t.Errorf("outcome %q, ran %v, remaining %v\n%s", res.Outcome, res.Ran, res.Remaining, o)
+	}
+	line := "[3/3] restore job_restore publications[SalesPub].snapshot_agent at REPLLAB, database msdb\n  DECLARE @job_id uniqueidentifier;\n  EXEC msdb.dbo.sp_update_job @job_id = @job_id, @enabled = 1;\n  ok ("
+	if !strings.Contains(o, line) {
+		t.Errorf("output lacks the restore's statement and outcome:\n%s", o)
+	}
+	if !strings.Contains(o, "Remaining: 2\n") || !strings.Contains(o, "Applied 2 of 3 operations") {
+		t.Errorf("output's last lines:\n%s", o)
+	}
+	if n := f.count("exec "); n != 2 {
+		t.Errorf("%d job statements sent, want the disable and the restore: %q", n, f.log())
+	}
+	if len(res.JobsLeftDisabled) != 0 {
+		t.Errorf("jobs left disabled %v", res.JobsLeftDisabled)
+	}
+}
+
+// A failed record of the deliveries owed before the plan is an error of
+// Run, before any operation, with the locks released (fix round 1).
+func TestRunOwedBeforeIsAnError(t *testing.T) {
+	db, f := newFakeServer(t)
+	p := onePlan()
+	p.OwedBefore = []plan.Owed{{Publication: "SalesPub", Subscription: "REPLLAB/SalesSub"}}
+	tg := Target{Server: "REPLLAB", Database: "Sales", Servers: Servers{"REPLLAB": db},
+		Plan: func(context.Context) (*plan.Plan, error) { return p, nil }}
+	res, err := Run(context.Background(), tg, Options{Wait: time.Minute, Timeout: 5 * time.Second, AutoApprove: true, Out: io.Discard})
+	if err == nil || res != nil || !strings.Contains(err.Error(), "record the deliveries owed before the plan") {
+		t.Errorf("result %+v, error %v", res, err)
+	}
+	if f.count("unlock "+lockResource) != 1 || f.count("exec ") != 0 {
+		t.Errorf("batches %q", f.log())
+	}
+}
+
+func TestDeliveryLine(t *testing.T) {
+	cases := []struct {
+		d    Delivery
+		want string
+	}{
+		{Delivery{Publication: "p", Subscription: "S/D", Status: deliveryConfirmed, Run: `F\20261113012708`},
+			`delivery p to S/D: confirmed (run F\20261113012708)`},
+		{Delivery{Publication: "p", Subscription: "S/D", Status: deliveryNotAwaited}, "delivery p to S/D: not awaited"},
+		{Delivery{Publication: "p", Subscription: "S/D", Status: deliveryUnconfirmed, Detail: "no Delivered snapshot line of a new run",
+			JobState: "running", LastHistory: "Waiting for\r\nthe snapshot"},
+			"delivery p to S/D: unconfirmed (no Delivered snapshot line of a new run; job running; last history: Waiting for the snapshot)"},
+		{Delivery{Publication: "p", Subscription: "S/D", Status: deliveryUnconfirmed, Detail: "x"},
+			"delivery p to S/D: unconfirmed (x; job unknown; last history: none)"},
+	}
+	for _, c := range cases {
+		if got := deliveryLine(c.d); got != c.want {
+			t.Errorf("line\n got %q\nwant %q", got, c.want)
+		}
+	}
+}
+
+// failure keeps the text a step wrapped around a server error before its
+// number and message (fix round 1).
+func TestFailureKeepsStep(t *testing.T) {
+	r := &runner{}
+	se := mssql.Error{Number: 208, Message: "Invalid object name 'x'."}
+	f := r.failure(4, fmt.Errorf("record the deliveries owed by operation 4: %w", se))
+	if got := f.text(); got != "record the deliveries owed by operation 4: Msg 208: Invalid object name 'x'." {
+		t.Errorf("wrapped: %q", got)
+	}
+	if got := r.failure(4, se).text(); got != "Msg 208: Invalid object name 'x'." {
+		t.Errorf("bare: %q", got)
+	}
+	if got := r.failure(4, fmt.Errorf("stop at 4")).text(); got != "stop at 4" {
+		t.Errorf("not a server error: %q", got)
 	}
 }

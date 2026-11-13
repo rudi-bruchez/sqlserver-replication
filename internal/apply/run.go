@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	mssql "github.com/microsoft/go-mssqldb"
+
 	"github.com/rudi-bruchez/sqlserver-replication/internal/plan"
 )
 
@@ -153,6 +155,11 @@ func Run(ctx context.Context, t Target, o Options) (*Result, error) {
 		return nil, r.abort(err)
 	}
 	r.setPlan(p)
+	if err := r.recordOwedBefore(); err != nil {
+		// Before any operation: an error of Run, as a held lock is (R53:
+		// to standard error), the locks released first.
+		return nil, r.abort(fmt.Errorf("record the deliveries owed before the plan: %w", err))
+	}
 	r.apply()
 	r.finish()
 	return r.res, nil
@@ -163,8 +170,8 @@ func (r *runner) lock(server, database, resource string) error {
 	ctx, cancel := context.WithTimeout(r.runCtx, r.o.Timeout)
 	defer cancel()
 	if err := r.s.lock(ctx, server, database, resource); err != nil {
-		if errors.Is(err, errLocked) {
-			return fmt.Errorf("%w on %s.%s", errLocked, server, database)
+		if errors.Is(err, ErrLocked) {
+			return fmt.Errorf("%w on %s.%s", ErrLocked, server, database)
 		}
 		return fmt.Errorf("take the lock on %s.%s: %w", server, database, err)
 	}
@@ -250,13 +257,6 @@ func (r *runner) readCtx() (context.Context, context.CancelFunc) {
 // deliveries.
 func (r *runner) apply() {
 	p := r.p
-	if len(p.Operations) > 0 && len(p.Refusals) == 0 && len(p.OwedBefore) > 0 {
-		if err := r.recordOwedBefore(); err != nil {
-			fmt.Fprint(r.out, p.Summary())
-			r.failStep(0, fmt.Errorf("record the deliveries owed before the plan: %w", err))
-			return
-		}
-	}
 	fmt.Fprint(r.out, p.Summary())
 	if r.refuse() {
 		r.stop(OutcomeRefused, nil)
@@ -311,8 +311,12 @@ func (r *runner) apply() {
 }
 
 // recordOwedBefore records Plan.OwedBefore, by publication, right after
-// the plan is read: T is that reading (R50).
+// the plan is read: T is that reading (R50). A plan that will not run
+// (no operation, or refused) is not read at the distributor.
 func (r *runner) recordOwedBefore() error {
+	if len(r.p.Operations) == 0 || len(r.p.Refusals) > 0 || len(r.p.OwedBefore) == 0 {
+		return nil
+	}
 	ctx, cancel := r.readCtx()
 	defer cancel()
 	var pubs []string
@@ -336,6 +340,17 @@ func (r *runner) recordOwedBefore() error {
 func (r *runner) refuse() bool {
 	p := r.p
 	refused := len(p.Refusals) > 0 // the summary printed them
+	if r.o.Wait <= 0 {
+		for _, op := range p.Operations {
+			if op.Kind == "generate_and_wait" {
+				// Its waits are -wait's: with none, it would stop as the
+				// deferral's timeout right after starting the snapshot.
+				fmt.Fprintln(r.out, "refused: -defer-full-snapshot needs -wait above 0")
+				refused = true
+				break
+			}
+		}
+	}
 	for _, pc := range p.Preconditions {
 		needed := pc.Name == precondJobPermission || pc.Name == precondAgent
 		if pc.Status == "failed" || (pc.Status == "unchecked" && needed) {
@@ -423,9 +438,11 @@ func (r *runner) stop(o Outcome, f *Failure) {
 
 // failure builds the Failure of err at seq, through driverError (never
 // err.Error() of a driver error, which can be Msg 266, Task 6), masked.
+// The text a step wrapped around the driver error is kept in Step.
 func (r *runner) failure(seq int, err error) *Failure {
 	f := &Failure{Seq: seq}
 	if de, ok := driverError(err); ok {
+		f.Step = mask(wrapText(err), r.values)
 		f.Number, f.Message = int(de.Number), de.Message
 		if errors.Is(err, errTranOpen) {
 			f.Message += " (" + errTranOpen.Error() + ", rolled back)"
@@ -446,12 +463,31 @@ func (r *runner) failStatement(seq int, err error) {
 		return
 	}
 	f := r.failure(seq, err)
-	if f.Number != 0 {
-		fmt.Fprintf(r.out, "  failed: Msg %d: %s\n", f.Number, f.Message)
-	} else {
-		fmt.Fprintf(r.out, "  failed: %s\n", f.Message)
-	}
+	fmt.Fprintf(r.out, "  failed: %s\n", f.text())
 	r.stop(OutcomeFailed, f)
+}
+
+// wrapText is the text fmt.Errorf wrappers put before the driver error in
+// err's message, without its final ": "; "" when the driver error is the
+// error itself.
+func wrapText(err error) string {
+	var inner string
+	var e mssql.Error
+	var pe *mssql.Error
+	switch {
+	case errors.As(err, &e):
+		inner = e.Error()
+	case errors.As(err, &pe) && pe != nil:
+		inner = pe.Error()
+	default:
+		return ""
+	}
+	full := err.Error()
+	i := strings.Index(full, inner)
+	if i <= 0 {
+		return ""
+	}
+	return strings.TrimSuffix(strings.TrimSpace(full[:i]), ":")
 }
 
 // failStep stops the run at a step that is not a statement: a read apply
@@ -1245,7 +1281,21 @@ func (r *runner) startAgain(pend []*record) {
 // finish is every way out (R45, R46, R48, R53): the restores armed and not
 // run, the unlock, the deliveries, then the last lines.
 func (r *runner) finish() {
+	r.jb.before = func(seq int) { r.log(r.ops[seq], false) }
+	r.jb.after = func(seq int, t0 time.Time, err error) {
+		if err == nil {
+			r.ok(t0)
+			return
+		}
+		fmt.Fprintf(r.out, "  failed: %s\n", r.failure(seq, err).text())
+	}
 	r.res.JobsLeftDisabled = r.jb.restoreRemaining(r.s, r.p, r.o.Timeout, r.secret)
+	for seq, ok := range r.jb.ran {
+		if ok {
+			r.ran[seq] = true
+		}
+	}
+	r.describeDeliveries()
 	r.s.close()
 	r.res.LockLost = len(r.s.lost) > 0
 	r.res.LockReleaseFailures = append([]string(nil), r.s.releaseFailures...)
@@ -1261,6 +1311,21 @@ func (r *runner) finish() {
 	r.printEnd()
 }
 
+// describeDeliveries reads, before the unlock, the job state and last
+// history of every delivery not confirmed (R53), under a fresh context on
+// a distributor connection that passed the probe of R46.
+func (r *runner) describeDeliveries() {
+	if r.tr == nil || len(r.tr.records) == 0 {
+		return
+	}
+	ctx, cancel := r.s.fresh(context.Background())
+	defer cancel()
+	if _, _, err := r.s.healthy(ctx, r.distributor); err != nil {
+		return
+	}
+	r.tr.describe(ctx, r.s, r.p)
+}
+
 // printEnd prints the last lines (R53).
 func (r *runner) printEnd() {
 	ran := r.res.Outcome == OutcomeApplied || r.res.Outcome == OutcomeFailed ||
@@ -1268,19 +1333,15 @@ func (r *runner) printEnd() {
 	k, u, a := 0, 0, 0
 	if ran {
 		for _, d := range r.res.Deliveries {
-			line := fmt.Sprintf("delivery %s to %s: ", d.Publication, d.Subscription)
 			switch d.Status {
 			case deliveryConfirmed:
 				k++
-				line += "confirmed (run " + d.Run + ")"
 			case deliveryNotAwaited:
 				a++
-				line += "not awaited"
 			default:
 				u++
-				line += "unconfirmed (" + d.Detail + ")"
 			}
-			fmt.Fprintln(r.out, line)
+			fmt.Fprintln(r.out, deliveryLine(d))
 		}
 	}
 	for _, j := range r.res.JobsLeftDisabled {
@@ -1296,11 +1357,7 @@ func (r *runner) printEnd() {
 		return
 	}
 	if f := r.res.Failure; f != nil {
-		if f.Number != 0 {
-			fmt.Fprintf(r.out, "Failed at operation %d: Msg %d: %s\n", f.Seq, f.Number, f.Message)
-		} else {
-			fmt.Fprintf(r.out, "Failed at operation %d: %s\n", f.Seq, f.Message)
-		}
+		fmt.Fprintf(r.out, "Failed at operation %d: %s\n", f.Seq, f.text())
 	}
 	if len(r.res.Remaining) > 0 {
 		fmt.Fprintf(r.out, "Remaining: %s\n", seqList(r.res.Remaining))

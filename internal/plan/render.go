@@ -169,7 +169,10 @@ func (p *Plan) SQL() string {
 	return b.String()
 }
 
-// costOrder is the order of the costs in spec "What a plan is".
+// CostOrder is the order of the costs in spec "What a plan is", the order
+// of the summary's totals and of apply's question (R44).
+func CostOrder() []Cost { return append([]Cost(nil), costOrder...) }
+
 var costOrder = []Cost{
 	CostOnline, CostPendingSnapshotStart, CostNewSnapshot, CostFullGenerationDeferred, CostReadySnapshotDropped,
 	CostReinitialization, CostDropAndReadd, CostSubscriberDataReplaced, CostSubscriberObjectLeft, CostSharedObjectChanged,

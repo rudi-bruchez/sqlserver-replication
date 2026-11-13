@@ -45,6 +45,10 @@ type Delivery struct {
 	Publication, Subscription string
 	Status                    string // confirmed, unconfirmed, not_awaited
 	Run, Detail               string
+	// JobState and LastHistory are read at the end for a delivery not
+	// confirmed (R53): the agent job's state (idle, running, unknown) and
+	// the comments of its agents' last history row.
+	JobState, LastHistory string
 }
 
 // The statuses of a Delivery.
@@ -109,6 +113,8 @@ type record struct {
 	run          string // <folder>\<run> once confirmed
 	unlisted     string // why it can never be confirmed (the folder rule)
 	concurrentOK bool   // its MSsubscriptions rows read status 2
+	jobState     string // read at the end by describe: idle, running, unknown
+	lastHistory  string // read at the end by describe
 }
 
 // line is a "Delivered snapshot" line of the history, kept as seen.
@@ -663,7 +669,7 @@ func (t *tracker) pending(pub string) []owed {
 func (t *tracker) results(notAwaited bool) []Delivery {
 	out := make([]Delivery, 0, len(t.records))
 	for _, r := range t.records {
-		d := Delivery{Publication: r.Publication, Subscription: r.Subscription}
+		d := Delivery{Publication: r.Publication, Subscription: r.Subscription, JobState: r.jobState, LastHistory: r.lastHistory}
 		switch {
 		case r.run != "":
 			d.Status, d.Run = deliveryConfirmed, r.run
@@ -694,4 +700,58 @@ func (r *record) reason() string {
 		return "its MSsubscriptions rows do not all read status 2"
 	}
 	return "no Delivered snapshot line of a new run"
+}
+
+// describe reads, for every record not confirmed, the state of its agent
+// job and the comments of its agents' last history row (R53's unconfirmed
+// line), at the end of the run. A read that fails leaves the state
+// unknown and the history empty: the line is a report, not a decision.
+func (t *tracker) describe(ctx context.Context, s *session, p *plan.Plan) {
+	var due []*record
+	for _, r := range t.records {
+		if r.run == "" {
+			r.jobState = "unknown"
+			due = append(due, r)
+		}
+	}
+	if len(due) == 0 {
+		return
+	}
+	servers, err := t.serversTable(ctx, s, p)
+	if err != nil {
+		return
+	}
+	conn, err := s.conn(ctx, t.distributor)
+	if err != nil {
+		return
+	}
+	for _, r := range due {
+		if r.agents == nil {
+			sub, subDB := splitKey(r.Subscription)
+			if ids, err := t.agentRows(ctx, conn, p, servers, r.Publication, sub, subDB); err == nil {
+				r.agents = ids
+			}
+		}
+		var latest []byte
+		states := map[string]bool{}
+		for _, a := range r.agents {
+			var ts []byte
+			var comments string
+			if err := conn.QueryRowContext(ctx, distQuery(qLastHistory, p.DistributionDB, ""), a).Scan(&ts, &comments); err == nil {
+				if latest == nil || bytes.Compare(ts, latest) > 0 {
+					latest, r.lastHistory = ts, comments
+				}
+			}
+			var st string
+			if err := conn.QueryRowContext(ctx, distQuery(qAgentJobState, p.DistributionDB, ""), a).Scan(&st); err == nil {
+				states[st] = true
+			}
+		}
+		switch {
+		case states["running"]:
+			r.jobState = "running"
+		case states["idle"]:
+			r.jobState = "idle"
+		}
+	}
 }
