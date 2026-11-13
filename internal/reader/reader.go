@@ -90,6 +90,25 @@ func PullSubscribers(ctx context.Context, pub *sql.DB) ([]string, error) {
 	return out, nil
 }
 
+// DistributionDB returns the distribution database the distributor dist
+// records for publisher (msdb.dbo.MSdistpublishers, names compared without
+// regard to case), "" when it records none. apply reads it before its read
+// to take the distributor lock (R45) for a file that declares
+// agent_profiles without a distributor section.
+func DistributionDB(ctx context.Context, dist *sql.DB, publisher string) (string, error) {
+	var db, workingDirectory, login, publisherType string
+	var security, trusted, hasStorage int
+	err := dist.QueryRowContext(ctx, qDistPublisher, publisher).Scan(
+		&db, &workingDirectory, &security, &login, &trusted, &publisherType, &hasStorage)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("msdb.dbo.MSdistpublishers: %w", err)
+	}
+	return db, nil
+}
+
 // PublisherProbe is what the publisher says about itself and the publication
 // database, before any connection to the database or the distributor.
 type PublisherProbe struct {

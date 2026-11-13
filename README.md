@@ -5,7 +5,7 @@ Improving and managing SQL Server replication
 
 - `stored-procedures/`: source of the SQL Server 2019 replication system procedures, for reference.
 - `docs/analysis/step-1-analysis.md`: where the replication configuration lives, how to decode it, and which changes invalidate the snapshot or reinitialize subscriptions.
-- `cmd/sqlrepl`: a tool that manages transactional replication as a declarative file. The export and the plan are implemented; apply is not.
+- `cmd/sqlrepl`: a tool that manages transactional replication as a declarative file: export, plan and apply.
 
 ## sqlrepl export
 
@@ -113,7 +113,7 @@ Job operations. Around the calls, the plan lists the job operations `apply` will
 
 Agent profiles. An omitted `agent_profiles` key means the file does not manage the profiles: the plan creates, changes and drops none. An explicit `agent_profiles: []` manages them and drops every user profile that no agent uses. An export whose distributor was read writes the key even when it holds no user profile (`agent_profiles: []`), so the exported file manages the profiles; an export that could not read the distributor leaves it out.
 
-Refusals. A plan that would act on something it cannot do safely is refused: it prints the refusals, each with the path concerned and its reason, then `Plan refused.`, and has no operation at all. The command then exits 1; it exits 0 otherwise, an empty plan included. A plan is refused, among others, when:
+Refusals. A plan that would act on something it cannot do safely is refused: it prints the refusals, each with the path concerned and its reason, then `Plan refused.`, and has no operation at all. The command then exits 1; it exits 4 for a plan with a `failed` precondition and no refusal, and 0 otherwise, an empty plan included (exit codes under `sqlrepl apply`). A plan is refused, among others, when:
 
 - the export reports an `out_of_scope` finding (merge publications, peer-to-peer, updatable subscriptions), or an `incomplete` state whose repair is not measured;
 - a change has no measured cost (`cost of ... change not measured`): the plan never guesses whether a change invalidates the snapshot or reinitializes a subscription;
@@ -125,6 +125,80 @@ Refusals. A plan that would act on something it cannot do safely is refused: it 
 Secrets and `.env`. The passwords the calls need are never in the file: each is a `password_secret` name, the environment variable that provides it at apply time. The plan does not read their values; it lists each secret and whether its variable is set, so that a missing one shows before apply. Before connecting, the plan loads the `.env` file of `-env` (`KEY=VALUE` lines, `#` comments, an optional `export` prefix, quotes removed): a key is set only when the environment does not already hold it, so a real environment variable always wins, and a missing file is no error. `SQLREPL_PASSWORD` is read after that load, so it can come from the file. Keep `.env` out of version control (the repository's `.gitignore` lists it; `.env.example` shows the keys).
 
 Required permissions: those of the export with its runtime facts (the plan always reads them), and at each subscriber of the file read access to `master` and to the subscriber databases.
+
+## sqlrepl apply
+
+Runs the plan of a desired file against the servers it names, after a confirmation, under an application lock. The plan it runs is the one `sqlrepl plan` prints for the same file and servers, computed again at the start of the run.
+
+```
+sqlrepl apply -f sales.yaml -user sqlrepl -server SUBSRV=subsrv.example.com,1433
+sqlrepl apply -f sales.yaml -auto-approve -wait 1h
+```
+
+Options: those of `plan` without `-sql` and `-json`, plus `-auto-approve`, and two that change meaning:
+
+| Option | Meaning |
+|---|---|
+| `-auto-approve` | run without asking; required when standard input is not a terminal |
+| `-wait DURATION` | the budget of the waits for snapshot generations and deliveries, `30m` by default (below) |
+| `-timeout DURATION` | as for `plan`, and also the bound of each read apply makes while running, of each wait for an idle snapshot job, of the retries of a busy agent, and of each restore |
+
+Order of a run:
+
+1. Without `-auto-approve` and without a terminal on standard input, apply exits 2 before connecting: `apply needs a terminal to confirm, or -auto-approve`. `-defer-full-snapshot` with `-wait 0` is refused before connecting too.
+2. It connects as `plan` does, then takes the application lock (below) and prints `lock taken on SERVER.DATABASE`.
+3. It reads the servers, runs the prechecks and builds the plan, once, and prints the plan's summary.
+4. It stops there, with nothing run and exit 1, when the plan is refused, when a precondition is `failed`, when the `msdb job permission` or `sql server agent` precondition is `unchecked` at a server where it runs a job operation, or when a secret of the plan is not set (`secret NAME is not set`, one line per secret; an empty variable is not set). An empty plan prints `Plan for SERVER.DATABASE: no changes.`, asks nothing and exits 0.
+5. It asks, exactly: `Apply N operations to SERVER.DATABASE, C costly (COST K, ...)? Type yes to apply: `, the parenthesis listing the costly operations per cost, left out when none is costly. Only the line `yes` applies. Any other answer, end of input, or `Ctrl-C` or `SIGTERM` while the question waits prints `Apply cancelled.`, releases the lock and exits 1.
+6. It disables the snapshot jobs of the publications it operates on, runs each statement, starts the agents the plan lists (a distribution or pull agent after the generation its delivery waits for), waits for the deliveries the plan owes, then restores every job it disabled and releases the lock. The restores and the release run on every way out: a failed statement, a spent budget, an interrupt.
+
+The lock. On the publisher, in the publication database, apply takes `sp_getapplock` on the resource `sqlrepl apply`, owned by its session, with no wait: a second apply on the same publication database, or one started while the first waits at its question, exits 1 with `another sqlrepl apply holds the lock on SERVER.DATABASE`, before reading anything. When the file declares `distributor` or `agent_profiles`, the parts shared with other publication databases, apply also takes `sqlrepl apply distributor` in the distribution database at the distributor (the file's distribution database, else the one the distributor records for the publisher); without that lock an operation on those parts is refused. A release that fails prints `lock release failed on SERVER.DATABASE: MESSAGE` and makes the exit code 1; a lock whose connection was lost prints `lock lost with the connection`.
+
+The budget. `-wait` starts at the first operation and bounds every wait for a snapshot generation and for the deliveries owed, and the wait of `-defer-full-snapshot`. Spent, apply stops at once, restores the jobs, and lists what remains and every delivery owed with its state. `-wait 0` runs every operation and every agent start, waits for no delivery, and lists every delivery owed as `not awaited`. The waits that belong to running an operation (the wait for an idle snapshot job after disabling it, the retries while an agent is busy) are bounded by `-timeout`; a spent `-timeout` there is a failure of that operation.
+
+Output, on standard output, each line with fixed words:
+
+| Line | When |
+|---|---|
+| `lock taken on SERVER.DATABASE` | each lock taken |
+| the summary of `plan`, then the question | before any operation |
+| `[SEQ/N] ACTION KIND PATH at SERVER, database DATABASE` | before each statement, followed by its text, each line indented two spaces |
+| `  ok (MS ms)` | a statement that succeeded |
+| `  18752 tolerated, KIND PATH re-read` | a drop or `sync_method` change that returned 18752, done all the same as a re-read shows |
+| `  retried after generating (Msg NUMBER)` | a snapshot start retried while a generation ran |
+| `  failed: Msg NUMBER: MESSAGE` | a statement that failed |
+| `  interrupted` | a statement an interrupt cancelled |
+| `waiting for the snapshot job of PUBLICATION to be idle` | a disabled snapshot job still running |
+| `waiting for the deliveries of PUBLICATION` | a wait for deliveries that found something to wait for |
+| `started KIND PUBLICATION` or `KIND PUBLICATION already running` | each agent start, a distribution agent followed by `SUBSCRIBER/DATABASE` |
+| `delivery PUBLICATION to SUBSCRIBER/DATABASE: ...` | each delivery owed, at the end: `confirmed (run FOLDER\RUN)`, `unconfirmed (REASON; job STATE; last history: COMMENTS)` or `not awaited` |
+| `job left disabled: JOB` | a snapshot job whose restore failed: enable it by hand |
+| `Failed at operation SEQ: Msg NUMBER: MESSAGE`, `Remaining: SEQ LIST` | a run that stopped before its last operation |
+| `Applied RAN of N operations; deliveries: K confirmed, U unconfirmed, A not awaited.` | last, for a run that got past the question |
+
+Server informational messages are not printed, and the value of every bound secret is replaced by `****` in any message apply prints. An error that ends the run before any operation (a connection, the lock held, the read) goes to standard error with the `sqlrepl:` prefix.
+
+Exit codes, for both commands:
+
+| Code | `plan` | `apply` |
+|---|---|---|
+| 0 | printed, no refusal, no failed precondition | nothing to do, or every operation ran and every delivery owed is confirmed |
+| 1 | an error or a refusal | an error, a refusal, a failed or unchecked precondition it needs, a secret not set, the lock held, `Apply cancelled.`, a failed statement, a lock release that failed, or operations left unrun (an interrupt, a spent bound before the last operation), except the case of code 3 |
+| 2 | a usage error | a usage error, or no terminal without `-auto-approve` |
+| 3 | not used | every operation ran and a delivery owed is unconfirmed or not awaited; or the wait of `-defer-full-snapshot` timed out or its run failed, operations left unrun (`immediate_sync` stays off), the one exception to code 1 |
+| 4 | printed with a failed precondition and no refusal | not used |
+
+An interrupt after the last operation, during the wait for deliveries, ends with the code the deliveries decide (0 or 3). A second interrupt, during the restores, is ignored.
+
+Snapshot reports. Apply writes no snapshot report yet: it prints the outcome of each delivery instead. The report, with `sqlrepl snapshot`, comes later.
+
+Known limits:
+
+- The check of a subscription created with `initialization: lsn` reads `msdb.dbo.restorehistory`, which keys on the destination name: a backup restored under a temporary name and then renamed into place is checked against an older restore of the target name, whose LSN it accepts.
+- The snapshot folder of a publisher on a named instance (a name with `\`) is not measured: its deliveries are reported `unconfirmed`, and apply exits 3.
+- The distributor is the publisher's own instance: a remote distributor is out of scope for now.
+
+Required permissions: those of `plan`, those of every call the plan runs, and, at each server where it runs a job operation, the permission to update and start the agent jobs in `msdb`, which the `msdb job permission` precondition checks.
 
 ## Tests
 

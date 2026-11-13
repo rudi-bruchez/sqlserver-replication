@@ -5,7 +5,8 @@
 // and pull subscriptions and agents, and writes them as YAML, and on request
 // the observed runtime facts as JSON. The plan compares a desired file with
 // what the servers hold and prints the procedure calls that would make them
-// match, with their costs. Both run SELECT statements only.
+// match, with their costs; both run SELECT statements only. Apply runs the
+// plan, under an application lock, after a confirmation.
 package main
 
 import (
@@ -33,17 +34,19 @@ const usage = `sqlrepl manages SQL Server transactional replication as a declara
 Usage:
   sqlrepl export -publisher SERVER -database DB [options]
   sqlrepl plan -f FILE [options]
+  sqlrepl apply -f FILE [options]
 
-Run "sqlrepl export -h" or "sqlrepl plan -h" for the options.
+Run "sqlrepl export -h", "sqlrepl plan -h" or "sqlrepl apply -h" for the options.
 `
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-// run runs a command and returns the exit code: 2 for a usage error, 1 for
-// an error or a refused plan, whose refusals are printed already, so that
-// nothing more is written for it (R28).
+// run runs a command and returns the exit code of R52: 2 for a usage
+// error, 1 for an error; plan and apply return their own, a refused plan's
+// 1 with its refusals printed already, so that nothing more is written for
+// it (R28).
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) < 1 {
 		fmt.Fprint(stderr, usage)
@@ -54,7 +57,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "export":
 		err = runExport(args[1:], stdout)
 	case "plan":
-		err = runPlan(args[1:], stdout, stderr)
+		return runPlan(args[1:], stdout, stderr)
+	case "apply":
+		return runApply(args[1:], os.Stdin, stdout, stderr)
 	case "-h", "-help", "--help", "help":
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -62,11 +67,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "unknown command %q\n\n%s", args[0], usage)
 		return 2
 	}
-	switch {
-	case err == nil, errors.Is(err, flag.ErrHelp):
+	if err == nil || errors.Is(err, flag.ErrHelp) {
 		return 0
-	case errors.Is(err, errRefused):
-		return 1
 	}
 	fmt.Fprintln(stderr, "sqlrepl:", err)
 	return 1

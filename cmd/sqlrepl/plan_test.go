@@ -80,17 +80,17 @@ func TestPlanRefusesWaitZeroWithDefer(t *testing.T) {
 		return nil, errors.New("no connection in this test")
 	})
 	var stdout, stderr bytes.Buffer
-	err := runPlan([]string{"-f", planFile(t, smallFile), "-env", noEnv(t), "-defer-full-snapshot", "-wait", "0"}, &stdout, &stderr)
-	if !errors.Is(err, errRefused) {
-		t.Fatalf("err = %v, want errRefused", err)
+	code := runPlan([]string{"-f", planFile(t, smallFile), "-env", noEnv(t), "-defer-full-snapshot", "-wait", "0"}, &stdout, &stderr)
+	if code != 1 || stderr.Len() != 0 {
+		t.Fatalf("exit %d, stderr %q, want 1 for a refused plan", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "Plan refused.") || !strings.Contains(stdout.String(), "-wait") {
 		t.Errorf("stdout = %q", stdout.String())
 	}
 	stdout.Reset()
-	err = runPlan([]string{"-f", planFile(t, smallFile), "-env", noEnv(t), "-json", "-defer-full-snapshot", "-wait", "0"}, &stdout, &stderr)
-	if !errors.Is(err, errRefused) || !strings.Contains(stdout.String(), `"refusals"`) {
-		t.Errorf("-json: err = %v, stdout = %q", err, stdout.String())
+	code = runPlan([]string{"-f", planFile(t, smallFile), "-env", noEnv(t), "-json", "-defer-full-snapshot", "-wait", "0"}, &stdout, &stderr)
+	if code != 1 || !strings.Contains(stdout.String(), `"refusals"`) {
+		t.Errorf("-json: exit %d, stdout = %q", code, stdout.String())
 	}
 }
 
@@ -172,10 +172,10 @@ func TestPlanUnusedServerNote(t *testing.T) {
 	r := newFakeRun(t, nil)
 	r.pulls = []string{"OLDPULL"}
 	var stdout, stderr bytes.Buffer
-	err := runPlan([]string{"-f", planFile(t, subscribedFile), "-env", noEnv(t),
+	code := runPlan([]string{"-f", planFile(t, subscribedFile), "-env", noEnv(t),
 		"-server", "other=x", "-server", "p=y", "-server", "S1=z", "-server", "oldpull=w", "-server", "d=v"}, &stdout, &stderr)
-	if err != nil {
-		t.Fatal(err)
+	if code != 0 {
+		t.Fatalf("exit %d", code)
 	}
 	if got, want := stderr.String(), "note: -server other names no server of the file\n"; got != want {
 		t.Errorf("stderr = %q, want %q", got, want)
@@ -199,8 +199,8 @@ func TestPlanWiring(t *testing.T) {
 	r := newFakeRun(t, map[string]string{"s1": "boom at s1"})
 	r.probe.Name = "Sales"
 	var stdout, stderr bytes.Buffer
-	if err := runPlan([]string{"-f", planFile(t, subscribedFile), "-env", env, "-server", "D=dist-addr"}, &stdout, &stderr); err != nil {
-		t.Fatal(err)
+	if code := runPlan([]string{"-f", planFile(t, subscribedFile), "-env", env, "-server", "D=dist-addr"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
 	}
 	var got []string
 	for _, c := range r.connects {
@@ -244,8 +244,8 @@ func TestPlanDistributorFromProbe(t *testing.T) {
 	r := newFakeRun(t, nil)
 	r.probe.Distributor = "REMOTEDIST"
 	var stdout, stderr bytes.Buffer
-	if err := runPlan([]string{"-f", planFile(t, smallFile), "-env", noEnv(t), "-server", "remotedist=rd"}, &stdout, &stderr); err != nil {
-		t.Fatal(err)
+	if code := runPlan([]string{"-f", planFile(t, smallFile), "-env", noEnv(t), "-server", "remotedist=rd"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
 	}
 	if r.conns.DistributorServer != "REMOTEDIST" {
 		t.Errorf("DistributorServer = %q", r.conns.DistributorServer)
@@ -260,9 +260,9 @@ func TestPlanPullSubscribersError(t *testing.T) {
 	r := newFakeRun(t, nil)
 	r.pullErr = errors.New("reading the pull subscribers: denied")
 	var stdout, stderr bytes.Buffer
-	err := runPlan([]string{"-f", planFile(t, smallFile), "-env", noEnv(t)}, &stdout, &stderr)
-	if err == nil || !strings.Contains(err.Error(), "denied") {
-		t.Errorf("err = %v, want the pull subscribers' error", err)
+	code := runPlan([]string{"-f", planFile(t, smallFile), "-env", noEnv(t)}, &stdout, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "denied") {
+		t.Errorf("exit %d, stderr %q, want the pull subscribers' error", code, stderr.String())
 	}
 }
 
@@ -278,8 +278,8 @@ func TestPlanSQLAppended(t *testing.T) {
 			args = append(args, "-sql")
 		}
 		var stdout, stderr bytes.Buffer
-		if err := runPlan(args, &stdout, &stderr); err != nil {
-			t.Fatal(err)
+		if code := runPlan(args, &stdout, &stderr); code != 0 {
+			t.Fatalf("exit %d: %s", code, stderr.String())
 		}
 		out := stdout.String()
 		if !strings.HasPrefix(out, "Plan for P.D: 1 operations") || strings.Contains(out, "EXEC sp_fakeprocedure") != withSQL {
@@ -475,10 +475,10 @@ func labCLI(t *testing.T) (*sql.DB, string) {
 func TestLabPlanCLISalesEmpty(t *testing.T) {
 	_, server := labCLI(t)
 	var stdout, stderr bytes.Buffer
-	err := runPlan([]string{"-f", "../../internal/testdata/lab/sales.yaml", "-env", noEnv(t),
+	code := runPlan([]string{"-f", "../../internal/testdata/lab/sales.yaml", "-env", noEnv(t),
 		"-server", server + "=tcp:127.0.0.1,11980", "-user", "sa", "-param", "encrypt=disable"}, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("runPlan: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	if code != 0 {
+		t.Fatalf("runPlan: exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
 	first, _, _ := strings.Cut(stdout.String(), "\n")
 	if !strings.HasSuffix(first, "no changes.") {
@@ -511,10 +511,10 @@ func TestLabPlanCLIReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	err := runPlan([]string{"-f", file, "-env", noEnv(t),
+	code := runPlan([]string{"-f", file, "-env", noEnv(t),
 		"-server", server + "=tcp:127.0.0.1,11980", "-user", "sa", "-param", "encrypt=disable"}, &stdout, &stderr)
-	if err == nil || err.Error() != "database is read only" {
-		t.Fatalf("runPlan: %v, want \"database is read only\"\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	if code != 1 || stderr.String() != "sqlrepl: database is read only\n" {
+		t.Fatalf("runPlan: exit %d, want 1 and \"database is read only\"\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
 	if stdout.Len() != 0 {
 		t.Errorf("a plan printed for a read-only database:\n%s", stdout.String())
@@ -536,8 +536,8 @@ func TestPlanSecretEmptyNotSet(t *testing.T) {
 		return p
 	}
 	var stdout, stderr bytes.Buffer
-	if err := runPlan([]string{"-f", planFile(t, smallFile), "-env", noEnv(t)}, &stdout, &stderr); err != nil {
-		t.Fatal(err)
+	if code := runPlan([]string{"-f", planFile(t, smallFile), "-env", noEnv(t)}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
 	}
 	for _, want := range []string{"  SQLREPL_T4_EMPTY not set\n", "  SQLREPL_T4_FULL set\n"} {
 		if !strings.Contains(stdout.String(), want) {

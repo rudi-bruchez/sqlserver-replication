@@ -43,29 +43,43 @@ var (
 // for the deliveries of its added articles (R25).
 const deferNeedsWait = "-defer-full-snapshot needs a -wait above 0: the generate and wait step waits for the deliveries of the added articles (R25)"
 
-// planFlags are the flags of the plan command.
+// planFlags are the flags of the plan and apply commands.
 type planFlags struct {
 	file, user, env      string
 	sql, json, deferFull bool
+	autoApprove          bool // apply only
 	wait, timeout        time.Duration
 	params               paramFlags
 	servers              serverFlags
 }
 
 func parsePlanFlags(args []string, stderr io.Writer) (*planFlags, error) {
+	return parseFlags("plan", args, stderr)
+}
+
+// parseFlags parses the flags of plan or apply: apply has those of plan
+// without -sql and -json, plus -auto-approve, and its -wait is the budget
+// of R52.
+func parseFlags(command string, args []string, stderr io.Writer) (*planFlags, error) {
 	f := &planFlags{params: paramFlags{}, servers: serverFlags{}}
-	fs := flag.NewFlagSet("plan", flag.ContinueOnError)
+	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&f.file, "f", "", "the desired file (required)")
 	fs.Var(f.servers, "server", "address of a server of the file by name, NAME=ADDRESS, repeatable (default: the name)")
 	fs.StringVar(&f.user, "user", "", "SQL Server login; the password is read from SQLREPL_PASSWORD (default: Windows authentication)")
 	fs.Var(f.params, "param", "extra connection parameter key=value, repeatable (e.g. -param encrypt=disable)")
 	fs.StringVar(&f.env, "env", ".env", "the .env file read before the connections; a missing file is no error, and the real environment wins")
-	fs.BoolVar(&f.sql, "sql", false, "append the T-SQL to the summary")
-	fs.BoolVar(&f.json, "json", false, "print the plan as JSON only")
 	fs.BoolVar(&f.deferFull, "defer-full-snapshot", false, "defer the full snapshot of a publication whose added articles would make one")
-	fs.DurationVar(&f.wait, "wait", 30*time.Minute, "how long the generate and wait step of -defer-full-snapshot waits")
-	fs.DurationVar(&f.timeout, "timeout", 2*time.Minute, "timeout of each connection and of the read that follows them")
+	if command == "apply" {
+		fs.BoolVar(&f.autoApprove, "auto-approve", false, "apply without asking for confirmation")
+		fs.DurationVar(&f.wait, "wait", 30*time.Minute, "budget of the waits for snapshot generations and deliveries, from the first operation; 0 waits for no delivery")
+		fs.DurationVar(&f.timeout, "timeout", 2*time.Minute, "timeout of each connection, of the read, of each read and wait of a running operation and of each restore")
+	} else {
+		fs.BoolVar(&f.sql, "sql", false, "append the T-SQL to the summary")
+		fs.BoolVar(&f.json, "json", false, "print the plan as JSON only")
+		fs.DurationVar(&f.wait, "wait", 30*time.Minute, "how long the generate and wait step of -defer-full-snapshot waits")
+		fs.DurationVar(&f.timeout, "timeout", 2*time.Minute, "timeout of each connection and of the read that follows them")
+	}
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -79,27 +93,116 @@ func parsePlanFlags(args []string, stderr io.Writer) (*planFlags, error) {
 	return f, nil
 }
 
-// runPlan computes the plan of a desired file against the servers it names
-// and prints it (R28). It changes nothing: the reads are SELECT statements.
-func runPlan(args []string, stdout, stderr io.Writer) error {
-	f, err := parsePlanFlags(args, stderr)
-	if err != nil {
-		return err
+// usageExit is the exit code of a flag error, printed: 0 for -h, else 2
+// (R52).
+func usageExit(err error, stderr io.Writer) int {
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
 	}
-	if err := dotenv.Load(f.env); err != nil {
-		return err
+	fmt.Fprintln(stderr, "sqlrepl:", err)
+	return 2
+}
+
+// errorExit prints an error that ends a command and returns 1.
+func errorExit(err error, stderr io.Writer) int {
+	fmt.Fprintln(stderr, "sqlrepl:", err)
+	return 1
+}
+
+// deferRefusal is the plan refused before any connection for
+// -defer-full-snapshot with -wait 0, nil without that pair.
+func deferRefusal(f *planFlags) (*plan.Plan, error) {
+	if !f.deferFull || f.wait > 0 {
+		return nil, nil
 	}
 	desired, err := loadFile(f.file)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	opt := plan.Options{DeferFullSnapshot: f.deferFull, Wait: f.wait}
-	if f.deferFull && f.wait <= 0 {
-		return printPlan(stdout, &plan.Plan{
-			Publisher: desired.Publisher.Server, Database: desired.Publisher.Database, Options: opt,
-			Refusals: []plan.Refusal{{Path: "-wait", Reason: deferNeedsWait}},
-		}, f)
+	return &plan.Plan{
+		Publisher: desired.Publisher.Server, Database: desired.Publisher.Database,
+		Options:  plan.Options{DeferFullSnapshot: f.deferFull, Wait: f.wait},
+		Refusals: []plan.Refusal{{Path: "-wait", Reason: deferNeedsWait}},
+	}, nil
+}
+
+// runPlan computes the plan of a desired file against the servers it names
+// and prints it (R28), and returns the exit code of R52: 0, 1 for an error
+// or a refusal, 2 for a usage error, 4 for a failed precondition without a
+// refusal (R58). It changes nothing: the reads are SELECT statements.
+func runPlan(args []string, stdout, stderr io.Writer) int {
+	f, err := parsePlanFlags(args, stderr)
+	if err != nil {
+		return usageExit(err, stderr)
 	}
+	p, err := deferRefusal(f)
+	if err != nil {
+		return errorExit(err, stderr)
+	}
+	if p == nil {
+		w, err := prepare(context.Background(), f)
+		if err != nil {
+			return errorExit(err, stderr)
+		}
+		defer w.close()
+		unusedServers(stderr, w.desired, append(w.pulls, w.distName), f.servers)
+		p, err = w.compute(context.Background(), plan.Options{DeferFullSnapshot: f.deferFull, Wait: f.wait})
+		if err != nil {
+			return errorExit(err, stderr)
+		}
+	}
+	switch err := printPlan(stdout, p, f); {
+	case errors.Is(err, errRefused):
+		return 1
+	case err != nil:
+		return errorExit(err, stderr)
+	}
+	for _, pc := range p.Preconditions {
+		if pc.Status == "failed" {
+			return 4
+		}
+	}
+	return 0
+}
+
+// wiring is what plan and apply share from the .env load to Build: the
+// desired file, the probe and the pools, closed by close.
+type wiring struct {
+	f           *planFlags
+	desired     *model.Config
+	probe       reader.PublisherProbe
+	master, pub *sql.DB // the publisher, at master and at the publication database
+	dist        *sql.DB // nil without a distributor
+	distName    string  // the file's distributor, else the probe's
+	subs        map[string]*sql.DB
+	unreachable map[string]string
+	pulls       []string // the current pull subscribers
+}
+
+// prepare loads the .env and the desired file, then opens the publisher,
+// probes it, and opens the distributor and the subscribers, each
+// connection and each read under its own -timeout within ctx. On an error
+// the connections opened are closed.
+func prepare(ctx context.Context, f *planFlags) (*wiring, error) {
+	if err := dotenv.Load(f.env); err != nil {
+		return nil, err
+	}
+	desired, err := loadFile(f.file)
+	if err != nil {
+		return nil, err
+	}
+	w := &wiring{f: f, desired: desired}
+	if err := w.open(ctx); err != nil {
+		w.close()
+		return nil, err
+	}
+	return w, nil
+}
+
+// open opens the connections of prepare and probes the publisher.
+func (w *wiring) open(ctx context.Context) error {
+	f, desired := w.f, w.desired
+	var err error
 	cp := planConnParams(f)
 	address := func(name string) string {
 		if e, ok := f.servers.lookup(name); ok {
@@ -113,104 +216,113 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 	// context ends during prelogin, so a silent server would otherwise hold
 	// the command well past -timeout (Task 18 fix round 1, measured).
 	step := func() (context.Context, context.CancelFunc) {
-		return context.WithTimeout(context.Background(), f.timeout)
+		return context.WithTimeout(ctx, f.timeout)
 	}
 
 	// The publisher and the distributor must be reached (R29). The probe
 	// runs on master, which is also the publisher's connection for the
 	// prechecks.
 	publisher := address(desired.Publisher.Server)
-	ctx, cancel := step()
-	master, err := connect(ctx, publisher, "master", cp)
+	c, cancel := step()
+	w.master, err = connect(c, publisher, "master", cp)
 	cancel()
 	if err != nil {
 		return fmt.Errorf("publisher: %w", err)
 	}
-	defer master.Close()
-	ctx, cancel = step()
-	probe, err := probeDB(ctx, master, desired.Publisher.Database)
+	c, cancel = step()
+	w.probe, err = probeDB(c, w.master, desired.Publisher.Database)
 	cancel()
 	if err != nil {
 		return err
 	}
-	if _, _, err := probe.Start(); err != nil {
+	if _, _, err = w.probe.Start(); err != nil {
 		return err
 	}
-	if err := probe.Writable(); err != nil {
+	if err = w.probe.Writable(); err != nil {
 		return err
 	}
 	// The stored name, in its own case, from here on.
-	ctx, cancel = step()
-	pub, err := connect(ctx, publisher, probe.Name, cp)
+	c, cancel = step()
+	w.pub, err = connect(c, publisher, w.probe.Name, cp)
 	cancel()
 	if err != nil {
 		return fmt.Errorf("publisher: %w", err)
 	}
-	defer pub.Close()
 
-	distName := probe.Distributor
+	w.distName = w.probe.Distributor
 	if d := desired.Distributor; d != nil && d.Server != "" {
-		distName = d.Server
+		w.distName = d.Server
 	}
-	var dist *sql.DB
-	if distName != "" {
-		ctx, cancel = step()
-		dist, err = connect(ctx, address(distName), "", cp)
+	if w.distName != "" {
+		c, cancel = step()
+		w.dist, err = connect(c, address(w.distName), "", cp)
 		cancel()
 		if err != nil {
 			return fmt.Errorf("distributor: %w", err)
 		}
-		defer dist.Close()
 	}
 
-	subs, unreachable, pulls, err := openPlanSubscribers(step, desired, pub, f.servers, cp)
-	defer func() {
-		for _, db := range subs {
-			db.Close()
-		}
-	}()
+	w.subs, w.unreachable, w.pulls, err = openPlanSubscribers(step, desired, w.pub, f.servers, cp)
 	if err != nil {
 		return err
 	}
-	unusedServers(stderr, desired, append(pulls, distName), f.servers)
+	return nil
+}
 
-	// The read's context starts once every connection is open.
-	ctx, cancel = step()
+// compute reads the servers, runs the prechecks and builds the plan, the
+// read and the prechecks under one -timeout within ctx, which starts once
+// every connection is open.
+func (w *wiring) compute(ctx context.Context, opt plan.Options) (*plan.Plan, error) {
+	ctx, cancel := context.WithTimeout(ctx, w.f.timeout)
 	defer cancel()
 	res, err := readConfig(ctx, reader.Source{
-		Publisher:   pub,
-		Distributor: dist,
-		Database:    probe.Name,
-		Probe:       probe,
-		Subscribers: subs,
+		Publisher:   w.pub,
+		Distributor: w.dist,
+		Database:    w.probe.Name,
+		Probe:       w.probe,
+		Subscribers: w.subs,
 		Facts:       true,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	checks, err := runPrecheck(ctx, precheck.Conns{
-		Publisher:         master,
-		Publication:       pub,
-		Distributor:       dist,
-		Subscribers:       subs,
-		Unreachable:       unreachable,
-		DistributorServer: distName,
-	}, desired, res.Config)
+		Publisher:         w.master,
+		Publication:       w.pub,
+		Distributor:       w.dist,
+		Subscribers:       w.subs,
+		Unreachable:       w.unreachable,
+		DistributorServer: w.distName,
+	}, w.desired, res.Config)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	p := buildPlan(plan.Inputs{
-		Desired: desired,
-		Current: res.Config,
-		Facts:   res.Facts,
-		Checks:  checks,
-		SecretSet: func(name string) bool {
-			// R54: an empty variable is not set.
-			v, ok := os.LookupEnv(name)
-			return ok && v != ""
-		},
-	}, opt)
-	return printPlan(stdout, p, f)
+	return buildPlan(plan.Inputs{
+		Desired:   w.desired,
+		Current:   res.Config,
+		Facts:     res.Facts,
+		Checks:    checks,
+		SecretSet: func(name string) bool { _, ok := secretEnv(name); return ok },
+	}, opt), nil
+}
+
+// secretEnv reads a secret from the environment; an empty variable is not
+// set (R54), for plan and apply alike.
+func secretEnv(name string) (string, bool) {
+	v, ok := os.LookupEnv(name)
+	return v, ok && v != ""
+}
+
+// close closes every pool of the wiring.
+func (w *wiring) close() {
+	for _, db := range []*sql.DB{w.master, w.pub, w.dist} {
+		if db != nil {
+			db.Close()
+		}
+	}
+	for _, db := range w.subs {
+		db.Close()
+	}
 }
 
 // planConnParams is the connection parameters of every connection plan
