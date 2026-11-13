@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	mssql "github.com/microsoft/go-mssqldb"
+
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/state"
 )
@@ -50,6 +52,13 @@ func (s fakeStmt) Query([]driver.Value) (driver.Rows, error) {
 	case strings.TrimSpace(qDatabase):
 		return &fakeRows{rows: [][]driver.Value{{int64(7), int64(1)}}}, nil
 	case strings.TrimSpace(qProfiles):
+		// Not yet a distributor (208), or a refused read (229).
+		switch s.server {
+		case "noprofiles":
+			return nil, mssql.Error{Number: 208, Class: 16, Message: "Invalid object name 'msdb.dbo.MSagent_profiles'."}
+		case "deniedprofiles":
+			return nil, mssql.Error{Number: 229, Class: 14, Message: "The SELECT permission was denied."}
+		}
 		return &fakeRows{}, nil
 	case strings.TrimSpace(qFolder):
 		return &fakeRows{rows: [][]driver.Value{{int64(1)}}}, nil
@@ -190,5 +199,17 @@ func TestRunDistributorServer(t *testing.T) {
 	}
 	if sc := checkOf(c, "PUB"); sc == nil || sc.ServerName != "PUB" {
 		t.Errorf("PUB: %+v, want it to answer as itself", sc)
+	}
+}
+
+// TestReadProfilesNotDistributor: 208 on the profiles query is no profile
+// (an instance that is not a distributor yet, Task 13); 229 stays an error.
+func TestReadProfilesNotDistributor(t *testing.T) {
+	got, err := readProfiles(context.Background(), fakeDB(t, "noprofiles"))
+	if err != nil || len(got) != 0 {
+		t.Errorf("208: got %v, %v, want no profile and no error", got, err)
+	}
+	if _, err := readProfiles(context.Background(), fakeDB(t, "deniedprofiles")); err == nil {
+		t.Error("229: no error, want the error")
 	}
 }

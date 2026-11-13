@@ -18,7 +18,9 @@ import (
 // its servers and the function that reads, prechecks and builds the plan.
 type Target struct {
 	Server, Database string // the publisher and publication database, the lock's place
-	// Distributor and DistributionDB are the second lock's place (R45);
+	// Distributor is the server of the second lock (R45), taken in master
+	// there (R45a). DistributionDB, the file's distribution database or the
+	// one the distributor records, tells that this lock is due; both are
 	// empty when the file declares neither distributor nor agent_profiles.
 	Distributor, DistributionDB string
 	Servers                     Servers
@@ -41,10 +43,15 @@ type Options struct {
 	BeforeStatement func(seq int) error
 }
 
-// The resources of the application locks (R45).
+// The resources of the application locks (R45), and the database of the
+// distributor lock: master, which exists before the distributor is
+// configured, and one instance has one distributor (R45a). In the
+// distribution database, a run that creates it failed with 911 at the lock
+// (Task 13).
 const (
 	lockResource            = "sqlrepl apply"
 	distributorLockResource = "sqlrepl apply distributor"
+	distributorLockDatabase = "master"
 )
 
 // The preconditions apply refuses on when unchecked (R58).
@@ -146,7 +153,7 @@ func Run(ctx context.Context, t Target, o Options) (*Result, error) {
 		if dist == "" {
 			dist = t.Server
 		}
-		if err := r.lock(dist, t.DistributionDB, distributorLockResource); err != nil {
+		if err := r.lock(dist, distributorLockDatabase, distributorLockResource); err != nil {
 			return nil, r.abort(err)
 		}
 	}

@@ -131,10 +131,10 @@ func (w *wiring) servers() apply.Servers {
 	return s
 }
 
-// distributionDB is the database of the distributor lock (R45): the file's
-// distributor database, else the one the distributor records for the
-// publisher, "" when there is no distributor (Run then refuses every
-// shared operation).
+// distributionDB tells that the distributor lock is due (R45; the lock
+// itself is taken in master, R45a): the file's distributor database, else
+// the one the distributor records for the publisher, "" when there is no
+// distributor (Run then refuses every shared operation).
 func (w *wiring) distributionDB(ctx context.Context) (string, error) {
 	if d := w.desired.Distributor; d != nil && d.Database != "" {
 		return d.Database, nil

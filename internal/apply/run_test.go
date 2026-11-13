@@ -362,11 +362,44 @@ func TestRunRefusals(t *testing.T) {
 	if locks != 2 || !containsString(atPlan, "lock "+distributorLockResource) {
 		t.Errorf("batches before Plan %q, want both lock batches", atPlan)
 	}
-	if !strings.Contains(out.String(), "lock taken on REPLLAB.distribution") {
+	if !strings.Contains(out.String(), "lock taken on REPLLAB.master") {
 		t.Errorf("output lacks the second lock line:\n%s", out.String())
 	}
+
 	if f.count("unlock ") != 2 {
 		t.Errorf("release batches %q, want two", f.log())
+	}
+}
+
+// TestRunDistributorLockInMaster pins R45a: the distributor lock is taken
+// and released in master, never in the distribution database, which a run
+// may have to create (Task 13: 911 at the lock on a fresh instance).
+func TestRunDistributorLockInMaster(t *testing.T) {
+	db, f := newFakeServer(t)
+	tg := Target{Server: "REPLLAB", Database: "Sales", Distributor: "REPLLAB", DistributionDB: "distribution",
+		Servers: Servers{"REPLLAB": db},
+		Plan:    func(context.Context) (*plan.Plan, error) { return onePlan(), nil }}
+	var out bytes.Buffer
+	if _, err := Run(context.Background(), tg, Options{Wait: time.Minute, Timeout: 5 * time.Second,
+		Confirm: func(string) (bool, error) { return false, nil }, Out: &out}); err != nil {
+		t.Fatal(err)
+	}
+	log := f.log()
+	n := 0
+	for i, b := range log {
+		if b != "lock "+distributorLockResource && b != "unlock "+distributorLockResource {
+			continue
+		}
+		n++
+		if i == 0 || log[i-1] != "USE [master];" {
+			t.Errorf("batch %d %q is not right after USE [master];: %q", i, b, log)
+		}
+	}
+	if n != 2 {
+		t.Errorf("%d distributor lock and release batches, want 2: %q", n, log)
+	}
+	if !strings.Contains(out.String(), "lock taken on REPLLAB.master") {
+		t.Errorf("output lacks the distributor lock line:\n%s", out.String())
 	}
 }
 

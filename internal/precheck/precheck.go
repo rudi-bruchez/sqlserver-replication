@@ -642,8 +642,16 @@ func readDatabase(ctx context.Context, db *sql.DB, dc *state.DatabaseCheck) erro
 	return nil
 }
 
+// readProfiles reads the agent profiles at the distributor. Error 208 on
+// msdb.dbo.MSagent_profiles means no profile: the instance is not a
+// distributor yet (sp_adddistributor creates the table), as when the plan
+// creates the local distributor (R17, Task 13). Any other error stays one.
 func readProfiles(ctx context.Context, db *sql.DB) ([]state.ProfileCheck, error) {
 	rows, err := db.QueryContext(ctx, qProfiles)
+	var me mssql.Error
+	if errors.As(err, &me) && me.Number == 208 {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
