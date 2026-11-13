@@ -122,7 +122,7 @@ Met while building plan 4, on 2022 CU27; each with its row or test (`docs/analys
 - `sp_reinitsubscription` with the log reader running can return 18752 and mark the subscription all the same (`TestLabApplyOwedBefore`).
 - `sp_articlefilter` stores the clause verbatim, `N''` like NULL; under the CI collation a case-only clause change compares equal, so the 18752 re-read compares in `Latin1_General_BIN2` (`TestEffectQueryCovers`).
 - Msg 245 echoes a value raw and Msg 2628 a prefix of it: `mask` replaces whole values only, a truncated prefix survives (`TestMaskSecrets`).
-- `/dev/null` on standard input is a character device: it passes R44's terminal test and ends `Apply cancelled.`, exit 1, not 2 (Task 10 review; open question for Rudi).
+- `/dev/null` on standard input is a character device: R44's terminal test also refuses the file `os.SameFile` finds equal to `os.DevNull`, so it exits 2 like a pipe (Task 10 review; decided by Rudi on 2026-11-13, `TestApplyDevNullNotTerminal`).
 
 ## stored-procedures/
 
@@ -185,4 +185,4 @@ Parked during plan 4, open:
 - Two R51a guards have no test that fails when broken: the filter on T in `qJobFailedAfter` (a lab test) and the skip of a record taken with the job running (a unit case).
 - The line saying the generation's outcome could not be read prints once per wait, so twice with `-defer-full-snapshot`.
 - R51a prints the last failed step's message; for a snapshot job owned by a non-sysadmin login that is step 3's 14260, while the agent step's "Non-SysAdmins have been denied permission" is not shown.
-- `/dev/null` on standard input exits 1, not 2 (R44's character device test); an operator granted `SELECT` on the three msdb tables is `ok` by R55 without a measurement; the `{servers}` fallback of the agent lookup returns no row on the lab and is unproven.
+- An operator granted `SELECT` on the three msdb tables is `ok` by R55 without a measurement; the `{servers}` fallback of the agent lookup returns no row on the lab and is unproven.

@@ -21,13 +21,20 @@ import (
 var (
 	applyRun = apply.Run
 	// isTerminal tells whether f, standard input, is a terminal: a
-	// character device (R44). nil is not one.
+	// character device (R44) that is not the null device. /dev/null is a
+	// character device too, and a run fed from it would read end of input
+	// at the question and exit 1 instead of 2 (Task 10 review; Rudi's
+	// decision of 2026-11-13). nil is not one.
 	isTerminal = func(f *os.File) bool {
 		if f == nil {
 			return false
 		}
 		fi, err := f.Stat()
-		return err == nil && fi.Mode()&os.ModeCharDevice != 0
+		if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+			return false
+		}
+		null, err := os.Stat(os.DevNull)
+		return err != nil || !os.SameFile(fi, null)
 	}
 	distributionDBOf = reader.DistributionDB
 )

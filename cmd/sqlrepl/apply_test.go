@@ -65,6 +65,31 @@ func TestApplyNoTerminal(t *testing.T) {
 	}
 }
 
+// R44: /dev/null on standard input is a character device but not a
+// terminal: apply exits 2 before connecting, through the real isTerminal.
+func TestApplyDevNullNotTerminal(t *testing.T) {
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { null.Close() })
+	connected := false
+	fakeConnect(t, func(context.Context, string, string, connParams) (*sql.DB, error) {
+		connected = true
+		return nil, errors.New("no connection in this test")
+	})
+	var stdout, stderr bytes.Buffer
+	if code := runApply([]string{"-f", planFile(t, smallFile), "-env", noEnv(t)}, null, &stdout, &stderr); code != 2 {
+		t.Errorf("exit %d, want 2\nstdout %q\nstderr %q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), noTerminal) {
+		t.Errorf("stderr = %q, want the message of R44", stderr.String())
+	}
+	if connected {
+		t.Error("connect called before the terminal check")
+	}
+}
+
 // Only the line yes confirms, and the question is written once (R44).
 func TestConfirmer(t *testing.T) {
 	for in, want := range map[string]bool{"yes\n": true, "yes\r\n": true, "y\n": false, "YES\n": false, "": false, "yes please\n": false} {

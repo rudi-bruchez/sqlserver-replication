@@ -145,7 +145,7 @@ Options: those of `plan` without `-sql` and `-json`, plus `-auto-approve`, and t
 
 Order of a run:
 
-1. Without `-auto-approve` and without a terminal on standard input, apply exits 2 before connecting: `apply needs a terminal to confirm, or -auto-approve`. `-defer-full-snapshot` with `-wait 0` is refused before connecting too.
+1. Without `-auto-approve` and without a terminal on standard input (a pipe, a file, or the null device, which is a character device but not a terminal), apply exits 2 before connecting: `apply needs a terminal to confirm, or -auto-approve`. `-defer-full-snapshot` with `-wait 0` is refused before connecting too.
 2. It connects as `plan` does, then takes the application lock (below) and prints `lock taken on SERVER.DATABASE`.
 3. It reads the servers, runs the prechecks and builds the plan, once, and prints the plan's summary.
 4. It stops there, with nothing run and exit 1, when the plan is refused, when a precondition is `failed`, when the `msdb job permission` or `sql server agent` precondition is `unchecked` at a server where it runs a job operation, or when a secret of the plan is not set (`secret NAME is not set`, one line per secret; an empty variable is not set). An empty plan prints `Plan for SERVER.DATABASE: no changes.`, asks nothing and exits 0.
@@ -207,7 +207,6 @@ Known limits:
 - A misspelled `profile` in a file that also creates the distributor is found only when the call that uses it fails, mid-plan: before the distributor exists there are no profiles to check against.
 - The snapshot folder precondition is not listed when the file omits `working_directory` at the creation of the distributor; `sp_adddistpublisher` refuses a missing folder itself (21037).
 - A publication database in single-user mode makes apply fail at the lock with 924 (`Database 'DATABASE' is already open and can only have one user at a time.`), exit 1, nothing run: apply holds several sessions on the publisher.
-- `/dev/null` on standard input counts as a terminal: without `-auto-approve` the question reads end of input and apply exits 1 with `Apply cancelled.`, not 2.
 - Setting up a remote distributor is out of scope for now (R17): apply connects to an existing remote distributor and locks it like a local one, but the plan refuses to create its configuration.
 
 Required permissions: those of `plan`, those of every call the plan runs, and, at each server where it runs a job operation, the permission to find, update and start the agent jobs in `msdb`, which the `msdb job permission` precondition checks: `sysadmin`, or `SQLAgentOperatorRole` with `SELECT` on `msdb.dbo.sysjobs`, `sysjobactivity` and `syssessions` (the role alone gets 229 on those tables; the granted case is not measured). The `sql server agent` precondition reads `sys.dm_server_services`, which a login that is not `sysadmin` may be refused without `VIEW SERVER STATE` (not measured); a refused read leaves the precondition `unchecked`, and apply refuses.
