@@ -1223,6 +1223,13 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Also observed: not every refusal leaves the transaction open. `sp_changepublication allow_pull N'false'` on a publication with subscriptions is refused with 20013 and leaves `@@TRANCOUNT` at 1; `sp_changearticle ins_cmd N'XCALL ...'` is refused with 15251 and leaves it at 0; `sp_changearticle sync_object` with an unqualified view name outside `dbo` fails with 15001 and leaves it at 1. Source: plan 3 task 8 review, measured (2026-11-12).
 - Source: measured, lab row 11 (`03-add-article C3`); the panel for `sp_droparticle` (design "apply" step 4); panel 3 Mistral, verified items 1 and 2; `lab/campaign/14-filter-view-cases.sql:141-143`.
 
+### The application lock of apply
+
+- Expected: `sp_getapplock` and `sp_releaseapplock` work on the session, whatever its current database.
+- Observed: an application lock belongs to the database it was taken in. `sp_releaseapplock` run from `master` on a lock the session took in another database fails with Msg 1223 ("Cannot release the application lock ... because it is not currently held"), which go-mssqldb returns as the error of the batch; the lock stays held. With `@LockOwner = N'Session'` the lock survives a refused `BEGIN TRAN; RAISERROR`, its `ROLLBACK` and a `USE master` on the holder, and another session gets return code -1 with `@LockTimeout = 0`. With `@LockOwner = N'Transaction'` outside a transaction, `sp_getapplock` returns -999 and takes nothing. Without the `DECLARE @rc int` of the batch, `EXEC @rc = sp_getapplock` fails with Msg 137 (panel XD, not measured again here).
+- Also observed: `sql.Conn.Close()` gives a session that holds the lock back to the pool, and the lock stays held while the pool is open. `sql.Conn.Raw` with a function that returns `driver.ErrBadConn` closes the driver connection: its row leaves `sys.dm_exec_connections` at once and another pool takes the lock. Check it by `connection_id`, not by `@@SPID`: the spid of the discarded session was taken again by the reading session within the second, so a read of `sys.dm_exec_sessions` by spid still found a row.
+- Source: Task 6 of plan 4, `TestLabAppLock` and `TestLabUnlockFailureDiscards` and their break steps, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-13).
+
 ### Several calls with a DECLARE in one batch
 
 - Expected: a script of replication calls, each preceded by its own `DECLARE`, runs as one batch.
@@ -1273,6 +1280,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Observed: when the server has accepted TCP and never answers the prelogin, `PingContext` is not aborted by the end of its context; the call returns only when the peer closes. The "connection timeout" parameter does bound that wait (error "i/o timeout"). A "connection timeout" key written with spaces around it is ignored, so the wait is not bounded.
 - Also observed: the driver reports the number of the last error of a batch, so 208 followed by 4413 reads as 4413 (see "A SELECT on a synonym or a view whose base is gone").
 - Source: Task 18 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
+- Also observed: a statement cancelled by its context does not leave its `*sql.Conn` usable. `BEGIN TRAN; WAITFOR DELAY '00:00:10';` run by `ExecContext` under a context that ends after 1 s returns "context deadline exceeded" after 1.0 s; the next query on the same `*sql.Conn`, under a fresh context, fails with "driver: bad connection", and the one after with "sql: connection is already closed". The pinned connection is gone; a new one from the same pool reads `@@TRANCOUNT` 0. Panels C and G disagreed on this; the lab answers "bad connection", three runs out of three. Source: Task 6 of plan 4, `TestLabCancelDuringStatement`, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-13).
 
 ## Where Microsoft Learn disagrees with the lab
 
