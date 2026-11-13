@@ -491,3 +491,213 @@ func TestLabCloseAfterKill(t *testing.T) {
 		t.Errorf("second pool after the kill: %v", err)
 	}
 }
+
+// The lab tests of the jobs (Task 7). They work on a plain msdb job,
+// m_ap_job, created and deleted by each test; no replication job is
+// touched. Its operations are written by hand in the planner's shape
+// (jobLookup and jobOp in internal/plan): a prologue that finds the job by
+// name, then sp_update_job or the guarded sp_start_job.
+
+const labJobName = "m_ap_job"
+
+const labJobPath = "jobs[m_ap_job]"
+
+// labJobLookup is the prologue of the job operations, as jobLookup writes
+// it, the job found by name.
+const labJobLookup = "DECLARE @job_id uniqueidentifier;\n" +
+	"SELECT @job_id = sj.job_id FROM msdb.dbo.sysjobs AS sj WHERE sj.name = N'" + labJobName + "';\n" +
+	"IF @job_id IS NULL THROW 50000, N'the job of " + labJobPath + " does not exist', 1;"
+
+// labJob creates m_ap_job (one T-SQL step WAITFOR DELAY '00:00:05'),
+// deleting a residue first, and deletes it at the end of the test, after
+// its run has ended.
+func labJob(t *testing.T, admin *sql.DB) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	drop := "IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = N'" + labJobName + "') EXEC msdb.dbo.sp_delete_job @job_name = N'" + labJobName + "';"
+	if _, err := admin.ExecContext(ctx, drop); err != nil {
+		t.Fatalf("delete residue: %v", err)
+	}
+	create := "EXEC msdb.dbo.sp_add_job @job_name = N'" + labJobName + "';\n" +
+		"EXEC msdb.dbo.sp_add_jobstep @job_name = N'" + labJobName + "', @step_name = N'wait', @subsystem = N'TSQL', @command = N'WAITFOR DELAY ''00:00:05'';';\n" +
+		"EXEC msdb.dbo.sp_add_jobserver @job_name = N'" + labJobName + "';"
+	if _, err := admin.ExecContext(ctx, create); err != nil {
+		t.Fatalf("create %s: %v", labJobName, err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		q := idleQuery(labJobLookup)
+		for i := 0; i < 30; i++ {
+			var idle int
+			if err := admin.QueryRowContext(ctx, q).Scan(&idle); err != nil || idle == 1 {
+				break
+			}
+			time.Sleep(time.Second)
+		}
+		if _, err := admin.ExecContext(ctx, drop); err != nil {
+			t.Errorf("delete %s: %v", labJobName, err)
+		}
+	})
+}
+
+// labJobOp is an operation on m_ap_job in the planner's shape.
+func labJobOp(seq int, kind string) plan.Operation {
+	op := plan.Operation{Seq: seq, Kind: kind, Path: labJobPath, Server: labServer, Database: "msdb",
+		Call: plan.Call{Procedure: "msdb.dbo.sp_update_job", Prologue: labJobLookup,
+			Params: []plan.Param{{Name: "@job_id", Value: "@job_id"}}}}
+	switch kind {
+	case "job_disable":
+		op.Action = "disable"
+		op.Call.Params = append(op.Call.Params, plan.Param{Name: "@enabled", Value: "0"})
+	case "job_restore":
+		op.Action = "restore"
+		op.Call.Params = append(op.Call.Params, plan.Param{Name: "@enabled", Value: "1"})
+	case "job_start":
+		op.Action = "start"
+		op.Call.Procedure, op.Call.Guard = "msdb.dbo.sp_start_job", plan.JobIdle
+	}
+	return op
+}
+
+// labJobPlan is a disable, a restore and a start of m_ap_job.
+func labJobPlan() *plan.Plan {
+	return &plan.Plan{Operations: []plan.Operation{labJobOp(1, "job_disable"), labJobOp(2, "job_restore"), labJobOp(3, "job_start")}}
+}
+
+func labJobEnabled(t *testing.T, other *sql.DB) int {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var n int
+	if err := other.QueryRowContext(ctx, "SELECT CONVERT(int, enabled) FROM msdb.dbo.sysjobs WHERE name = N'"+labJobName+"'").Scan(&n); err != nil {
+		t.Fatalf("read sysjobs.enabled: %v", err)
+	}
+	return n
+}
+
+func TestLabWaitIdle(t *testing.T) {
+	admin := labPool(t)
+	labJob(t, admin)
+	s, _ := newLabSession(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	stmts := labJobPlan().Statements()
+	jobStart := stmts[2]
+	if !strings.HasSuffix(jobStart.Text, "SELECT @started AS started;") {
+		t.Fatalf("the job_start text is not R62's:\n%s", jobStart.Text)
+	}
+
+	started, err := s.start(ctx, jobStart)
+	if err != nil || !started {
+		t.Fatalf("first start: started %t, err %v; want started", started, err)
+	}
+	started, err = s.start(ctx, jobStart)
+	if err != nil || started {
+		t.Fatalf("second start while the step runs: started %t, err %v; want not started, no error", started, err)
+	}
+
+	var out strings.Builder
+	if err := waitIdle(ctx, s, labServer, labJobName, labJobLookup, &out); err != nil {
+		t.Fatalf("waitIdle: %v", err)
+	}
+	// The server's clock, read when waitIdle returns, against the run's
+	// stop_execution_date (R49: no Go time is compared with a server column).
+	conn, err := s.conn(ctx, labServer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var after int
+	var stop sql.NullString
+	q := labJobLookup + "\nSELECT CONVERT(nvarchar(30), ja.stop_execution_date, 121), CASE WHEN GETDATE() >= ja.stop_execution_date THEN 1 ELSE 0 END" +
+		" FROM msdb.dbo.sysjobactivity AS ja WHERE ja.job_id = @job_id AND ja.session_id = (SELECT MAX(ss.session_id) FROM msdb.dbo.syssessions AS ss);"
+	if err := conn.QueryRowContext(ctx, q).Scan(&stop, &after); err != nil {
+		t.Fatalf("read the run's stop_execution_date: %v", err)
+	}
+	if !stop.Valid || after != 1 {
+		t.Errorf("waitIdle returned before the run ended: stop_execution_date %v, GETDATE() >= it: %d", stop, after)
+	}
+	const line = "waiting for the snapshot job of " + labJobName + " to be idle\n"
+	if out.String() != line {
+		t.Errorf("waitIdle printed %q, want the wait line once, %q", out.String(), line)
+	}
+
+	out.Reset()
+	begin := time.Now()
+	if err := waitIdle(ctx, s, labServer, labJobName, labJobLookup, &out); err != nil {
+		t.Fatalf("waitIdle on an idle job: %v", err)
+	}
+	if d := time.Since(begin); d >= idlePoll || out.Len() != 0 {
+		t.Errorf("waitIdle on an idle job took %v and printed %q, want at once and nothing", d, out.String())
+	}
+}
+
+func TestLabRestoreAfterCancel(t *testing.T) {
+	admin := labPool(t)
+	labJob(t, admin)
+	s, _ := newLabSession(t)
+	p := labJobPlan()
+	stmts := p.Statements()
+	run, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var j jobs
+	j.arm(p, p.Operations[0])
+	if err := s.exec(run, stmts[0], noSecret); err != nil {
+		t.Fatalf("job_disable: %v", err)
+	}
+	if n := labJobEnabled(t, admin); n != 0 {
+		t.Fatalf("enabled after the disable = %d, want 0", n)
+	}
+	time.AfterFunc(time.Second, cancel)
+	if err := s.exec(run, stmt("msdb", "WAITFOR DELAY '00:00:10';"), noSecret); err == nil {
+		t.Fatal("the statement of the cancelled run succeeded")
+	}
+	if run.Err() == nil {
+		t.Fatal("the run's context is not cancelled")
+	}
+
+	if left := j.restoreRemaining(s, p, 30*time.Second, noSecret); len(left) != 0 {
+		t.Errorf("restoreRemaining left %q disabled, want nothing", left)
+	}
+	if n := labJobEnabled(t, admin); n != 1 {
+		t.Errorf("enabled after restoreRemaining = %d, want 1", n)
+	}
+}
+
+func TestLabRestoreReconnects(t *testing.T) {
+	admin := labPool(t)
+	labJob(t, admin)
+	s, _ := newLabSession(t)
+	p := labJobPlan()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	var j jobs
+	j.arm(p, p.Operations[0])
+	if err := s.exec(ctx, p.Statements()[0], noSecret); err != nil {
+		t.Fatalf("job_disable: %v", err)
+	}
+	pinned, err := s.conn(ctx, labServer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var spid int
+	if err := pinned.QueryRowContext(ctx, "SELECT @@SPID").Scan(&spid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.ExecContext(ctx, fmt.Sprintf("KILL %d;", spid)); err != nil {
+		t.Fatalf("KILL %d: %v", spid, err)
+	}
+
+	if left := j.restoreRemaining(s, p, 30*time.Second, noSecret); len(left) != 0 {
+		t.Errorf("restoreRemaining left %q disabled, want nothing", left)
+	}
+	if n := labJobEnabled(t, admin); n != 1 {
+		t.Errorf("enabled after restoreRemaining = %d, want 1", n)
+	}
+	if now, err := s.conn(ctx, labServer); err != nil || now == pinned {
+		t.Errorf("the restore ran on the killed connection (err %v)", err)
+	}
+}
