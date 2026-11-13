@@ -131,14 +131,27 @@ SELECT working_directory FROM msdb.dbo.MSdistpublishers WHERE UPPER(name) = UPPE
 	// its start read through msdb.dbo.agent_datetime and compared on the
 	// distributor with T truncated to the second, since run_date and
 	// run_time have no fraction. It follows the job lookup, which sets
-	// @job_id (failureQuery). The latest such row: its start and its
-	// message. @p1 T, passed as a datetime.
+	// @job_id (failureQuery). The latest such row: its start, its message,
+	// and the message of the last failed step (step_id > 0, run_status 0)
+	// of the same run, NULL when there is none. A run's step rows are those
+	// of the job between the previous step 0 row and its own (instance_id
+	// grows with each row written). @p1 T, passed as a datetime.
 	qJobFailedAfter = `
-SELECT TOP (1) msdb.dbo.agent_datetime(h.run_date, h.run_time), ISNULL(h.message, N'')
-FROM msdb.dbo.sysjobhistory AS h
-WHERE h.job_id = @job_id AND h.step_id = 0 AND h.run_status = 0
-  AND msdb.dbo.agent_datetime(h.run_date, h.run_time) >= DATEADD(millisecond, -DATEPART(millisecond, @p1), @p1)
-ORDER BY h.instance_id DESC`
+SELECT f.started, f.message, s.message
+FROM (SELECT TOP (1) h.instance_id, msdb.dbo.agent_datetime(h.run_date, h.run_time) AS started,
+             ISNULL(h.message, N'') AS message
+      FROM msdb.dbo.sysjobhistory AS h
+      WHERE h.job_id = @job_id AND h.step_id = 0 AND h.run_status = 0
+        AND msdb.dbo.agent_datetime(h.run_date, h.run_time) >= DATEADD(millisecond, -DATEPART(millisecond, @p1), @p1)
+      ORDER BY h.instance_id DESC) AS f
+OUTER APPLY (SELECT TOP (1) ISNULL(st.message, N'') AS message
+             FROM msdb.dbo.sysjobhistory AS st
+             WHERE st.job_id = @job_id AND st.step_id > 0 AND st.run_status = 0
+               AND st.instance_id < f.instance_id
+               AND st.instance_id > ISNULL((SELECT MAX(p.instance_id) FROM msdb.dbo.sysjobhistory AS p
+                                            WHERE p.job_id = @job_id AND p.step_id = 0
+                                              AND p.instance_id < f.instance_id), 0)
+             ORDER BY st.instance_id DESC) AS s`
 )
 
 // Queries run at the publisher, in the publication database.

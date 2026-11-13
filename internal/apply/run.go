@@ -1206,8 +1206,8 @@ func (r *runner) waitFor(in func(*record) bool) {
 				}
 			}
 			// R51a: a failed generation after T ends its deliveries at
-			// once. The read is a report: one that fails is noted and not
-			// repeated, and the wait goes on.
+			// once. The read is a report: one that fails is printed once,
+			// masked, not repeated, and the wait goes on.
 			if err := r.tr.generationFailed(r.waitCtx, r.s, r.p, sel); err != nil {
 				if r.waitInterrupted() {
 					return
@@ -1215,7 +1215,7 @@ func (r *runner) waitFor(in func(*record) bool) {
 				if r.waitCtx.Err() != nil {
 					return
 				}
-				r.note("%v", err)
+				fmt.Fprintf(r.out, "the outcome of the generation could not be read, the wait goes on: %v\n", err)
 				readFailures = false
 			}
 		}

@@ -42,11 +42,13 @@ type fakeServer struct {
 	// other name; the listing of qListing is empty
 	// (TestListReadsPublisherRoot).
 	rootPublisher, publisherRoot string
-	// jobFailure, when set, is the row qJobFailedAfter returns (its start
-	// and its message); nil, no row. The polls of the wait for deliveries
+	// jobFailure, when set, is the row qJobFailedAfter returns (its start,
+	// the step 0 message and the last failed step's message or nil); nil,
+	// no row. failureErr, when set, is that query's error. The polls of the wait for deliveries
 	// are answered for the distribution database "distribution": no agent
 	// row, no history line, sync_method native (TestWaitForFailedGeneration).
 	jobFailure []driver.Value
+	failureErr error
 }
 
 func (f *fakeServer) add(b string) {
@@ -177,6 +179,9 @@ func (c *applyFakeConn) QueryContext(_ context.Context, q string, args []driver.
 	if strings.HasSuffix(q, "\n"+qJobFailedAfter) {
 		// The T passed must be a datetime, the type it was read as.
 		c.f.add(fmt.Sprintf("job failure %T %v", args[0].Value, time.Time(args[0].Value.(mssql.DateTime1)).Format(time.RFC3339Nano)))
+		if c.f.failureErr != nil {
+			return nil, c.f.failureErr
+		}
 		if c.f.jobFailure == nil {
 			return &applyFakeRows{}, nil
 		}
@@ -866,17 +871,21 @@ func waitRunner(t *testing.T, db *sql.DB, at time.Time, wait time.Duration) (*ru
 // wait goes on until -wait is spent; an S7 record is not read.
 func TestWaitForFailedGeneration(t *testing.T) {
 	at := time.Date(2026, 11, 13, 5, 57, 7, 853e6, time.UTC)
+	// The messages of the run measured on the lab (final fix report).
 	const msg = "The job failed.  The Job was invoked by User sa.  The last step to run was step 3 (Detect nonlogged agent shutdown.)."
+	const stepMsg = "Non-SysAdmins have been denied permission to run replication jobsteps without a proxy account.  The step failed."
+	started := time.Date(2026, 11, 13, 5, 57, 8, 0, time.UTC)
 
 	db, f := newFakeServer(t)
-	f.jobFailure = []driver.Value{time.Date(2026, 11, 13, 5, 57, 8, 0, time.UTC), msg}
+	f.jobFailure = []driver.Value{started, msg, stepMsg}
 	r, rec, _, _ := waitRunner(t, db, at, 10*time.Second)
 	t0 := time.Now()
 	r.waitFor(func(*record) bool { return true })
 	if d := time.Since(t0); d > 3*time.Second {
 		t.Errorf("a failed generation was waited for %v: notes %q, batches %q", d, r.res.Notes, f.log())
 	}
-	want := "the snapshot job of m_p failed, run started 2026-11-13 05:57:08: " + msg
+	// The cause is the failed step's message, not the step 0 row's.
+	want := "the snapshot job of m_p failed, run started 2026-11-13 05:57:08: " + stepMsg
 	if rec.unlisted != want {
 		t.Errorf("detail %q, want %q", rec.unlisted, want)
 	}
@@ -898,8 +907,17 @@ func TestWaitForFailedGeneration(t *testing.T) {
 		t.Errorf("the outcome was never read: %q", f.log())
 	}
 
+	// No failed step row: the step 0 message.
 	db, f = newFakeServer(t)
-	f.jobFailure = []driver.Value{time.Date(2026, 11, 13, 5, 57, 8, 0, time.UTC), msg}
+	f.jobFailure = []driver.Value{started, msg, nil}
+	r, rec, _, _ = waitRunner(t, db, at, 10*time.Second)
+	r.waitFor(func(*record) bool { return true })
+	if want := "the snapshot job of m_p failed, run started 2026-11-13 05:57:08: " + msg; rec.unlisted != want {
+		t.Errorf("no failed step: detail %q, want %q", rec.unlisted, want)
+	}
+
+	db, f = newFakeServer(t)
+	f.jobFailure = []driver.Value{started, msg, stepMsg}
 	r, rec, _, _ = waitRunner(t, db, at, 1500*time.Millisecond)
 	rec.S7 = true
 	r.waitFor(func(*record) bool { return true })
@@ -929,5 +947,32 @@ func TestDeferWaitInterrupted(t *testing.T) {
 	}
 	if r.res.Outcome != OutcomeInterrupted {
 		t.Errorf("outcome %q, want %q", r.res.Outcome, OutcomeInterrupted)
+	}
+}
+
+// TestWaitForFailureUnread: when the read of R51a fails, one line says the
+// generation's outcome could not be read, with the error and the bound
+// secrets masked, and the wait goes on to the end of -wait.
+func TestWaitForFailureUnread(t *testing.T) {
+	db, f := newFakeServer(t)
+	f.failureErr = mssql.Error{Number: 229, Class: 14, Message: "The SELECT permission was denied on the object 'sysjobhistory' (s3cr3t-value)."}
+	r, rec, out, _ := waitRunner(t, db, time.Date(2026, 11, 13, 5, 57, 7, 0, time.UTC), 2500*time.Millisecond)
+	r.values = []string{"s3cr3t-value"}
+	r.out = maskWriter{w: out, values: &r.values}
+	t0 := time.Now()
+	r.waitFor(func(*record) bool { return true })
+	if d := time.Since(t0); d < 2*time.Second || rec.unlisted != "" {
+		t.Errorf("waited %v, detail %q: want the whole -wait and no detail", d, rec.unlisted)
+	}
+	o := out.String()
+	const prefix = "the outcome of the generation could not be read, the wait goes on: read the outcome of the snapshot job of m_p: "
+	if strings.Count(o, prefix) != 1 || !strings.Contains(o, "sysjobhistory") {
+		t.Errorf("output:\n%s", o)
+	}
+	if strings.Contains(o, "s3cr3t-value") || !strings.Contains(o, "****") {
+		t.Errorf("the secret is not masked:\n%s", o)
+	}
+	if n := f.count("job failure "); n != 1 {
+		t.Errorf("the outcome was read %d times, want once", n)
 	}
 }

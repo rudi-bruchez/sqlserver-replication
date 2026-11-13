@@ -747,9 +747,10 @@ func failureQuery(lookup string) string {
 // generationFailed ends at once every record of recs still pending whose
 // publication's snapshot job has a failed job outcome (step 0) for a run
 // that started at or after the record's T (R51a): it can no longer be
-// confirmed by the run it waits for, and its detail names the job's last
-// history message. T is passed back as a datetime, the type it was read
-// as, and compared on the distributor (qJobFailedAfter). An S7 record,
+// confirmed by the run it waits for, and its detail names the message of
+// the run's last failed step, else of its job outcome. T is passed back as
+// a datetime, the type it was read as, and compared on the distributor
+// (qJobFailedAfter). An S7 record,
 // which any run confirms, and a record whose job ran at T, which is
 // retaken with a later T, are not read. A job the lookup does not find
 // (50000) has no outcome.
@@ -771,7 +772,8 @@ func (t *tracker) generationFailed(ctx context.Context, s *session, p *plan.Plan
 		}
 		var at time.Time
 		var msg string
-		switch err := conn.QueryRowContext(ctx, failureQuery(lookup), mssql.DateTime1(r.T)).Scan(&at, &msg); {
+		var step sql.NullString
+		switch err := conn.QueryRowContext(ctx, failureQuery(lookup), mssql.DateTime1(r.T)).Scan(&at, &msg, &step); {
 		case errors.Is(err, sql.ErrNoRows):
 			continue
 		case err != nil:
@@ -779,6 +781,11 @@ func (t *tracker) generationFailed(ctx context.Context, s *session, p *plan.Plan
 				continue
 			}
 			return fmt.Errorf("read the outcome of the snapshot job of %s: %w", r.Publication, err)
+		}
+		// The cause is in the last failed step of the run; the step 0
+		// message, which only names the last step run, is the fallback.
+		if step.Valid {
+			msg = step.String
 		}
 		r.unlisted = fmt.Sprintf("the snapshot job of %s failed, run started %s: %s", r.Publication, at.Format("2006-01-02 15:04:05"), msg)
 	}
