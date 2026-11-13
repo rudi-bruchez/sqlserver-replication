@@ -37,6 +37,11 @@ type owed struct {
 	Listing                   []string  // run folders at T
 	RunningAtT, S7            bool      // RunningAtT: retaken once the job is idle, never confirmed before
 	Created, Concurrent       bool      // Created: the plan creates the publication
+	// NoRun: the publication exists before the plan and has no run yet, its
+	// folder absent from a listing that shows <root>/unc (R50a): its
+	// listing at T is empty and its folder is identified later, as for a
+	// created one.
+	NoRun bool
 }
 
 // Delivery is the outcome of one delivery owed, for the end of the run
@@ -170,6 +175,7 @@ type moment struct {
 	listing             []string
 	unlisted            string
 	created, concurrent bool
+	noRun               bool
 }
 
 // serversTable decides {servers} once, by reading MSreplservers (error 208
@@ -249,8 +255,9 @@ func concurrentMethod(ctx context.Context, s *session, p *plan.Plan, pub string)
 // changes the root, both roots are listed and a run present in either is
 // refused (controller's ruling, review of Task 4). A publication that
 // exists before the plan and whose folder no root shows can never be
-// confirmed; one the plan creates has no run before T, and its folder is
-// identified by a later poll.
+// confirmed, unless a root's listing shows its unc directory (R50a,
+// fromListings); one the plan creates has no run before T, and its folder
+// is identified by a later poll.
 func (t *tracker) list(ctx context.Context, s *session, p *plan.Plan, pub string, m *moment) error {
 	var roots []string
 	for _, r := range []string{p.SnapshotRoots[pub], p.SnapshotRootsBefore[pub]} {
@@ -269,28 +276,60 @@ func (t *tracker) list(ctx context.Context, s *session, p *plan.Plan, pub string
 		m.unlisted = fmt.Sprintf("snapshot folder of %s cannot be listed: its snapshot root is unknown", pub)
 		return nil
 	}
+	var ls []rootListing
 	for _, root := range roots {
 		entries, err := listRoot(ctx, s, t.distributor, root)
 		if err != nil {
 			return err
 		}
-		path, err := pubFolder(entries, root, t.publisher, p.Database, pub)
+		ls = append(ls, rootListing{root: root, entries: entries})
+	}
+	m.fromListings(ls, t.publisher, p.Database, pub)
+	return nil
+}
+
+// rootListing is the listing of one snapshot root at T.
+type rootListing struct {
+	root    string
+	entries []fsEntry
+}
+
+// fromListings fills the folder, the run folders, unlisted and noRun of
+// pub from the listings of its roots at T (R50, R50a). A folder found in
+// no listing: for a publication the plan creates, nothing (an empty
+// listing); for one that exists before the plan, noRun when a listing
+// shows <root>/unc (the root is readable and the publication has no run
+// yet: a folder that cannot be read still shows as a child of its parent,
+// measured by the controller on repllab with chmod 000), else unlisted,
+// "snapshot folder of <publication> cannot be listed at <roots>" (a
+// missing or unreadable root lists 0 rows).
+func (m *moment) fromListings(ls []rootListing, publisher, database, pub string) {
+	unc := false
+	var roots []string
+	for _, l := range ls {
+		roots = append(roots, l.root)
+		path, err := pubFolder(l.entries, l.root, publisher, database, pub)
 		switch {
 		case isNoFolder(err):
+			unc = unc || hasUnc(l.entries, l.root)
 			continue
 		case err != nil:
 			m.unlisted = err.Error()
-			return nil
+			return
 		}
 		if m.folder == "" {
 			m.folder = folderName(path)
 		}
-		m.listing = append(m.listing, runFolders(entries, path)...)
+		m.listing = append(m.listing, runFolders(l.entries, path)...)
 	}
-	if m.folder == "" && !m.created {
-		m.unlisted = noFolderError{publication: pub, path: strings.Join(roots, " and ")}.Error()
+	if m.folder != "" || m.created {
+		return
 	}
-	return nil
+	if unc {
+		m.noRun = true
+		return
+	}
+	m.unlisted = noFolderError{publication: pub, path: strings.Join(roots, " and ")}.Error()
 }
 
 // createdBy tells whether the plan creates the publication.
@@ -325,7 +364,7 @@ func (s *session) connIn(ctx context.Context, server, database string) (*sql.Con
 func (r *record) set(m moment) {
 	r.T, r.Mark, r.RunningAtT = m.t, m.mark, m.running
 	r.Folder, r.Listing, r.unlisted = m.folder, m.listing, m.unlisted
-	r.Created, r.Concurrent = m.created, m.concurrent
+	r.Created, r.Concurrent, r.NoRun = m.created, m.concurrent, m.noRun
 }
 
 // record records the deliveries owed to subs by pub (R50): T, the mark,
@@ -521,7 +560,7 @@ func (t *tracker) poll(ctx context.Context, s *session, p *plan.Plan) error {
 			}
 			r.concurrentOK = ok
 		}
-		if r.Folder == "" && r.Created {
+		if r.Folder == "" && (r.Created || r.NoRun) {
 			if err := t.identify(ctx, s, p, r); err != nil {
 				return err
 			}

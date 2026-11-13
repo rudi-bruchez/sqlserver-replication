@@ -374,3 +374,56 @@ func TestPullStartFor(t *testing.T) {
 		t.Errorf("pullStartFor found a job_start for a subscription the plan does not start")
 	}
 }
+
+// TestNoRunYet: R50a. A publication that exists before the plan, whose
+// folder is absent from a listing that shows <root>/unc, has no run yet:
+// its listing at T is empty, its folder is identified by a later poll, and
+// a later run confirms its delivery. Without the unc row (an empty
+// listing, a missing or unreadable root, or other rows only), the delivery
+// stays unconfirmed with the R50 message.
+func TestNoRunYet(t *testing.T) {
+	unc := labRoot + "/unc/"
+	noFolder := "snapshot folder of m_p cannot be listed at " + labRoot
+	at := time.Date(2026, 11, 13, 3, 49, 40, 0, time.UTC)
+	mark := []byte{0, 0, 0, 0, 0, 0, 0x10, 0}
+
+	var m moment
+	m.fromListings([]rootListing{{labRoot, []fsEntry{dir(labRoot+"/", "unc"), dir(unc, "REPLLAB_SALES_SALESPUB")}}},
+		"repllab", "m_pdb_x", "m_p")
+	if !m.noRun || m.unlisted != "" || m.folder != "" || len(m.listing) != 0 {
+		t.Fatalf("unc without the folder: %+v, want no run yet and an empty listing", m)
+	}
+	m.t, m.mark = at, mark
+	r := &record{owed: owed{Publication: "m_p", Subscription: "SUB/m_sdb"}, agents: []int{7}}
+	r.set(m)
+	later := append(labListing(), dir(unc+"REPLLAB_M_PDB_X_M_P/", "20261113034940"))
+	r.identifyIn(later, labRoot, "repllab", "m_pdb_x")
+	tr := &tracker{lines: map[lineKey]line{}, records: []*record{r}}
+	tr.keep(line{agent: 7, ts: []byte{0, 0, 0, 0, 0, 0, 0x10, 1}, time: at,
+		comments: `Delivered snapshot from the 'unc\REPLLAB_M_PDB_X_M_P\20261113034940\' sub-folder in 107 milliseconds`})
+	tr.confirm()
+	if want := `REPLLAB_M_PDB_X_M_P\20261113034940`; r.run != want {
+		t.Errorf("a later run after no run yet: confirmed %q, want %q", r.run, want)
+	}
+
+	for _, c := range []struct {
+		name    string
+		entries []fsEntry
+	}{
+		{"an empty listing", nil},
+		{"other rows, no unc", []fsEntry{dir(labRoot+"/", "other"), file(labRoot+"/", "unc"),
+			dir(labRoot+"/other/", "unc")}},
+	} {
+		var m moment
+		m.fromListings([]rootListing{{labRoot, c.entries}}, "repllab", "m_pdb_x", "m_p")
+		if m.noRun || m.unlisted != noFolder {
+			t.Errorf("%s: no run %v, unlisted %q, want %q", c.name, m.noRun, m.unlisted, noFolder)
+		}
+	}
+	// A publication the plan creates: an empty listing, never unlisted.
+	m = moment{created: true}
+	m.fromListings([]rootListing{{labRoot, nil}}, "repllab", "m_pdb_x", "m_p")
+	if m.unlisted != "" || m.noRun {
+		t.Errorf("created: %+v", m)
+	}
+}

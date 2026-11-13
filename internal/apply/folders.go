@@ -92,6 +92,19 @@ func pubFolder(entries []fsEntry, root, publisher, database, publication string)
 	return "", fmt.Errorf("snapshot folder of %s not identified", publication)
 }
 
+// hasUnc tells whether a listing of root shows <root>/unc, a directory
+// whose parent is root (R50a): the root is readable, so a publication
+// folder absent from it does not exist.
+func hasUnc(entries []fsEntry, root string) bool {
+	unc := normPath(root) + "/unc"
+	for _, e := range entries {
+		if e.IsDir && samePath(e.FullPath, unc) && samePath(e.Parent, root) {
+			return true
+		}
+	}
+	return false
+}
+
 // runFolders is the names of the directories whose parent is folderPath,
 // sorted: the runs of that publication folder, never another's, nor a
 // file.

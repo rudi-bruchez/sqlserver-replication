@@ -423,28 +423,20 @@ func TestLabApplyResumesAfterFailure(t *testing.T) {
 	noLinePrefix(t, lines, "job left disabled")
 
 	// The second run. m_p exists before its plan and has never generated a
-	// snapshot, so its folder is absent at T: R50 makes the delivery
-	// unconfirmed ("For a publication that exists before the plan, a
-	// listing at T that does not find its folder makes the delivery
-	// unconfirmed"), exit 3, which the brief's "delivered" contradicts
-	// (Task 12 report, for a ruling). The data arrives all the same.
+	// snapshot: its folder is absent at T from a listing that shows the
+	// root's unc directory, so it has no run yet (R50a, fix round 1), and
+	// the run apply starts confirms the delivery.
 	res, _, err = e.applyRun(t, des, plan.Options{}, nil)
-	if err != nil {
-		t.Fatalf("apply: %v", err)
-	}
-	if res.Outcome != apply.OutcomeApplied || len(res.Remaining) != 0 {
-		t.Fatalf("the second run ended %s, remaining %v; want applied, none", res.Outcome, res.Remaining)
+	e.wantRun(t, res, err, apply.OutcomeApplied)
+	if len(res.Remaining) != 0 || res.ExitCode() != 0 {
+		t.Fatalf("the second run: remaining %v, exit %d; want none, 0", res.Remaining, res.ExitCode())
 	}
 	if opSeq(res.Plan, "sp_addpublication") != 0 || opSeq(res.Plan, "sp_addsubscription") == 0 {
 		t.Errorf("the second run is not the remainder of the first\n%s", res.Plan.Summary())
 	}
-	folder := "snapshot folder of m_p cannot be listed at "
-	if len(res.Deliveries) != 1 || res.Deliveries[0].Status != "unconfirmed" || !strings.HasPrefix(res.Deliveries[0].Detail, folder) ||
-		res.ExitCode() != 3 {
-		t.Errorf("deliveries %+v, exit %d; want m_p unconfirmed, %q (R50), exit 3", res.Deliveries, res.ExitCode(), folder)
-	}
+	e.wantDelivered(t, res, "m_p")
 	e.deliveries = []delivery{{"m_t1", 10}, {"m_t2", 20}}
-	e.waitAll(t)
+	e.checkDelivered(t)
 	e.converged(t, des)
 }
 
