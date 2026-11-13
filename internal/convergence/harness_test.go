@@ -441,6 +441,14 @@ func (e *env) apply(t *testing.T, des *model.Config, opt plan.Options, want appl
 			if d.Status != "confirmed" {
 				t.Fatalf("delivery %s to %s: %s (%s)", d.Publication, d.Subscription, d.Status, d.Detail)
 			}
+			// A confirmation always names the run that delivered (R50).
+			if d.Run == "" {
+				t.Fatalf("delivery %s to %s confirmed without a run", d.Publication, d.Subscription)
+			}
+		}
+		if len(res.JobsLeftDisabled) > 0 || res.LockLost || len(res.LockReleaseFailures) > 0 {
+			t.Fatalf("applied with jobs left disabled %q, lock lost %v, lock release failures %q",
+				res.JobsLeftDisabled, res.LockLost, res.LockReleaseFailures)
 		}
 	}
 	return res
@@ -462,8 +470,12 @@ func (e *env) wantDelivered(t *testing.T, res *apply.Result, pubs ...string) {
 }
 
 // checkTimeout bounds the data checks after apply, which has already
-// confirmed the delivery (R60).
-const checkTimeout = 15 * time.Second
+// confirmed the delivery (R60). Short on purpose: a longer wait lets the
+// agent deliver after apply returned, which hides a confirmation apply did
+// not earn (Task 11 review, Important 1). 0 is one read: measured once on
+// the lab (fix round 2), the rows of all 16 apply scenarios were there at
+// the first read after apply confirmed their delivery.
+const checkTimeout = 0
 
 // checkDelivered checks the row counts the test expects (e.deliveries),
 // waiting at most checkTimeout.
@@ -490,8 +502,9 @@ func (e *env) generationEnded(pub string) string {
 		return "job idle read: " + err.Error()
 	}
 	var done int
-	err := e.master.QueryRow(`SELECT COUNT(*) FROM distribution.dbo.MSsnapshot_history AS h
-JOIN distribution.dbo.MSsnapshot_agents AS a ON a.id = h.agent_id
+	dist := quoteName(e.applied.DistributionDB)
+	err := e.master.QueryRow(`SELECT COUNT(*) FROM `+dist+`.dbo.MSsnapshot_history AS h
+JOIN `+dist+`.dbo.MSsnapshot_agents AS a ON a.id = h.agent_id
 WHERE a.publisher_db = @db AND a.publication = @pub AND h.runstatus = 2 AND h.start_time >= @t`,
 		sql.Named("db", e.db), sql.Named("pub", pub), sql.Named("t", e.applyT)).Scan(&done)
 	if err != nil {

@@ -27,6 +27,9 @@ import (
 type fakeServer struct {
 	mu      sync.Mutex
 	batches []string // in the order received; a lock batch as "lock <resource>"
+	// failRestore makes every sp_update_job with @enabled = 1 fail
+	// (TestRunFailedRestore).
+	failRestore bool
 }
 
 func (f *fakeServer) add(b string) {
@@ -84,8 +87,11 @@ func (c *applyFakeConn) ExecContext(_ context.Context, q string, _ []driver.Name
 		return driver.RowsAffected(0), nil
 	}
 	if strings.Contains(q, "EXEC msdb.dbo.sp_update_job") {
-		// The job operations of TestRunRestoreLogged.
+		// The job operations of TestRunRestoreLogged and TestRunFailedRestore.
 		c.f.add("exec " + q)
+		if c.f.failRestore && strings.Contains(q, "@enabled = 1") {
+			return nil, fmt.Errorf("fake: restore refused")
+		}
 		return driver.RowsAffected(0), nil
 	}
 	c.f.add("exec " + q)
@@ -403,6 +409,10 @@ func TestExitCode(t *testing.T) {
 		{"interrupt with operations unrun", Result{Outcome: OutcomeInterrupted, Ran: []int{1}, Remaining: []int{2}, Deliveries: confirmed}, 1},
 		{"a failed lock release", Result{Outcome: OutcomeApplied, Ran: []int{1}, Deliveries: confirmed,
 			LockReleaseFailures: []string{"lock release failed on REPLLAB.Sales: sp_releaseapplock returned -999"}}, 1},
+		{"every operation ran, a job left disabled", Result{Outcome: OutcomeApplied, Ran: []int{1}, Deliveries: confirmed,
+			JobsLeftDisabled: []string{"publications[p].snapshot_agent"}}, 1},
+		{"the deferral's wait timed out, a job left disabled", Result{Outcome: OutcomeUnconfirmed, Ran: []int{1}, Remaining: []int{2},
+			Deliveries: unconfirmed, JobsLeftDisabled: []string{"publications[p].snapshot_agent"}}, 1},
 		// 3
 		{"every operation ran, a delivery unconfirmed", Result{Outcome: OutcomeApplied, Ran: []int{1}, Deliveries: append(confirmed, unconfirmed...)}, 3},
 		{"every operation ran, a delivery not awaited", Result{Outcome: OutcomeApplied, Ran: []int{1}, Deliveries: notAwaited}, 3},
@@ -567,5 +577,40 @@ func TestFailureKeepsStep(t *testing.T) {
 	}
 	if got := r.failure(4, fmt.Errorf("stop at 4")).text(); got != "stop at 4" {
 		t.Errorf("not a server error: %q", got)
+	}
+}
+
+// A job_restore that fails, on the success path and again on the way out,
+// never ends the run applied: the statement failed and the job is left
+// disabled, exit 1 (R48, R52; Task 11 fix round 2).
+func TestRunFailedRestore(t *testing.T) {
+	db, f := newFakeServer(t)
+	f.failRestore = true
+	job := func(seq, step int, kind, action, enabled string) plan.Operation {
+		return plan.Operation{Seq: seq, Step: step, Kind: kind, Action: action, Path: "publications[SalesPub].snapshot_agent",
+			Server: "REPLLAB", Database: "msdb", Affects: plan.Affects{Publications: []string{"SalesPub"}},
+			Call: plan.Call{Procedure: "msdb.dbo.sp_update_job", Prologue: "DECLARE @job_id uniqueidentifier;",
+				Params: []plan.Param{{Name: "@job_id", Value: "@job_id"}, {Name: "@enabled", Value: enabled}}},
+			Costs: []plan.Cost{plan.CostOnline}}
+	}
+	p := &plan.Plan{Publisher: "REPLLAB", Database: "Sales", DistributionDB: "distribution",
+		SnapshotJobs: map[string]string{"SalesPub": "DECLARE @job_id uniqueidentifier;"},
+		Operations: []plan.Operation{
+			job(1, 0, "job_disable", "disable", "0"),
+			job(2, 12, "job_restore", "restore", "1"),
+		},
+		Totals: plan.Totals{Operations: 2, ByCost: map[plan.Cost]int{plan.CostOnline: 2}}}
+	var out bytes.Buffer
+	tg := Target{Server: "REPLLAB", Database: "Sales", Servers: Servers{"REPLLAB": db},
+		Plan: func(context.Context) (*plan.Plan, error) { return p, nil }}
+	res, err := Run(context.Background(), tg, Options{Wait: time.Minute, Timeout: 2 * time.Second, AutoApprove: true, Out: &out})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome == OutcomeApplied || res.ExitCode() != 1 {
+		t.Errorf("outcome %q, exit %d, want not applied and exit 1\n%s", res.Outcome, res.ExitCode(), out.String())
+	}
+	if len(res.JobsLeftDisabled) != 1 {
+		t.Errorf("jobs left disabled %v, want the snapshot agent's\n%s", res.JobsLeftDisabled, out.String())
 	}
 }

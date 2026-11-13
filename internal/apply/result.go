@@ -83,7 +83,9 @@ func (r *Result) ExitCode() int {
 	if r == nil {
 		return 1
 	}
-	if len(r.LockReleaseFailures) > 0 {
+	// A failed lock release, and a job left disabled whatever the outcome
+	// (R48, R52; Task 11 fix round 2), are exit 1.
+	if len(r.LockReleaseFailures) > 0 || len(r.JobsLeftDisabled) > 0 {
 		return 1
 	}
 	switch r.Outcome {

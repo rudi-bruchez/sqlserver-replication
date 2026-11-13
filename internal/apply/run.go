@@ -36,7 +36,8 @@ type Options struct {
 	// BeforeStatement is a test hook (Task 12): an error stops the run
 	// before that statement, as a failure. It fires when the statement is
 	// about to be sent: for a held job_start of step 12, after the wait for
-	// its generation (R51). A second start (again) does not call it.
+	// its generation (R51), and not at all when that wait ends the run. A
+	// second start (again) does not call it.
 	BeforeStatement func(seq int) error
 }
 
@@ -1097,7 +1098,9 @@ func (r *runner) heldPhase() bool {
 		}
 		// The hook fires when the statement is sent, after the wait for
 		// its generation (Task 11 fix round 1: the scenario's hook reads
-		// the generation's end at that moment).
+		// the generation's end at that moment). When awaitGeneration ends
+		// the run (-wait spent, an interrupt), the hook of this held
+		// statement never fires.
 		if r.o.BeforeStatement != nil {
 			if err := r.o.BeforeStatement(op.Seq); err != nil {
 				r.failStep(op.Seq, err)

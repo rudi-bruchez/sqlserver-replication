@@ -70,8 +70,14 @@ func jobsAroundAll(t *testing.T, p *plan.Plan, restore bool) {
 // pollTimeout, until it returns want.
 func (e *env) waitFor(t *testing.T, what, q string, want int) {
 	t.Helper()
+	e.waitForWithin(t, what, q, want, pollTimeout)
+}
+
+// waitForWithin is waitFor within timeout: one read when timeout is 0.
+func (e *env) waitForWithin(t *testing.T, what, q string, want int, timeout time.Duration) {
+	t.Helper()
 	q = e.replace(q)
-	deadline := time.Now().Add(pollTimeout)
+	deadline := time.Now().Add(timeout)
 	var n int
 	var err error
 	for {
@@ -84,7 +90,7 @@ func (e *env) waitFor(t *testing.T, what, q string, want int) {
 		}
 		time.Sleep(pollEvery)
 	}
-	t.Fatalf("%s: %d (%v) after %s, want %d\n%s", what, n, err, pollTimeout, want, e.history())
+	t.Fatalf("%s: %d (%v) after %s, want %d\n%s", what, n, err, timeout, want, e.history())
 }
 
 // waitReady waits for the immediate_sync snapshot of a publication of {db}
@@ -93,6 +99,28 @@ func (e *env) waitReady(t *testing.T, pub string) {
 	t.Helper()
 	e.waitFor(t, pub+" immediate_sync_ready",
 		"SELECT COUNT(*) FROM {db}.dbo.syspublications WHERE name = N'"+pub+"' AND immediate_sync_ready = 1", 1)
+}
+
+// stopPushJob stops the push distribution job of pub's subscription to
+// {sub} (an m_ job of the test) and waits until it reads idle.
+func (e *env) stopPushJob(t *testing.T, pub string) {
+	t.Helper()
+	lookup := e.replace(`DECLARE @job_id uniqueidentifier = (SELECT CONVERT(uniqueidentifier, job_id)
+FROM ` + quoteName(e.applied.DistributionDB) + `.dbo.MSdistribution_agents
+WHERE publisher_db = N'{db}' AND publication = N'` + pub + `' AND subscriber_db = N'{sub}');`)
+	if _, err := e.master.Exec(lookup + "\nIF NOT " + plan.JobIdle + " EXEC msdb.dbo.sp_stop_job @job_id = @job_id;"); err != nil {
+		t.Errorf("stop the push job of %s: %v", pub, err)
+		return
+	}
+	deadline := time.Now().Add(pollTimeout)
+	for time.Now().Before(deadline) {
+		var idle int
+		if err := e.master.QueryRow(lookup + "\nSELECT CASE WHEN " + plan.JobIdle + " THEN 1 ELSE 0 END;").Scan(&idle); err == nil && idle == 1 {
+			return
+		}
+		time.Sleep(pollEvery)
+	}
+	t.Errorf("the push job of %s still runs %s after its stop", pub, pollTimeout)
 }
 
 // pushRef is the push distribution agent of pub's subscription to {sub}.
@@ -179,7 +207,7 @@ func TestLabImmediateSync(t *testing.T) {
 	e.wantDelivered(t, res, "m_pi")
 	e.deliveries = []delivery{{"m_t1", 20}, {"m_t2", 20}}
 	e.checkDelivered(t)
-	e.waitFor(t, "index m_ix_a at the subscriber", ixAtSub, 1)
+	e.waitForWithin(t, "index m_ix_a at the subscriber", ixAtSub, 1, checkTimeout)
 	e.converged(t, des)
 }
 
@@ -233,9 +261,16 @@ func TestLabDeferFullSnapshot(t *testing.T) {
 	// apply waits for the delivery of m_t2 before the restore of
 	// immediate_sync (R51, spec "-defer-full-snapshot" step 3). On the lab
 	// a restore before the delivery does not block it, so the data checks
-	// cannot see the order: it is read when the restore is sent.
+	// cannot see the order: it is read when the restore is sent. The push
+	// agent of m_pi runs continuously and could deliver before apply's own
+	// start of step 9; it is stopped when the generate_and_wait is sent, so
+	// that the only delivery is the one that start brings.
 	hooked := 0
 	e.hook = func(op plan.Operation) {
+		if op.Kind == "generate_and_wait" {
+			e.stopPushJob(t, "m_pi")
+			return
+		}
 		prop, _ := param(op, "@property")
 		val, _ := param(op, "@value")
 		if procedure(op) != "sp_changepublication" || prop != "N'immediate_sync'" || val != "N'true'" {
