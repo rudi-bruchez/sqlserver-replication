@@ -181,4 +181,8 @@ Parked during plan 4, open:
 - The refusals of an LSN above or below the restore's `last_lsn` are unit-tested only (`TestCheckLSN`).
 - A misspelled profile on a plan that creates the distributor fails mid-plan, not up front: precheck cannot read the profiles of a distributor that does not exist yet.
 - The snapshot folder precondition is not checked when `working_directory` is omitted at the creation of the distributor (`sp_adddistpublisher` refuses a missing folder itself, 21037).
+- R51a takes the latest failed job outcome after T, not the latest outcome: a failure followed by a successful run within the wait still ends the delivery unconfirmed. Narrow it to the latest outcome failed with the job idle.
+- Two R51a guards have no test that fails when broken: the filter on T in `qJobFailedAfter` (a lab test) and the skip of a record taken with the job running (a unit case).
+- The line saying the generation's outcome could not be read prints once per wait, so twice with `-defer-full-snapshot`.
+- R51a prints the last failed step's message; for a snapshot job owned by a non-sysadmin login that is step 3's 14260, while the agent step's "Non-SysAdmins have been denied permission" is not shown.
 - `/dev/null` on standard input exits 1, not 2 (R44's character device test); an operator granted `SELECT` on the three msdb tables is `ok` by R55 without a measurement; the `{servers}` fallback of the agent lookup returns no row on the lab and is unproven.
