@@ -1,0 +1,6 @@
+# Microsoft SQL Server 2022 (RTM-CU27-GDR) (KB5126934) - 16.0.4305.5 (X64)
+R|FA.apply|0|expected=0 last_line=Applied 14 of 14 operations; deliveries: 1 confirmed, 0 unconfirmed, 0 not awaited.
+R|FA.delivered|20|expected=20 table=m_fresh_sub.dbo.m_t1
+R|FA.export_plan|no changes|first_line=Plan for m-fresh.m_fresh_pub: no changes.
+R|FA.file_plan|no changes|first_line=Plan for m-fresh.m_fresh_pub: no changes.
+R|TOTAL|4

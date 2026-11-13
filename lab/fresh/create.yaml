@@ -1,0 +1,32 @@
+# The desired file of lab/fresh-apply.sh, a template: the script replaces
+# {server} with the @@SERVERNAME of m-fresh and {admin_secret} with the name
+# of the environment variable that holds the generated distributor_admin
+# password (model.SecretName: SQLREPL_SQL_<server>_DISTRIBUTOR_ADMIN).
+# From an instance with no replication: the local distributor (R17), the
+# publication m_p of m_fresh_pub with the article m_t1, and its push
+# subscription to m_fresh_sub on the same instance.
+version: 2
+publisher:
+  server: {server}
+  database: m_fresh_pub
+distributor:
+  server: {server}
+  database: distribution
+  working_directory: /var/opt/mssql/ReplData
+  admin_password_secret: {admin_secret}
+publications:
+  - name: m_p
+    type: transactional
+    status: active
+    sync_method: native
+    independent_agent: true
+    articles:
+      - name: m_t1
+        source:
+          schema: dbo
+          name: m_t1
+    subscriptions:
+      - subscriber: {server}
+        database: m_fresh_sub
+        type: push
+        initialization: snapshot
