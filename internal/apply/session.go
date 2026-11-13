@@ -176,6 +176,12 @@ func (s *session) tranCount(ctx context.Context, conn *sql.Conn) (int, error) {
 	return n, nil
 }
 
+// alive probes conn with SELECT 1 under ctx.
+func (s *session) alive(ctx context.Context, conn *sql.Conn) bool {
+	var one int
+	return conn.QueryRowContext(ctx, "SELECT 1;").Scan(&one) == nil
+}
+
 func quoteName(s string) string { return "[" + strings.ReplaceAll(s, "]", "]]") + "]" }
 
 // use sets the current database of a pinned connection when it differs
@@ -193,7 +199,8 @@ func (s *session) use(ctx context.Context, p *pinned, database string) error {
 }
 
 // exec runs one statement by R46 and returns the driver error, or
-// errTranOpen when it succeeded and left a transaction, rolled back. The
+// errTranOpen when it succeeded and left a transaction, rolled back; a
+// refused statement that left one returns both, joined. The
 // statement runs under ctx, the interrupt context; the @@TRANCOUNT read and
 // its ROLLBACK under a fresh one. A failed read is returned with the
 // statement's error.
@@ -211,9 +218,18 @@ func (s *session) exec(ctx context.Context, st plan.Statement, secret func(strin
 	}
 	_, execErr := p.conn.ExecContext(ctx, st.Text, args...)
 	n, readErr := s.tranCount(ctx, p.conn)
+	if execErr != nil && n > 0 && only266(execErr) {
+		// Through sp_executesql a success that leaves a transaction comes
+		// back as Msg 266 alone: it is errTranOpen, not a refusal.
+		execErr = nil
+	}
 	switch {
 	case execErr != nil && readErr != nil:
 		return errors.Join(execErr, readErr)
+	case execErr != nil && n > 0:
+		// R47 tolerates 18752 only when @@TRANCOUNT was 0: the caller
+		// tests errors.Is(err, errTranOpen).
+		return errors.Join(execErr, errTranOpen)
 	case execErr != nil:
 		return execErr
 	case readErr != nil:
@@ -225,11 +241,18 @@ func (s *session) exec(ctx context.Context, st plan.Statement, secret func(strin
 }
 
 // lock takes the application lock resource on the pinned connection of
-// server, in database, and records it for close (R45).
+// server, in database, and records it for close (R45). A lock the session
+// already holds there is not taken again: the Session owner is reentrant,
+// and one unlock would leave it held (Task 6 review, P7).
 func (s *session) lock(ctx context.Context, server, database, resource string) error {
 	p, err := s.pin(ctx, server)
 	if err != nil {
 		return err
+	}
+	for _, l := range s.locks {
+		if l.conn == p.conn && l.resource == resource && strings.EqualFold(l.database, database) {
+			return nil
+		}
 	}
 	p.database = ""
 	err = lock(ctx, p.conn, database, resource)
@@ -278,6 +301,16 @@ func (s *session) close() {
 	defer cancel()
 	for i := len(s.locks) - 1; i >= 0; i-- {
 		l := s.locks[i]
+		if !s.alive(ctx, l.conn) {
+			// The session ended (killed, network): the lock went with it
+			// (R46 "lock lost with the connection"), there is nothing to
+			// release; the conn is not pooled again.
+			s.lost = append(s.lost, l)
+			if p, ok := s.conns[strings.ToLower(l.server)]; ok && p.conn == l.conn {
+				p.discard = true
+			}
+			continue
+		}
 		_ = s.unlock(ctx, l.server, l.database, l.resource) // a failure is kept in releaseFailures
 	}
 	s.locks = nil

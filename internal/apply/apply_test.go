@@ -3,6 +3,7 @@ package apply
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -38,6 +39,13 @@ func TestClassify(t *testing.T) {
 		{"245", mssql.Error{Number: 245, Class: 16, Message: "Conversion failed"}, classOther, 245},
 		{"wrapped busy", errors.Join(errors.New("op 3"), mssql.Error{Number: 22022, Class: 16, Message: busyRunning}), classBusy, 22022},
 		{"not a driver error", errors.New("bad connection"), classOther, 0},
+		{"fmt wrapped 18752", fmt.Errorf("op 2: %w", mssql.Error{Number: 18752, Class: 16, Message: "m"}), classLogReader, 18752},
+		{"unknown 22022 wording", mssql.Error{Number: 22022, Class: 16, Message: "SQLServerAgent Error: something else"}, classOther, 22022},
+		// Through sp_executesql the server adds 266 after the real error
+		// (Task 6 review P1a, P1c): the first entry that is not 266 counts.
+		{"50000 then 266", with266(50000, "m"), classOther, 50000},
+		{"21854 then 266", with266(21854, "m"), classGenerating, 21854},
+		{"266 alone", mssql.Error{Number: 266, Class: 16, Message: "Transaction count after EXECUTE", All: []mssql.Error{{Number: 266, Class: 16}}}, classOther, 266},
 	}
 	for _, c := range cases {
 		gotClass, gotNumber := classify(c.err)
@@ -45,6 +53,17 @@ func TestClassify(t *testing.T) {
 			t.Errorf("%s: classify = (%d, %d), want (%d, %d)", c.name, gotClass, gotNumber, c.class, c.number)
 		}
 	}
+}
+
+// with266 is the error go-mssqldb returns for a refusal inside
+// sp_executesql that leaves a transaction: the real error, then 266, which
+// is also the error's Number and Message.
+func with266(number int32, message string) mssql.Error {
+	const m266 = "Transaction count after EXECUTE indicates a mismatching number of BEGIN and COMMIT statements."
+	return mssql.Error{Number: 266, Class: 16, Message: m266, All: []mssql.Error{
+		{Number: number, Class: 16, Message: message},
+		{Number: 266, Class: 16, Message: m266},
+	}}
 }
 
 func TestRetryDecision(t *testing.T) {
@@ -104,6 +123,14 @@ func TestEffectQueryCovers(t *testing.T) {
 	if _, args, _ := effectQuery(covered["sp_articlefilter reinit"]); !hasNamed(args, "filter_clause", "[id] > 10") || !hasNamed(args, "article", "m_a") {
 		t.Errorf("articlefilter re-read args = %v", args)
 	}
+	empty := op("sp_articlefilter", prm("@publication", "N'm_p'"), prm("@article", "N'm_a'"),
+		prm("@filter_clause", "N''"), prm("@force_reinit_subscription", "1"))
+	if q, _, ok := effectQuery(empty); !ok || !strings.Contains(q, "filter_clause IS NULL") {
+		t.Errorf("N'' clause re-read = %s, want the NULL re-read", q)
+	}
+	if q, _, _ := effectQuery(covered["sp_articlefilter reinit"]); !strings.Contains(q, "COLLATE Latin1_General_BIN2 = @filter_clause COLLATE Latin1_General_BIN2") {
+		t.Errorf("the clause re-read does not compare in binary: %s", q)
+	}
 	if q, args, _ := effectQuery(covered["sp_articlefilter reinit NULL"]); !strings.Contains(q, "filter_clause IS NULL") || hasName(args, "filter_clause") {
 		t.Errorf("NULL clause re-read = %s %v, want filter_clause IS NULL and no clause bound", q, args)
 	}
@@ -157,6 +184,9 @@ func TestMaskSecrets(t *testing.T) {
 	plain := "Conversion failed when converting the varchar value 'abc' to data type int."
 	if got := mask(plain, []string{secret}); got != plain {
 		t.Errorf("mask changed a message without the value: %q", got)
+	}
+	if got := mask("pw=abcdef and abc", []string{"abc", "abcdef"}); got != "pw=**** and ****" {
+		t.Errorf("mask of a value inside another = %q", got)
 	}
 	if got := mask(plain, []string{""}); got != plain {
 		t.Errorf("mask with an empty value changed the message: %q", got)

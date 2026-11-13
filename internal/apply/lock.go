@@ -58,7 +58,9 @@ func unlock(ctx context.Context, conn *sql.Conn, database, resource string) erro
 // order to close the driver connection (R45). conn is closed afterwards.
 func discard(conn *sql.Conn) error {
 	err := conn.Raw(func(any) error { return driver.ErrBadConn })
-	if err == nil || errors.Is(err, driver.ErrBadConn) {
+	if err == nil || errors.Is(err, driver.ErrBadConn) || errors.Is(err, sql.ErrConnDone) {
+		// ErrConnDone: database/sql already closed it after a bad
+		// connection; nothing is pooled.
 		return nil
 	}
 	return err

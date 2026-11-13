@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"strings"
@@ -119,6 +120,9 @@ func TestLabExecRollsBack(t *testing.T) {
 	var me mssql.Error
 	if !errors.As(err, &me) || me.Number != 50000 {
 		t.Errorf("refused statement: err = %v, want the RAISERROR (50000)", err)
+	}
+	if !errors.Is(err, errTranOpen) {
+		t.Errorf("refused statement that left a transaction: err = %v, want errTranOpen joined", err)
 	}
 	conn, err := s.conn(ctx, labServer)
 	if err != nil {
@@ -384,5 +388,106 @@ func TestLabExecUseOnChange(t *testing.T) {
 	}
 	if n := uses.Load(); n != 2 {
 		t.Errorf("USE statements = %d, want 2", n)
+	}
+}
+
+// A statement that binds a secret runs through sp_executesql, where a
+// changed @@TRANCOUNT adds Msg 266 after the real error (Task 6 review
+// P1a to P1c).
+func TestLabSecretRefusalNumber(t *testing.T) {
+	labExecDB(t)
+	s, _ := newLabSession(t)
+	ctx := context.Background()
+	secret := func(name string) (string, bool) { return "m-value", name == "SQLREPL_SQL_M" }
+	bound := func(text string) plan.Statement {
+		st := stmt(execDB, "DECLARE @v nvarchar(100) = @secret_1; "+text)
+		st.Secrets = []plan.StatementSecret{{Var: "@secret_1", Name: "SQLREPL_SQL_M"}}
+		return st
+	}
+
+	err := s.exec(ctx, bound("BEGIN TRAN; RAISERROR(21854, 16, 1);"), secret)
+	var raw mssql.Error
+	if errors.As(err, &raw) {
+		t.Logf("driver Number %d, entries %d", raw.Number, len(raw.All))
+	}
+	if c, n := classify(err); c != classGenerating || n != 21854 {
+		t.Errorf("refused inside sp_executesql: classify = (%d, %d), want classGenerating 21854; err = %v", c, n, err)
+	}
+	if !errors.Is(err, errTranOpen) {
+		t.Errorf("refused with a transaction open: err = %v, want errTranOpen joined", err)
+	}
+	if e, ok := driverError(err); !ok || e.Number != 21854 {
+		t.Errorf("driverError = %d, want 21854 for the printed failure", e.Number)
+	}
+
+	err = s.exec(ctx, bound("BEGIN TRAN;"), secret)
+	if !errors.Is(err, errTranOpen) {
+		t.Errorf("success that left a transaction inside sp_executesql: err = %v, want errTranOpen", err)
+	}
+	if _, n := classify(err); n == 266 {
+		t.Errorf("the success came back as 266: %v", err)
+	}
+	conn, err := s.conn(ctx, labServer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := tranCountOf(t, conn); n != 0 {
+		t.Errorf("@@TRANCOUNT afterwards = %d, want 0", n)
+	}
+}
+
+func TestLabLockTwice(t *testing.T) {
+	labExecDB(t)
+	const resource = "m_ap lock TestLabLockTwice"
+	s, _ := newLabSession(t)
+	other := labPool(t)
+	ctx := context.Background()
+
+	for i := 0; i < 2; i++ {
+		if err := s.lock(ctx, labServer, execDB, resource); err != nil {
+			t.Fatalf("lock %d: %v", i+1, err)
+		}
+	}
+	if len(s.locks) != 1 {
+		t.Errorf("the session records %d locks, want 1", len(s.locks))
+	}
+	if err := s.unlock(ctx, labServer, execDB, resource); err != nil {
+		t.Fatalf("unlock: %v", err)
+	}
+	if err := otherLock(t, other, resource); err != nil {
+		t.Errorf("second pool after one unlock of a lock taken twice: %v", err)
+	}
+}
+
+func TestLabCloseAfterKill(t *testing.T) {
+	labExecDB(t)
+	const resource = "m_ap lock TestLabCloseAfterKill"
+	s, _ := newLabSession(t)
+	other := labPool(t)
+	ctx := context.Background()
+
+	if err := s.lock(ctx, labServer, execDB, resource); err != nil {
+		t.Fatalf("lock: %v", err)
+	}
+	holder, err := s.conn(ctx, labServer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var spid int
+	if err := holder.QueryRowContext(ctx, "SELECT @@SPID").Scan(&spid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.ExecContext(ctx, fmt.Sprintf("KILL %d;", spid)); err != nil {
+		t.Fatalf("KILL %d: %v", spid, err)
+	}
+	s.close()
+	if len(s.releaseFailures) != 0 {
+		t.Errorf("close reported %q, want the lock lost, not a failed release", s.releaseFailures)
+	}
+	if len(s.lost) != 1 || s.lost[0].resource != resource {
+		t.Errorf("lost = %v, want the lock of %s", s.lost, resource)
+	}
+	if err := otherLock(t, other, resource); err != nil {
+		t.Errorf("second pool after the kill: %v", err)
 	}
 }

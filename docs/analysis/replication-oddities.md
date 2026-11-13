@@ -1223,6 +1223,12 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Also observed: not every refusal leaves the transaction open. `sp_changepublication allow_pull N'false'` on a publication with subscriptions is refused with 20013 and leaves `@@TRANCOUNT` at 1; `sp_changearticle ins_cmd N'XCALL ...'` is refused with 15251 and leaves it at 0; `sp_changearticle sync_object` with an unqualified view name outside `dbo` fails with 15001 and leaves it at 1. Source: plan 3 task 8 review, measured (2026-11-12).
 - Source: measured, lab row 11 (`03-add-article C3`); the panel for `sp_droparticle` (design "apply" step 4); panel 3 Mistral, verified items 1 and 2; `lab/campaign/14-filter-view-cases.sql:141-143`.
 
+### Msg 266 after a refusal through sp_executesql
+
+- Expected: the driver reports the error that refused the call.
+- Observed: a batch that binds a parameter runs through `sp_executesql`; when it leaves `@@TRANCOUNT` different from its start, the server adds Msg 266 ("Transaction count after EXECUTE indicates a mismatching number of BEGIN and COMMIT statements") after the real error. go-mssqldb reports the last error of the batch, so `mssql.Error.Number` and `Message` are 266 and the real one is only in `All`: `BEGIN TRAN; RAISERROR(21854, 16, 1);` with a bound parameter gives `All` = [21854, 266], with `RAISERROR(N'm', 16, 1)` [50000, 266]; the same batch without a parameter gives 21854 alone. A bound batch that succeeds and leaves a transaction (`BEGIN TRAN;`) comes back as error 266 alone, not as a success. Refused replication calls leave the transaction open in most measured cases (see "A refused call and its transaction"), and the calls that bind a secret are the agent creations, so a tool must read the first entry of `All` that is not 266, and take 266 alone with an open transaction as a success that left one. `@@TRANCOUNT` still reads 1 after the error and the rollback brings it to 0.
+- Source: Task 6 review of plan 4 (probes P1a to P1d), then `TestLabSecretRefusalNumber`, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-13).
+
 ### The application lock of apply
 
 - Expected: `sp_getapplock` and `sp_releaseapplock` work on the session, whatever its current database.

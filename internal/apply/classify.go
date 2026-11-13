@@ -33,17 +33,49 @@ const (
 	busyPendingWording  = "already has a pending request"
 )
 
-// classify returns the class of a driver error and its number (0 for an
-// error that is not an mssql.Error). A 22022 with neither the busy nor the
-// stopped wording is classOther: no measurement says it can be waited out.
-func classify(err error) (class, int) {
+// msg266 is "Transaction count after EXECUTE indicates a mismatching
+// number of BEGIN and COMMIT statements": the server adds it when a batch
+// run through sp_executesql (every statement that binds a secret) leaves
+// @@TRANCOUNT changed, after the error that refused the call. go-mssqldb
+// reports the last error of the batch, so 266 hides the real one (Task 6
+// review, measured: All = [50000 266], [21854 266]).
+const msg266 = 266
+
+// driverError is the error apply classifies and prints: the first entry of
+// mssql.Error.All whose number is not 266, or 266 when it is alone. ok is
+// false for an error that is not an mssql.Error.
+func driverError(err error) (mssql.Error, bool) {
 	var e mssql.Error
 	if !errors.As(err, &e) {
 		var pe *mssql.Error
 		if !errors.As(err, &pe) || pe == nil {
-			return classOther, 0
+			return mssql.Error{}, false
 		}
 		e = *pe
+	}
+	for _, a := range e.All {
+		if a.Number != msg266 {
+			return a, true
+		}
+	}
+	return e, true
+}
+
+// only266 tells a driver error whose every entry is 266: the statement did
+// not fail, it left a transaction open through sp_executesql.
+func only266(err error) bool {
+	e, ok := driverError(err)
+	return ok && e.Number == msg266
+}
+
+// classify returns the class of a driver error and its number (0 for an
+// error that is not an mssql.Error), read from driverError. A 22022 with
+// neither the busy nor the stopped wording is classOther: no measurement
+// says it can be waited out.
+func classify(err error) (class, int) {
+	e, ok := driverError(err)
+	if !ok {
+		return classOther, 0
 	}
 	n := int(e.Number)
 	switch n {
@@ -115,7 +147,8 @@ const (
 	reReadUnpublished = "SELECT CASE WHEN EXISTS (SELECT 1 FROM sys.databases WHERE name = @dbname AND is_published = 0) THEN 1 ELSE 0 END;"
 	reReadSyncMethod  = "SELECT CASE WHEN EXISTS (SELECT 1 FROM dbo.syspublications WHERE name = @publication AND sync_method = @sync_method) THEN 1 ELSE 0 END;"
 	reReadFilter      = "SELECT CASE WHEN EXISTS (SELECT 1 FROM dbo.sysarticles AS a JOIN dbo.syspublications AS p ON p.pubid = a.pubid" +
-		" WHERE p.name = @publication AND a.name = @article AND CAST(a.filter_clause AS nvarchar(max)) = @filter_clause" +
+		" WHERE p.name = @publication AND a.name = @article" +
+		" AND CAST(a.filter_clause AS nvarchar(max)) COLLATE Latin1_General_BIN2 = @filter_clause COLLATE Latin1_General_BIN2" +
 		" AND EXISTS (SELECT 1 FROM sys.objects AS o WHERE o.object_id = a.filter)) THEN 1 ELSE 0 END;"
 	reReadNoFilter = "SELECT CASE WHEN EXISTS (SELECT 1 FROM dbo.sysarticles AS a JOIN dbo.syspublications AS p ON p.pubid = a.pubid" +
 		" WHERE p.name = @publication AND a.name = @article AND a.filter_clause IS NULL" +
@@ -172,6 +205,11 @@ func effectQuery(op plan.Operation) (query string, args []any, ok bool) {
 		if !ok {
 			return "", nil, false
 		}
+		if clause == "" {
+			// sp_articlefilter stores N'' as NULL and drops the procedure,
+			// as for NULL (Task 6 review, P9, measured).
+			return reReadNoFilter, []any{sql.Named("publication", pub), sql.Named("article", art)}, true
+		}
 		return reReadFilter, []any{sql.Named("publication", pub), sql.Named("article", art), sql.Named("filter_clause", clause)}, true
 	}
 	return "", nil, false
@@ -196,7 +234,10 @@ func secretArgs(st plan.Statement, secret func(string) (string, bool)) ([]any, e
 // mask replaces every occurrence of every value in a message with ****
 // (R53): server messages can echo a bound value (Msg 245, panel M). The
 // longer values go first, so that a value containing another is masked
-// whole; empty values are skipped.
+// whole; empty values are skipped. Only whole values are masked: a message
+// that prints a truncated prefix of a value (Msg 2628, "Truncated value:
+// 'zqx'", Task 6 review P3) keeps that prefix; replication procedures
+// truncate their parameters silently, so it is not expected there.
 func mask(message string, values []string) string {
 	vs := make([]string, 0, len(values))
 	for _, v := range values {
