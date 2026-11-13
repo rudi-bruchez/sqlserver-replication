@@ -162,32 +162,58 @@ func useOf(profile string) state.ProfileUse {
 		PublisherDB: "Sales", Publication: "SalesPub", Subscriber: "REPLLAB", Database: "SalesSub"}
 }
 
-func TestProfileDropOnlyUnused(t *testing.T) {
+// labDistribNote is the note of the lab's profile when the file omits it
+// (R6 as amended on 2026-11-13).
+const labDistribNote = "profile lab-distrib (distribution) is at the distributor and not in the file: not dropped; drop it by hand if it is unused"
+
+// wantNotDropped checks that a plan drops no profile and notes the omitted
+// one exactly once.
+func wantNotDropped(t *testing.T, name string, p *Plan, note string) {
+	t.Helper()
+	if n := len(opsCalling(p.Operations, "sp_drop_agent_profile")); n != 0 {
+		t.Errorf("%s: %d sp_drop_agent_profile:\n%s", name, n, opsString(p.Operations))
+	}
+	n := 0
+	for _, s := range p.Notes {
+		if s == note {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%s: the note %q appears %d times, want once; notes: %q", name, note, n, p.Notes)
+	}
+}
+
+// A profile absent from the file is never dropped, used or not: the plan
+// notes it (R6 as amended on 2026-11-13, decided by Rudi).
+func TestProfileOmittedNotDropped(t *testing.T) {
 	noProfiles := func(des, _ *model.Config) { des.AgentProfiles = []model.AgentProfile{} }
 	virtual := state.ProfileUse{Profile: "lab-distrib", AgentType: "distribution", DistributionDB: "distribution",
 		Publisher: "repllab", PublisherDB: "Sales", Publication: "SalesPub", Virtual: true}
 	for name, uses := range map[string][]state.ProfileUse{
 		"other case": {useOf("LAB-DISTRIB")},
 		"virtual":    {virtual},
+		"unused":     nil,
 	} {
-		ops := planned(t, buildLabFacts(t, func(f *state.Facts) { f.ProfileUses = uses }, noProfiles))
-		if len(ops) != 0 {
-			t.Errorf("%s: a used profile is dropped:\n%s", name, opsString(ops))
+		p := buildLabFacts(t, func(f *state.Facts) { f.ProfileUses = uses }, noProfiles)
+		if ops := planned(t, p); len(ops) != 0 {
+			t.Errorf("%s: operations:\n%s", name, opsString(ops))
 		}
+		wantNotDropped(t, name, p, labDistribNote)
 	}
 
-	ops := planned(t, buildLab(t, nil, noProfiles))
-	drop := one(t, ops, "sp_drop_agent_profile")
-	if drop.Step != 11 || len(ops) != 1 {
-		t.Errorf("drop in step %d:\n%s", drop.Step, opsString(ops))
-	}
-	if !strings.Contains(drop.Call.Prologue, "profile_name = N'lab-distrib' AND agent_type = 3") {
-		t.Errorf("prologue:\n%s", drop.Call.Prologue)
-	}
+	// Nothing uses it after the plan: every publication is dropped.
+	p := buildLab(t, nil, func(des, _ *model.Config) {
+		des.AgentProfiles = []model.AgentProfile{}
+		des.Publications, des.Publisher.SharedDistributionAgents = nil, nil
+	})
+	planned(t, p)
+	wantNotDropped(t, "every publication dropped", p, labDistribNote)
 
-	ops = planned(t, buildLab(t, nil, func(des, _ *model.Config) { des.AgentProfiles[0].Name = "Lab-Distrib" }))
-	if len(ops) != 0 {
-		t.Errorf("Lab-Distrib matches lab-distrib (R7):\n%s", opsString(ops))
+	// Matched without regard to case (R7): neither an operation nor a note.
+	p = buildLab(t, nil, func(des, _ *model.Config) { des.AgentProfiles[0].Name = "Lab-Distrib" })
+	if ops := planned(t, p); len(ops) != 0 || len(p.Notes) != 0 {
+		t.Errorf("Lab-Distrib matches lab-distrib (R7):\n%s\nnotes %q", opsString(ops), p.Notes)
 	}
 }
 
@@ -284,19 +310,18 @@ func TestProfileDefaultChangeRefused(t *testing.T) {
 	wantParam(t, one(t, ops, "sp_add_agent_profile"), "@default", "1")
 }
 
-func TestProfileDropAfterLastUse(t *testing.T) {
-	ops := planned(t, buildLabFacts(t, func(f *state.Facts) {
+func TestProfileKeptAfterLastUse(t *testing.T) {
+	p := buildLabFacts(t, func(f *state.Facts) {
 		f.ProfileUses = []state.ProfileUse{useOf("lab-distrib")}
 	}, func(des, cur *model.Config) {
 		subOf(t, cur, "SalesPub", "SalesSub").DistributionAgent.Profile = str("lab-distrib")
 		pubOf(t, des, "SalesPub").Subscriptions = nil
 		des.AgentProfiles = []model.AgentProfile{}
-	}))
-	sub := one(t, ops, "sp_dropsubscription")
-	drop := one(t, ops, "sp_drop_agent_profile")
-	if sub.Step != 4 || drop.Step != 11 || sub.Seq > drop.Seq {
-		t.Errorf("subscription drop step %d, profile drop step %d:\n%s", sub.Step, drop.Step, opsString(ops))
+	})
+	if sub := one(t, planned(t, p), "sp_dropsubscription"); sub.Step != 4 {
+		t.Errorf("subscription drop step %d", sub.Step)
 	}
+	wantNotDropped(t, "last use dropped", p, labDistribNote)
 }
 
 // salesPubAgent is the desired and current push agent of SalesPub's
@@ -499,13 +524,15 @@ func TestProfilesOmittedNotManaged(t *testing.T) {
 		t.Fatalf("Load: omitted %#v, empty %#v; want nil and an empty list", omitted.AgentProfiles, empty.AgentProfiles)
 	}
 
-	if ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) { des.AgentProfiles = omitted.AgentProfiles })); len(ops) != 0 {
-		t.Errorf("omitted agent_profiles plans:\n%s", opsString(ops))
+	p := buildLab(t, nil, func(des, _ *model.Config) { des.AgentProfiles = omitted.AgentProfiles })
+	if ops := planned(t, p); len(ops) != 0 || len(p.Notes) != 0 {
+		t.Errorf("omitted agent_profiles plans:\n%s\nnotes %q", opsString(ops), p.Notes)
 	}
-	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) { des.AgentProfiles = empty.AgentProfiles }))
-	if len(ops) != 1 || ops[0].Call.Procedure != "sp_drop_agent_profile" {
+	p = buildLab(t, nil, func(des, _ *model.Config) { des.AgentProfiles = empty.AgentProfiles })
+	if ops := planned(t, p); len(ops) != 0 {
 		t.Errorf("agent_profiles: [] plans:\n%s", opsString(ops))
 	}
+	wantNotDropped(t, "agent_profiles: []", p, labDistribNote)
 }
 
 // A profile the file declares without parameters has the template's set,

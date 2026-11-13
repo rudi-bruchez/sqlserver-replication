@@ -118,7 +118,7 @@ Server names are compared case-insensitively (`syssubscriptions.srvname` is stor
 The distributor serves other publication databases the file does not see. For the objects that belong to the distributor rather than to the database (Rudi's decision):
 
 - the distributor, the distribution database, its retention, the `MSdistributor` properties and user agent profiles can be created and changed by the file;
-- they are never dropped while something uses them. A user profile is dropped only when it is absent from the file and no agent of any database at that distributor uses it; which profile is the default of its agent type is a distributor-wide setting;
+- they are never dropped while something uses them. A user profile is never dropped: one absent from the file is reported in the plan's notes, to be dropped by hand if it is unused (Rudi's decision of 2026-11-13; the export lists every profile, so a stale file would otherwise drop another team's unused profile); which profile is the default of its agent type is a distributor-wide setting;
 - a change to a shared object is marked "shared" in the plan, with the list of the other publication databases the distributor serves. Two files that disagree on a shared value therefore each show the change as shared when they are planned; `plan` cannot see the other file, so it reports the conflict by showing that the server's value differs from what this file wants on a shared object. My call on the mechanism.
 
 The reader must read every profile of the distributor and which agents use it, not only those used by this database (today `collectProfiles` reads only the latter, panel).

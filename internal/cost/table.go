@@ -532,8 +532,6 @@ var Table = []Entry{
 		Counter: []Cite{cite(pf+"PF.add_copied_parameter", "20067", non1)}},
 	{Change: OpAddProfile, PubType: tr, Procedure: "sp_add_agent_profile", Property: "@default", Class: Online,
 		Cites: []Cite{cite(pf+"PF.copied_parameters", "ok", non1), cite(pf+"PF.create_default", "ok", non1)}},
-	{Change: OpDropProfile, PubType: tr, Procedure: "sp_drop_agent_profile", Property: "@profile_id", Class: Online,
-		Cites: []Cite{cite(pf+"PF.drop_unused", "ok", non1)}},
 	{Change: OpProfileBinding, PubType: tr, Procedure: "[<distribution>].dbo.sp_update_agent_profile", Property: "@profile_id", Class: Online,
 		Cites: []Cite{
 			cite(ch+"PRF.distribution-prefix", "ok", non1),

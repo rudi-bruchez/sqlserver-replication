@@ -10,7 +10,6 @@ import (
 	"github.com/rudi-bruchez/sqlserver-replication/internal/decode"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/normalize"
-	"github.com/rudi-bruchez/sqlserver-replication/internal/state"
 )
 
 // distributorStrategy is listed in lateStrategies (build.go), after
@@ -25,27 +24,28 @@ const (
 	r4Declare       = "the file must declare the distributor to create"
 	r6Default       = "changing the default profile is not measured; only sp_add_agent_profile @default sets it"
 	r6NoTemplate    = "the parameters sp_add_agent_profile copies into a new %s profile are not known: plan needs the facts (template_profile_parameters, R6)"
+	r6NotDropped    = "profile %s (%s) is at the distributor and not in the file: not dropped; drop it by hand if it is unused"
 )
 
-// The Order keys of steps 1, 2 and 11 (finish sorts by (Step, Order)):
+// The Order keys of steps 1 and 2 (finish sorts by (Step, Order)):
 //
 //   - step 1: 1 sp_adddistributor, 2 sp_adddistributiondb, 3
 //     sp_adddistpublisher, then "4\x00<rank>\x00<path>" for a change, the
 //     rank ordering the two retention calls (retentionOrder);
 //   - step 2: "<agent type>\x00<lower-cased name>\x00" then 1 for
 //     sp_add_agent_profile, 2 for sp_change_agent_profile, and
-//     "3\x00<lower-cased parameter>" for a parameter call;
-//   - step 11: "<agent type>\x00<lower-cased name>" for sp_drop_agent_profile.
+//     "3\x00<lower-cased parameter>" for a parameter call.
 
 // distFixed are the distributor properties no procedure changes once the
 // distribution database exists: its folders and files.
 var distFixed = map[string]bool{"data_folder": true, "data_file": true, "log_folder": true, "log_file": true}
 
 // distributorStrategy plans the distributor (step 1, R17, spec "Shared
-// distributor objects") and the user profiles (steps 2 and 11, R6).
+// distributor objects") and the user profiles (step 2, R6).
 // An omitted agent_profiles key (nil after model.Load) means the file does
-// not manage the profiles: no profile operation. An explicit empty list
-// drops every unused user profile (Task 18 fix round 1, review note F7).
+// not manage the profiles: no profile operation and no note. An explicit
+// empty list notes every user profile at the distributor (R6 as amended on
+// 2026-11-13: a profile is never dropped).
 func distributorStrategy(b *builder) {
 	b.planDistributor()
 	if b.in.Desired != nil && b.in.Desired.AgentProfiles != nil {
@@ -342,23 +342,26 @@ func profilePrologue(p *model.AgentProfile) (string, error) {
 		"IF @profile_id IS NULL THROW 50000, " + literal("profile "+p.Name+" ("+p.AgentType+") not found") + ", 1;", nil
 }
 
-// planProfiles creates and changes the user profiles of the file (step 2)
-// and drops those it omits that nothing uses after this plan (step 11), R6;
-// profiles are matched by agent type and by name without regard to case
-// (R7). Every one is a change of a shared object.
+// planProfiles creates and changes the user profiles of the file (step 2),
+// R6; profiles are matched by agent type and by name without regard to case
+// (R7). Every one is a change of a shared object. A profile at the
+// distributor that the file omits is never dropped (R6 as amended on
+// 2026-11-13, decided by Rudi): the export lists every profile of the
+// distributor, so a stale file would drop another team's unused profile.
+// The plan notes it instead.
 func (b *builder) planProfiles() {
-	pairs, adds, drops := matchProfiles(b.des.AgentProfiles, b.cur.AgentProfiles)
+	pairs, adds, omitted := matchProfiles(b.des.AgentProfiles, b.cur.AgentProfiles)
 	for _, p := range adds {
 		b.addProfile(p)
 	}
 	for _, pp := range pairs {
 		b.changeProfile(pp)
 	}
-	for _, p := range drops {
-		if b.skip(profilePath(p)) || b.profileUsed(p) {
+	for _, p := range omitted {
+		if b.skip(profilePath(p)) {
 			continue
 		}
-		b.dropProfile(p)
+		b.notes = append(b.notes, fmt.Sprintf(r6NotDropped, p.Name, p.AgentType))
 	}
 }
 
@@ -551,109 +554,4 @@ func sortedNames(m map[string]string) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// dropProfile is sp_drop_agent_profile in step 11.
-func (b *builder) dropProfile(p *model.AgentProfile) {
-	path := profilePath(p)
-	pro, err := profilePrologue(p)
-	if err != nil {
-		b.refuse(path, "%v", err)
-		return
-	}
-	op := b.distOp(11, p.AgentType+sep+strings.ToLower(p.Name), "profile", "drop", path, Call{
-		Procedure: "sp_drop_agent_profile", Prologue: pro, Params: []Param{{Name: "@profile_id", Value: "@profile_id"}}})
-	if e, ok := cost.Lookup(cost.OpDropProfile, "", "transactional"); ok {
-		withCites(&op, e)
-	}
-	op.Reason = "the file omits the profile and no agent uses it after this plan (R6)"
-	op.Sources = append(op.Sources, "R6", "spec Order step 11")
-	b.markShared(&op)
-	b.add(op)
-}
-
-// profileUsed tells whether a profile the file omits is still used after
-// this plan: by an agent this plan binds to it, by a row of
-// Facts.ProfileUses that this plan's drops of publications and
-// subscriptions do not remove (virtual rows included), or by an agent of
-// the file that names it. Names are compared without regard
-// to case, on the agent type (R6). Without facts, every profile is used.
-func (b *builder) profileUsed(p *model.AgentProfile) bool {
-	if b.in.Facts == nil {
-		return true
-	}
-	for _, a := range agentProfiles(b.des) {
-		if a.agentType == p.AgentType && strings.EqualFold(a.profile, p.Name) {
-			return true
-		}
-	}
-	for k, want := range b.rebound {
-		// An agent this plan binds to it (agentsStrategy runs first).
-		if strings.HasPrefix(k, p.AgentType+sep) && strings.EqualFold(want, p.Name) {
-			return true
-		}
-	}
-	gone := b.droppedUses()
-	for _, u := range b.in.Facts.ProfileUses {
-		if u.AgentType == p.AgentType && strings.EqualFold(u.Profile, p.Name) && !gone(u) {
-			return true
-		}
-	}
-	return false
-}
-
-// droppedUses tells a use of this publication database that this plan's
-// drops remove: the agents of a dropped publication (its snapshot agent,
-// its distribution agents, virtual ones included), the distribution agent
-// of a dropped subscription, a shared push agent whose every push
-// subscription the plan drops (measured by the Task 12 review: it goes with
-// the last), the log reader when every publication is dropped
-// (13-transient T02), and an agent this plan binds to another profile.
-func (b *builder) droppedUses() func(u state.ProfileUse) bool {
-	_, _, curOnly := matchPublications(b.des.Publications, b.cur.Publications)
-	droppedPub := map[string]bool{}
-	for _, p := range curOnly {
-		droppedPub[p.Name] = true
-	}
-	allDropped := len(b.cur.Publications) > 0 && len(curOnly) == len(b.cur.Publications)
-	return func(u state.ProfileUse) bool {
-		pub, subscriber, database := u.Publication, u.Subscriber, u.Database
-		if !strings.EqualFold(u.Publisher, b.des.Publisher.Server) || !strings.EqualFold(u.PublisherDB, b.des.Publisher.Database) {
-			return false
-		}
-		if want, ok := b.rebound[agentKey(u.AgentType, pub, subscriber, database)]; ok && !strings.EqualFold(want, u.Profile) {
-			return true // bound to another profile by this plan (agentsStrategy runs first)
-		}
-		switch {
-		case pub == "":
-			return allDropped
-		case droppedPub[pub]:
-			return true
-		case pub == "ALL":
-			return b.sharedPushGone(subscriber, database)
-		}
-		return b.dropped[pub+sep+subKey(subscriber+"/"+database)]
-	}
-}
-
-// sharedPushGone tells a shared agent whose subscriptions are all push and
-// all dropped by this plan. A shared pull agent stays after its last
-// subscription is dropped (08-pull), so a pull one keeps its use.
-func (b *builder) sharedPushGone(subscriber, database string) bool {
-	served := false
-	for _, p := range b.cur.Publications {
-		if boolOf(p.IndependentAgent) {
-			continue
-		}
-		for _, s := range p.Subscriptions {
-			if !strings.EqualFold(s.Subscriber, subscriber) || !strings.EqualFold(s.Database, database) {
-				continue
-			}
-			if stringOr(s.Type, "push") != "push" || !b.dropped[p.Name+sep+subKey(s.Key())] {
-				return false
-			}
-			served = true
-		}
-	}
-	return served
 }

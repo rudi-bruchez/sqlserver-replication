@@ -26,11 +26,8 @@ var strategies []strategy
 
 // lateStrategies run after every strategy of strategies, in this order:
 // they read what the others planned (b.ops, b.dropped, b.readd,
-// b.sharedPush). agentsStrategy comes before distributorStrategy, whose
-// profile drop of step 11 reads the bindings agentsStrategy plans
-// (b.rebound): an agent bound away from a profile frees it in the same plan
-// (TestProfileDropAfterRebinding). redeliveriesStrategy comes last: it reads
-// every drop and every addition of the plan.
+// b.sharedPush). redeliveriesStrategy comes last: it reads every drop and
+// every addition of the plan.
 var lateStrategies = []strategy{agentsStrategy, distributorStrategy, redeliveriesStrategy}
 
 // builder is the state Build hands the strategies.
@@ -59,9 +56,6 @@ type builder struct {
 	readd map[string]bool
 	// deferrals memoizes deferred (defer.go), by publication name.
 	deferrals map[string]bool
-	// rebound is the profile each agent this plan binds is bound to, by
-	// agentKey (agents.go): the profile drop of step 11 reads it.
-	rebound map[string]string
 	// deferStarts is the agents to start of a deferred publication, by ref,
 	// to the publication (agentsToStart): their job_start goes after its
 	// generate_and_wait (addJobOps).

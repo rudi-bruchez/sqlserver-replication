@@ -66,7 +66,6 @@ const (
 	OpAddPublication          = "add_publication"
 	OpDropPublication         = "drop_publication"
 	OpAddProfile              = "add_profile"
-	OpDropProfile             = "drop_profile"
 	OpProfileBinding          = "profile_binding"
 	OpJobEnabled              = "job_enabled"
 	OpGenerateAndWait         = "generate_and_wait"

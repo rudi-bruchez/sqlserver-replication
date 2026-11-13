@@ -62,7 +62,6 @@ var procContexts = map[string]procContext{
 	"sp_add_agent_parameter":    {"distributor", "master", "19-profiles"},
 	"sp_change_agent_parameter": {"distributor", "master", "19-profiles"},
 	"sp_drop_agent_parameter":   {"distributor", "master", "19-profiles PF.drop_parameter"},
-	"sp_drop_agent_profile":     {"distributor", "master", "19-profiles"},
 	// Called [<distribution db>].dbo.sp_update_agent_profile (procedureName):
 	// msdb.dbo. and the plain name from a publication database are 21482.
 	"sp_update_agent_profile": {"distributor", "distribution", "07-changes PRF.distribution-prefix.cwd-distribution"},

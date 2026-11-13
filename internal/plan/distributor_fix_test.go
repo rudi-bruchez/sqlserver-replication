@@ -288,88 +288,18 @@ func profileUse(profile, agentType, pub, subscriber, database string) state.Prof
 		PublisherDB: "Sales", Publication: pub, Subscriber: subscriber, Database: database}
 }
 
-func TestProfileUsesAfterPlan(t *testing.T) {
-	drops := func(uses []state.ProfileUse, profiles []model.AgentProfile, edit func(des, cur *model.Config)) int {
-		t.Helper()
-		ops := planned(t, buildLabFacts(t, func(f *state.Facts) { f.ProfileUses = uses }, func(des, cur *model.Config) {
-			cur.AgentProfiles = append(cur.AgentProfiles, profiles...)
-			des.AgentProfiles = []model.AgentProfile{}
-			edit(des, cur)
-		}))
-		return len(opsCalling(ops, "sp_drop_agent_profile")) - 1 // lab-distrib, unused, is dropped too
-	}
-	none := func(_, _ *model.Config) {}
-	lr := model.AgentProfile{Name: "m_lr", AgentType: "logreader", Parameters: map[string]string{}}
-	snap := model.AgentProfile{Name: "m_snap", AgentType: "snapshot", Parameters: map[string]string{}}
-	dist := model.AgentProfile{Name: "m_dist", AgentType: "distribution", Parameters: map[string]string{}}
-
-	// Named by an agent of the file (M1).
-	if n := drops(nil, []model.AgentProfile{dist}, func(des, _ *model.Config) { salesPubAgent(t, des).Profile = str("m_dist") }); n != 0 {
-		t.Errorf("a profile an agent of the file names is dropped")
-	}
-	// The log reader's, when every publication is dropped (M2).
-	lrUse := []state.ProfileUse{profileUse("m_lr", "logreader", "", "", "")}
-	if n := drops(lrUse, []model.AgentProfile{lr}, none); n != 0 {
-		t.Errorf("the log reader's profile is dropped while the log reader stays")
-	}
-	if n := drops(lrUse, []model.AgentProfile{lr}, func(des, _ *model.Config) {
-		des.Publications, des.Publisher.SharedDistributionAgents = nil, nil
-	}); n != 1 {
-		t.Errorf("every publication dropped: %d drops of m_lr", n)
-	}
-	// The shared push agent's, when its last push subscription is dropped
-	// (M3).
-	sharedUse := []state.ProfileUse{profileUse("m_dist", "distribution", "ALL", "REPLLAB", "SalesSub")}
-	if n := drops(sharedUse, []model.AgentProfile{dist}, none); n != 0 {
-		t.Errorf("the shared agent's profile is dropped while it serves SalesRef")
-	}
-	if n := drops(sharedUse, []model.AgentProfile{dist}, func(des, _ *model.Config) { pubOf(t, des, "SalesRef").Subscriptions = nil }); n != 1 {
-		t.Errorf("last push subscription dropped: %d drops of m_dist", n)
-	}
-	// A shared pull agent stays after its last subscription (M4).
-	pullUse := []state.ProfileUse{profileUse("m_dist", "distribution", "ALL", "REPLLAB", "m_pdb")}
-	if n := drops(pullUse, []model.AgentProfile{dist}, func(des, cur *model.Config) {
-		pubOf(t, cur, "SalesRef").AllowPull = model.Ptr(true)
-		pubOf(t, des, "SalesRef").AllowPull = model.Ptr(true)
-		addSub(t, cur, "SalesRef", newSub("m_pdb", "pull", "snapshot"))
-	}); n != 0 {
-		t.Errorf("a shared pull agent's profile is dropped")
-	}
-	// The snapshot agent's, when its publication is dropped (M31).
-	snapUse := []state.ProfileUse{profileUse("m_snap", "snapshot", "SalesPub", "", "")}
-	if n := drops(snapUse, []model.AgentProfile{snap}, func(des, _ *model.Config) {
-		des.Publications = des.Publications[1:] // SalesRef
-	}); n != 1 {
-		t.Errorf("SalesPub dropped: %d drops of m_snap", n)
-	}
-}
-
-func TestProfileDropAfterRebinding(t *testing.T) {
+func TestProfileKeptAfterRebinding(t *testing.T) {
 	// d5: SalesPub's agent is bound back to the default; lab-distrib, which
-	// it used, is dropped in the same plan.
-	ops := planned(t, buildLabFacts(t, func(f *state.Facts) {
+	// it used, is kept and noted (R6 as amended on 2026-11-13).
+	p := buildLabFacts(t, func(f *state.Facts) {
 		f.ProfileUses = []state.ProfileUse{useOf("lab-distrib")}
 	}, func(des, cur *model.Config) {
 		salesPubAgent(t, cur).Profile = str("lab-distrib")
 		salesPubAgent(t, des).Profile = nil
 		des.AgentProfiles = []model.AgentProfile{}
-	}))
-	bind := one(t, ops, "[distribution].dbo.sp_update_agent_profile")
-	drop := one(t, ops, "sp_drop_agent_profile")
-	if drop.Step != 11 || drop.Seq < bind.Seq {
-		t.Errorf("binding seq %d, drop step %d seq %d", bind.Seq, drop.Step, drop.Seq)
-	}
-	// Bound to the same profile in another case: the use stays.
-	ops = planned(t, buildLabFacts(t, func(f *state.Facts) {
-		f.ProfileUses = []state.ProfileUse{useOf("lab-distrib")}
-	}, func(des, cur *model.Config) {
-		salesPubAgent(t, cur).Profile = str("Default agent profile")
-		salesPubAgent(t, des).Profile = str("LAB-DISTRIB")
-		des.AgentProfiles = []model.AgentProfile{}
-	}))
-	if n := len(opsCalling(ops, "sp_drop_agent_profile")); n != 0 {
-		t.Errorf("a profile the plan binds to is dropped:\n%s", opsString(ops))
-	}
+	})
+	one(t, planned(t, p), "[distribution].dbo.sp_update_agent_profile")
+	wantNotDropped(t, "rebound", p, labDistribNote)
 }
 
 // sharedPull is a shared pull agent as the export writes it.
@@ -401,50 +331,41 @@ func mDef() model.AgentProfile {
 		Parameters: map[string]string{"-BcpBatchSize": "100000"}}
 }
 
-func TestOmittedProfileAfterDefaultDrop(t *testing.T) {
-	// d23: the file drops m_def and omits SalesRef's snapshot profile: the
-	// agent is bound to the template system profile, then m_def is dropped.
-	ops := planned(t, buildLabFacts(t, userDefaultSnapshot, func(des, cur *model.Config) {
+func TestOmittedDefaultProfileKept(t *testing.T) {
+	// d23 after R6 as amended on 2026-11-13: the file omits m_def, the
+	// current default user profile, and SalesRef's snapshot profile. m_def
+	// is not dropped, so it stays the default: SalesRef stays on it, no
+	// binding, no drop, a note.
+	p := buildLabFacts(t, userDefaultSnapshot, func(des, cur *model.Config) {
 		cur.AgentProfiles = append(cur.AgentProfiles, mDef())
 		pubOf(t, cur, "SalesRef").SnapshotAgent.Profile = str("m_def")
 		pubOf(t, des, "SalesRef").SnapshotAgent.Profile = nil
-	}))
-	bind := one(t, ops, "[distribution].dbo.sp_update_agent_profile")
-	drop := one(t, ops, "sp_drop_agent_profile")
-	if !strings.Contains(bind.Call.Prologue, "SELECT @profile_id = MIN(profile_id) FROM msdb.dbo.MSagent_profiles WHERE agent_type = 1 AND type = 0;") ||
-		bind.Changes[0].After != "the template system profile of snapshot" {
-		t.Errorf("binding:\n%s\n%+v", bind.Call.Prologue, bind.Changes)
+	})
+	if ops := planned(t, p); len(ops) != 0 {
+		t.Errorf("an omitted default kept:\n%s", opsString(ops))
 	}
-	if !strings.Contains(drop.Call.Prologue, "N'm_def'") || drop.Seq < bind.Seq {
-		t.Errorf("drop seq %d after binding seq %d:\n%s", drop.Seq, bind.Seq, drop.Call.Prologue)
-	}
-	// SalesPub's snapshot agent is on a system profile: not rebound.
-	if n := len(opsCalling(ops, "[distribution].dbo.sp_update_agent_profile")); n != 1 {
-		t.Errorf("%d bindings", n)
-	}
+	wantNotDropped(t, "omitted default", p, "profile m_def (snapshot) is at the distributor and not in the file: not dropped; drop it by hand if it is unused")
 
-	// The file keeps m_def as the default: SalesRef stays on it, no drop.
-	ops = planned(t, buildLabFacts(t, userDefaultSnapshot, func(des, cur *model.Config) {
+	// The file keeps m_def as the default: SalesRef stays on it, no note.
+	p = buildLabFacts(t, userDefaultSnapshot, func(des, cur *model.Config) {
 		both(des, cur, func(c *model.Config) { c.AgentProfiles = append(c.AgentProfiles, mDef()) })
 		pubOf(t, cur, "SalesRef").SnapshotAgent.Profile = str("m_def")
 		pubOf(t, des, "SalesRef").SnapshotAgent.Profile = nil
-	}))
-	if len(ops) != 0 {
-		t.Errorf("a kept default:\n%s", opsString(ops))
+	})
+	if ops := planned(t, p); len(ops) != 0 || len(p.Notes) != 0 {
+		t.Errorf("a kept default:\n%s\nnotes %q", opsString(ops), p.Notes)
 	}
 }
 
 func TestBoundProfileKept(t *testing.T) {
 	// A profile absent from the file that an agent of the plan is bound to
 	// is not dropped.
-	ops := planned(t, buildLab(t, nil, func(des, _ *model.Config) {
+	p := buildLab(t, nil, func(des, _ *model.Config) {
 		des.AgentProfiles = []model.AgentProfile{}
 		salesPubAgent(t, des).Profile = str("lab-distrib")
-	}))
-	one(t, ops, "[distribution].dbo.sp_update_agent_profile")
-	if n := len(opsCalling(ops, "sp_drop_agent_profile")); n != 0 {
-		t.Errorf("a profile the plan binds to is dropped:\n%s", opsString(ops))
-	}
+	})
+	one(t, planned(t, p), "[distribution].dbo.sp_update_agent_profile")
+	wantNotDropped(t, "bound", p, labDistribNote)
 }
 
 func TestDefaultProfileChecks(t *testing.T) {

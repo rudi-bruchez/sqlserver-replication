@@ -269,7 +269,7 @@ func (e *env) residue() ([]string, error) {
 
 // desired loads a test file, placeholders replaced, and copies the lab's
 // current agent_profiles into it (R6, R33): the file is the whole truth,
-// and lab-distrib must not be dropped.
+// and lab-distrib stays out of the plan's notes.
 func (e *env) desired(t *testing.T, file string) *model.Config {
 	t.Helper()
 	des := e.load(t, file)
