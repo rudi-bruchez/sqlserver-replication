@@ -172,6 +172,7 @@ Output, on standard output, each line with fixed words:
 | `  interrupted` | a statement an interrupt cancelled |
 | `waiting for the snapshot job of PUBLICATION to be idle` | a disabled snapshot job still running |
 | `waiting for the deliveries of PUBLICATION` | a wait for deliveries that found something to wait for |
+| `interrupted while waiting for the deliveries` | an interrupt during that wait (exit 3 when every operation ran, else 1) |
 | `started KIND PUBLICATION` or `KIND PUBLICATION already running` | each agent start, a distribution agent followed by `SUBSCRIBER/DATABASE` |
 | `delivery PUBLICATION to SUBSCRIBER/DATABASE: ...` | each delivery owed, at the end: `confirmed (run FOLDER\RUN)`, `unconfirmed (REASON; job STATE; last history: COMMENTS)` or `not awaited` |
 | `job left disabled: JOB` | a snapshot job whose restore failed: enable it by hand |
@@ -194,7 +195,7 @@ Exit codes, for both commands:
 
 An interrupt after the last operation, during the wait for deliveries, ends with the code the deliveries decide (0 or 3). A second interrupt, during the restores, is ignored.
 
-Deliveries owed. A delivery is confirmed by a "Delivered snapshot" line of the subscription's distribution agent, written in the distributor's history after the moment apply recorded it, that names a run of the publication's snapshot folder absent from that folder at that moment (any run, for a subscription added while the snapshot was ready). Apply lists the folder `<root>/unc/<PUBLISHER>_<DATABASE>_<PUBLICATION>` with `sys.dm_os_enumerate_filesystem` at the distributor, matching the name without regard to case. The root is the publication's alternate folder or the publisher's `working_directory`; when the file omits it, apply reads the publisher's `working_directory` from `msdb.dbo.MSdistpublishers` at the distributor. A publication whose folder no listing shows, while every listing shows its root's `unc` folder, has no run yet. A pull subscription is confirmed in the same way, from the distributor's history.
+Deliveries owed. A delivery is confirmed by a "Delivered snapshot" line of the subscription's distribution agent, written in the distributor's history after the moment apply recorded it, that names a run of the publication's snapshot folder absent from that folder at that moment and whose name, the run's start as `yyyyMMddHHmmss` on the distributor's clock, is not earlier than that moment truncated to the second (any run, for a subscription added while the snapshot was ready). Apply lists the folder `<root>/unc/<PUBLISHER>_<DATABASE>_<PUBLICATION>` with `sys.dm_os_enumerate_filesystem` at the distributor, matching the name without regard to case. The root is the publication's alternate folder or the publisher's `working_directory`; when the file omits it, apply reads the publisher's `working_directory` from `msdb.dbo.MSdistpublishers` at the distributor. A publication whose folder no listing shows, while every listing shows its root's `unc` folder, has no run yet. A pull subscription is confirmed in the same way, from the distributor's history. While apply waits, a run of the publication's snapshot job that started after that moment and failed (its job outcome in `msdb.dbo.sysjobhistory`) ends the wait for those deliveries at once: they are reported `unconfirmed`, the reason naming the job's last history message. When that read fails (a login that cannot read `sysjobhistory`, not measured), apply waits as before.
 
 Snapshot reports. Apply writes no snapshot report yet: it prints the outcome of each delivery instead. The report, with `sqlrepl snapshot`, comes later.
 
@@ -205,6 +206,7 @@ Known limits:
 - A publication whose `unc` folder the distributor cannot read is taken as having no run yet: nothing is confirmed by mistake, but its delivery waits the whole `-wait` before it is reported `unconfirmed`.
 - A misspelled `profile` in a file that also creates the distributor is found only when the call that uses it fails, mid-plan: before the distributor exists there are no profiles to check against.
 - The snapshot folder precondition is not listed when the file omits `working_directory` at the creation of the distributor; `sp_adddistpublisher` refuses a missing folder itself (21037).
+- A publication database in single-user mode makes apply fail at the lock with 924 (`Database 'DATABASE' is already open and can only have one user at a time.`), exit 1, nothing run: apply holds several sessions on the publisher.
 - `/dev/null` on standard input counts as a terminal: without `-auto-approve` the question reads end of input and apply exits 1 with `Apply cancelled.`, not 2.
 - Setting up a remote distributor is out of scope for now (R17): apply connects to an existing remote distributor and locks it like a local one, but the plan refuses to create its configuration.
 
