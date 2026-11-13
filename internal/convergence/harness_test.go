@@ -17,6 +17,7 @@ import (
 
 	mssql "github.com/microsoft/go-mssqldb"
 
+	"github.com/rudi-bruchez/sqlserver-replication/internal/apply"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/plan"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/precheck"
@@ -80,8 +81,17 @@ func newEnv(t *testing.T) *env {
 // database.
 func (e *env) open(t *testing.T, database string) *sql.DB {
 	t.Helper()
+	db, err := e.pool(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+// pool is open without a test, for the plan function apply calls.
+func (e *env) pool(database string) (*sql.DB, error) {
 	if db, ok := e.dbs[database]; ok {
-		return db
+		return db, nil
 	}
 	u := *e.dsn
 	q := u.Query()
@@ -89,10 +99,10 @@ func (e *env) open(t *testing.T, database string) *sql.DB {
 	u.RawQuery = q.Encode()
 	db, err := sql.Open("sqlserver", u.String())
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	e.dbs[database] = db
-	return db
+	return db, nil
 }
 
 // labEnv runs setup.sql for the test name, its databases being m_pdb_<name>
@@ -278,15 +288,27 @@ func (e *env) plan(t *testing.T, des *model.Config, opt plan.Options) *plan.Plan
 // instance (carried decision 1). Its Current is the export of the database.
 func (e *env) inputs(t *testing.T, des *model.Config) plan.Inputs {
 	t.Helper()
-	ctx := context.Background()
-	probe, err := reader.Probe(ctx, e.master, des.Publisher.Database)
+	in, err := e.read(context.Background(), des)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := probe.Start(); err != nil {
-		t.Fatal(err)
+	return in
+}
+
+// read is inputs without a test: apply calls it under its locks (e.target),
+// where a t.Fatal would skip the restores and the unlock.
+func (e *env) read(ctx context.Context, des *model.Config) (plan.Inputs, error) {
+	probe, err := reader.Probe(ctx, e.master, des.Publisher.Database)
+	if err != nil {
+		return plan.Inputs{}, err
 	}
-	pub := e.open(t, probe.Name)
+	if _, _, err := probe.Start(); err != nil {
+		return plan.Inputs{}, err
+	}
+	pub, err := e.pool(probe.Name)
+	if err != nil {
+		return plan.Inputs{}, err
+	}
 	distName := probe.Distributor
 	if d := des.Distributor; d != nil && d.Server != "" {
 		distName = d.Server
@@ -307,7 +329,7 @@ func (e *env) inputs(t *testing.T, des *model.Config) plan.Inputs {
 	}
 	pulls, err := reader.PullSubscribers(ctx, pub)
 	if err != nil {
-		t.Fatal(err)
+		return plan.Inputs{}, err
 	}
 	for _, s := range pulls {
 		add(s)
@@ -315,19 +337,144 @@ func (e *env) inputs(t *testing.T, des *model.Config) plan.Inputs {
 	res, err := reader.Read(ctx, reader.Source{Publisher: pub, Distributor: e.master, Database: probe.Name,
 		Probe: probe, Subscribers: subs, Facts: true})
 	if err != nil {
-		t.Fatal(err)
+		return plan.Inputs{}, err
 	}
 	checks, err := precheck.Run(ctx, precheck.Conns{Publisher: e.master, Publication: pub, Distributor: e.master,
 		Subscribers: subs, DistributorServer: distName}, des, res.Config)
 	if err != nil {
-		t.Fatal(err)
+		return plan.Inputs{}, err
 	}
 	return plan.Inputs{Desired: des, Current: res.Config, Facts: res.Facts, Checks: checks,
 		SecretSet: func(name string) bool {
-			// R54: an empty variable is not set.
-			v, ok := os.LookupEnv(name)
-			return ok && v != ""
-		}}
+			_, ok := secretEnv(name)
+			return ok
+		}}, nil
+}
+
+// secretEnv is Options.Secret and Inputs.SecretSet: R54, an empty variable
+// is not set.
+func secretEnv(name string) (string, bool) {
+	v, ok := os.LookupEnv(name)
+	return v, ok && v != ""
+}
+
+// target is what e.apply hands apply.Run (R60): the lab instance under
+// every server name of the file, the plan read and built under the locks
+// as plan.Build(e.inputs), and the distributor lock taken by R45's rule,
+// as cmd/sqlrepl takes it, when the file declares distributor or
+// agent_profiles.
+func (e *env) target(des *model.Config, opt plan.Options) apply.Target {
+	servers := apply.Servers{e.server: e.master, des.Publisher.Server: e.master}
+	if d := des.Distributor; d != nil && d.Server != "" {
+		servers[d.Server] = e.master
+	}
+	for _, p := range des.Publications {
+		for _, s := range p.Subscriptions {
+			servers[s.Subscriber] = e.master
+		}
+	}
+	t := apply.Target{Server: des.Publisher.Server, Database: des.Publisher.Database, Servers: servers,
+		Distributor: e.server}
+	var distErr error
+	if des.Distributor != nil || des.AgentProfiles != nil {
+		if d := des.Distributor; d != nil && d.Database != "" {
+			t.DistributionDB = d.Database
+		} else {
+			t.DistributionDB, distErr = reader.DistributionDB(context.Background(), e.master, des.Publisher.Server)
+		}
+	}
+	t.Plan = func(ctx context.Context) (*plan.Plan, error) {
+		if distErr != nil {
+			return nil, fmt.Errorf("distribution database: %w", distErr)
+		}
+		in, err := e.read(ctx, des)
+		if err != nil {
+			return nil, err
+		}
+		return plan.Build(in, opt), nil
+	}
+	return t
+}
+
+// applyWait is R60's -wait.
+const applyWait = 5 * time.Minute
+
+// apply runs des through apply.Run (R60): auto-approved, -wait 5 minutes,
+// every line it prints to t.Log. It fails the test unless the run ends
+// with want and, for applied, with every delivery owed confirmed.
+func (e *env) apply(t *testing.T, des *model.Config, opt plan.Options, want apply.Outcome) *apply.Result {
+	t.Helper()
+	out := &lineLog{t: t}
+	res, err := apply.Run(context.Background(), e.target(des, opt), apply.Options{
+		Wait: applyWait, AutoApprove: true, Secret: secretEnv, Out: out})
+	out.flush()
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if res.Outcome != want {
+		t.Fatalf("apply ended %s, want %s (exit %d, failure %+v)", res.Outcome, want, res.ExitCode(), res.Failure)
+	}
+	if want == apply.OutcomeApplied {
+		for _, d := range res.Deliveries {
+			if d.Status != "confirmed" {
+				t.Fatalf("delivery %s to %s: %s (%s)", d.Publication, d.Subscription, d.Status, d.Detail)
+			}
+		}
+	}
+	return res
+}
+
+// wantDelivered checks that res holds exactly one confirmed delivery per
+// publication of pubs to {server}/{sub}, and no other delivery.
+func (e *env) wantDelivered(t *testing.T, res *apply.Result, pubs ...string) {
+	t.Helper()
+	sub := e.server + "/" + e.sub
+	ok := len(res.Deliveries) == len(pubs)
+	for i := 0; ok && i < len(pubs); i++ {
+		d := res.Deliveries[i]
+		ok = d.Publication == pubs[i] && strings.EqualFold(d.Subscription, sub) && d.Status == "confirmed"
+	}
+	if !ok {
+		t.Fatalf("deliveries %+v, want one confirmed per publication of %q to %s", res.Deliveries, pubs, sub)
+	}
+}
+
+// checkTimeout bounds the data checks after apply, which has already
+// confirmed the delivery (R60).
+const checkTimeout = 15 * time.Second
+
+// checkDelivered checks the row counts the test expects (e.deliveries),
+// waiting at most checkTimeout.
+func (e *env) checkDelivered(t *testing.T) {
+	t.Helper()
+	for _, d := range e.deliveries {
+		e.waitRows(t, d.table, d.want, checkTimeout)
+	}
+}
+
+// lineLog is Options.Out: each line apply prints goes to t.Log.
+type lineLog struct {
+	t   *testing.T
+	buf []byte
+}
+
+func (w *lineLog) Write(b []byte) (int, error) {
+	w.buf = append(w.buf, b...)
+	for {
+		i := strings.IndexByte(string(w.buf), '\n')
+		if i < 0 {
+			return len(b), nil
+		}
+		w.t.Log(string(w.buf[:i]))
+		w.buf = w.buf[i+1:]
+	}
+}
+
+func (w *lineLog) flush() {
+	if len(w.buf) > 0 {
+		w.t.Log(string(w.buf))
+		w.buf = nil
+	}
 }
 
 func quoteName(s string) string { return "[" + strings.ReplaceAll(s, "]", "]]") + "]" }
@@ -548,8 +695,14 @@ func (e *env) waitAll(t *testing.T) {
 // counts as not delivered.
 func (e *env) waitDelivered(t *testing.T, table string, want int) {
 	t.Helper()
+	e.waitRows(t, table, want, pollTimeout)
+}
+
+// waitRows is waitDelivered within timeout.
+func (e *env) waitRows(t *testing.T, table string, want int, timeout time.Duration) {
+	t.Helper()
 	q := fmt.Sprintf("SELECT COUNT(*) FROM %s.dbo.%s", quoteName(e.sub), quoteName(table))
-	deadline := time.Now().Add(pollTimeout)
+	deadline := time.Now().Add(timeout)
 	var n int
 	var err error
 	for {
@@ -562,7 +715,7 @@ func (e *env) waitDelivered(t *testing.T, table string, want int) {
 		}
 		time.Sleep(pollEvery)
 	}
-	t.Fatalf("%s.dbo.%s: %d rows (%v) after %s, want %d\n%s", e.sub, table, n, err, pollTimeout, want, e.history())
+	t.Fatalf("%s.dbo.%s: %d rows (%v) after %s, want %d\n%s", e.sub, table, n, err, timeout, want, e.history())
 }
 
 // history is the last agent messages of the test's database, to tell why a

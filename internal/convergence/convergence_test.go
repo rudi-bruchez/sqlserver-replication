@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rudi-bruchez/sqlserver-replication/internal/apply"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/plan"
 )
@@ -118,18 +119,20 @@ func wantCosts(t *testing.T, op plan.Operation, want ...plan.Cost) {
 	}
 }
 
-// createAndDeliver plans create.yaml, runs it, starts the snapshot and
-// waits until the subscriber holds m_t1's 10 rows and m_t2's 20.
+// createAndDeliver plans create.yaml and applies it; apply confirms the
+// delivery, and the subscriber holds m_t1's 10 rows and m_t2's 20.
 func createAndDeliver(t *testing.T, e *env) *plan.Plan {
 	t.Helper()
-	p := e.plan(t, e.desired(t, "create.yaml"), plan.Options{})
+	des := e.desired(t, "create.yaml")
+	p := e.plan(t, des, plan.Options{})
 	if len(p.Refusals) > 0 {
 		t.Fatalf("create.yaml refused:\n%s", p.Summary())
 	}
 	wantAgents(t, p, e.snapshotAndPush())
-	e.run(t, p)
+	res := e.apply(t, des, plan.Options{}, apply.OutcomeApplied)
+	e.wantDelivered(t, res, "m_p")
 	e.deliveries = []delivery{{"m_t1", 10}, {"m_t2", 20}}
-	e.startAndWait(t, p)
+	e.checkDelivered(t)
 	return p
 }
 
@@ -158,9 +161,10 @@ func TestLabCreatePublication(t *testing.T) {
 	jobsAround(t, p)
 	wantAgents(t, p, e.snapshotAndPush())
 
-	e.run(t, p)
+	res := e.apply(t, des, plan.Options{}, apply.OutcomeApplied)
+	e.wantDelivered(t, res, "m_p")
 	e.deliveries = []delivery{{"m_t1", 10}, {"m_t2", 20}}
-	e.startAndWait(t, p)
+	e.checkDelivered(t)
 
 	if n := e.count(t, "SELECT COUNT(*) FROM {sub}.dbo.m_t1 WHERE a > 0"); n != 10 {
 		t.Errorf("subscriber m_t1: %d rows with a > 0, want all 10", n)
@@ -225,9 +229,10 @@ func TestLabAddArticle(t *testing.T) {
 	jobsAround(t, p)
 	wantAgents(t, p, e.snapshotAndPush())
 
-	e.run(t, p)
+	res := e.apply(t, des, plan.Options{}, apply.OutcomeApplied)
+	e.wantDelivered(t, res, "m_p")
 	e.deliveries = []delivery{{"m_t3", 20}}
-	e.startAndWait(t, p)
+	e.checkDelivered(t)
 	e.converged(t, des)
 }
 
@@ -251,9 +256,10 @@ func TestLabFilterChange(t *testing.T) {
 	jobsAround(t, p)
 	wantAgents(t, p, e.snapshotAndPush())
 
-	e.run(t, p)
+	res := e.apply(t, des, plan.Options{}, apply.OutcomeApplied)
+	e.wantDelivered(t, res, "m_p")
 	e.deliveries = []delivery{{"m_t1", 5}}
-	e.startAndWait(t, p)
+	e.checkDelivered(t)
 	if n := e.count(t, "SELECT COUNT(*) FROM {sub}.dbo.m_t1 WHERE a > 5"); n != 5 {
 		t.Errorf("subscriber m_t1: %d rows with a > 5, want all 5", n)
 	}
@@ -281,9 +287,8 @@ func TestLabDropArticle(t *testing.T) {
 	jobsAround(t, p)
 	wantAgents(t, p, nil)
 
-	e.run(t, p)
-	e.deliveries = nil
-	e.startAndWait(t, p)
+	res := e.apply(t, des, plan.Options{}, apply.OutcomeApplied)
+	e.wantDelivered(t, res)
 	if n := e.count(t, "SELECT COUNT(*) FROM {sub}.sys.tables WHERE name = N'm_t2'"); n != 1 {
 		t.Errorf("subscriber m_t2 is gone after the drop of the article, want it left behind")
 	}
@@ -324,9 +329,10 @@ func TestLabRenameReplacesData(t *testing.T) {
 	wantCosts(t, ext, plan.CostNewSnapshot, plan.CostSubscriberDataReplaced)
 	wantAgents(t, p, e.snapshotAndPush())
 
-	e.run(t, p)
+	res := e.apply(t, des, plan.Options{}, apply.OutcomeApplied)
+	e.wantDelivered(t, res, "m_p")
 	e.deliveries = []delivery{{"m_t1", 10}}
-	e.startAndWait(t, p)
+	e.checkDelivered(t)
 	if n := e.count(t, "SELECT COUNT(*) FROM {sub}.dbo.m_t1 WHERE id = 1000"); n != 0 {
 		t.Errorf("the row held only at the subscriber is still there: the table was not replaced")
 	}
@@ -357,6 +363,7 @@ EXEC msdb.dbo.sp_delete_job @job_id = @job_id;`)); err != nil {
 	if _, err := find(p, "sp_dropsubscription", map[string]string{"@article": "N'all'"}); err != nil {
 		t.Fatalf("%v\n%s", err, p.Summary())
 	}
-	e.run(t, p)
+	res := e.apply(t, des, plan.Options{}, apply.OutcomeApplied)
+	e.wantDelivered(t, res)
 	e.converged(t, des)
 }

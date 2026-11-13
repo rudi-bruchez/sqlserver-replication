@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rudi-bruchez/sqlserver-replication/internal/apply"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/model"
 	"github.com/rudi-bruchez/sqlserver-replication/internal/plan"
 )
@@ -106,9 +107,9 @@ func (e *env) pullRef(pub string) plan.AgentRef {
 
 func snapshotRef(pub string) plan.AgentRef { return plan.AgentRef{Kind: "snapshot", Publication: pub} }
 
-// createImm plans imm.yaml (edited by edit when not nil), runs it, starts
-// the snapshot and waits until the subscriber holds m_t1's 20 rows and the
-// snapshot is ready; the next plan is empty.
+// createImm plans imm.yaml (edited by edit when not nil) and applies it;
+// apply confirms the delivery, the subscriber holds m_t1's 20 rows, the
+// snapshot is ready and the next plan is empty.
 func createImm(t *testing.T, e *env, edit func(*model.Config)) {
 	t.Helper()
 	des := e.desired(t, "imm.yaml")
@@ -118,9 +119,10 @@ func createImm(t *testing.T, e *env, edit func(*model.Config)) {
 	p := e.plan(t, des, plan.Options{})
 	refusedFatal(t, p, "imm.yaml")
 	wantAgents(t, p, []plan.AgentRef{snapshotRef("m_pi"), e.pushRef("m_pi")})
-	e.run(t, p)
+	res := e.apply(t, des, plan.Options{}, apply.OutcomeApplied)
+	e.wantDelivered(t, res, "m_pi")
 	e.deliveries = []delivery{{"m_t1", 20}}
-	e.startAndWait(t, p)
+	e.checkDelivered(t)
 	e.waitReady(t, "m_pi")
 	e.converged(t, des)
 }
@@ -155,9 +157,10 @@ func TestLabImmediateSync(t *testing.T) {
 	}
 	jobsAround(t, p)
 	wantAgents(t, p, []plan.AgentRef{snapshotRef("m_pi"), e.pushRef("m_pi")})
-	e.run(t, p)
+	res := e.apply(t, des, plan.Options{}, apply.OutcomeApplied)
+	e.wantDelivered(t, res, "m_pi")
 	e.deliveries = []delivery{{"m_t2", 20}}
-	e.startAndWait(t, p)
+	e.checkDelivered(t)
 	e.converged(t, des)
 
 	// imm-schema.yaml: a schema option of m_t1, both flags (R9).
@@ -172,9 +175,10 @@ func TestLabImmediateSync(t *testing.T) {
 	wantCosts(t, chg, plan.CostReinitialization, plan.CostNewSnapshot, plan.CostSubscriberDataReplaced)
 	jobsAround(t, p)
 	wantAgents(t, p, []plan.AgentRef{snapshotRef("m_pi"), e.pushRef("m_pi")})
-	e.run(t, p)
+	res = e.apply(t, des, plan.Options{}, apply.OutcomeApplied)
+	e.wantDelivered(t, res, "m_pi")
 	e.deliveries = []delivery{{"m_t1", 20}, {"m_t2", 20}}
-	e.startAndWait(t, p)
+	e.checkDelivered(t)
 	e.waitFor(t, "index m_ix_a at the subscriber", ixAtSub, 1)
 	e.converged(t, des)
 }
@@ -226,8 +230,12 @@ func TestLabDeferFullSnapshot(t *testing.T) {
 		t.Errorf("notes of the deferral plan %q, want %q", p.Notes, want)
 	}
 
+	// apply's generate_and_wait waits for the delivery of m_t2 before the
+	// restore of immediate_sync (R51).
+	res := e.apply(t, des, plan.Options{DeferFullSnapshot: true, Wait: 10 * time.Minute}, apply.OutcomeApplied)
+	e.wantDelivered(t, res, "m_pi")
 	e.deliveries = []delivery{{"m_t2", 20}}
-	e.run(t, p) // its generate_and_wait waits for m_t2
+	e.checkDelivered(t)
 	next := e.plan(t, des, plan.Options{})
 	if len(next.Operations) != 0 || len(next.Refusals) != 0 {
 		t.Fatalf("the plan after the deferral:\n%s", next.Summary())
@@ -273,9 +281,10 @@ func TestLabPullSubscription(t *testing.T) {
 	}
 	jobsAround(t, p)
 	wantAgents(t, p, []plan.AgentRef{snapshotRef("m_pp"), e.pullRef("m_pp")})
-	e.run(t, p)
+	res := e.apply(t, des, plan.Options{}, apply.OutcomeApplied)
+	e.wantDelivered(t, res, "m_pp")
 	e.deliveries = []delivery{{"m_t1", 20}}
-	e.startAndWait(t, p)
+	e.checkDelivered(t)
 	e.converged(t, des)
 
 	// The file without the subscription: subscriber first (08-pull P3).
@@ -288,7 +297,8 @@ func TestLabPullSubscription(t *testing.T) {
 	})
 	jobsAround(t, p)
 	wantAgents(t, p, nil)
-	e.run(t, p)
+	res = e.apply(t, des, plan.Options{}, apply.OutcomeApplied)
+	e.wantDelivered(t, res)
 	e.converged(t, des)
 }
 
@@ -298,9 +308,10 @@ func TestLabPullExtension(t *testing.T) {
 	p := e.plan(t, des, plan.Options{})
 	refusedFatal(t, p, "pull.yaml")
 	wantAgents(t, p, []plan.AgentRef{snapshotRef("m_pp"), e.pullRef("m_pp")})
-	e.run(t, p)
+	res := e.apply(t, des, plan.Options{}, apply.OutcomeApplied)
+	e.wantDelivered(t, res, "m_pp")
 	e.deliveries = []delivery{{"m_t1", 20}}
-	e.startAndWait(t, p)
+	e.checkDelivered(t)
 	e.converged(t, des)
 
 	des = e.desired(t, "pull-extend.yaml")
@@ -323,9 +334,10 @@ func TestLabPullExtension(t *testing.T) {
 	wantCosts(t, exts[0], plan.CostNewSnapshot)
 	jobsAround(t, p)
 	wantAgents(t, p, []plan.AgentRef{snapshotRef("m_pp"), e.pullRef("m_pp")})
-	e.run(t, p)
+	res = e.apply(t, des, plan.Options{}, apply.OutcomeApplied)
+	e.wantDelivered(t, res, "m_pp")
 	e.deliveries = []delivery{{"m_t2", 20}}
-	e.startAndWait(t, p)
+	e.checkDelivered(t)
 	e.converged(t, des)
 
 	for _, f := range e.inputs(t, des).Current.Findings {
@@ -390,9 +402,10 @@ func TestLabProfileConverges(t *testing.T) {
 	}
 	jobsAround(t, p)
 	wantAgents(t, p, e.snapshotAndPush())
-	e.run(t, p)
+	res := e.apply(t, des, plan.Options{}, apply.OutcomeApplied)
+	e.wantDelivered(t, res, "m_p")
 	e.deliveries = []delivery{{"m_t1", 10}, {"m_t2", 20}}
-	e.startAndWait(t, p)
+	e.checkDelivered(t)
 	e.converged(t, des)
 }
 
@@ -420,7 +433,8 @@ func TestLabPropertiesAndSchedule(t *testing.T) {
 	}
 	jobsAroundAll(t, p, true)
 	wantAgents(t, p, nil)
-	e.run(t, p)
+	res := e.apply(t, des, plan.Options{}, apply.OutcomeApplied)
+	e.wantDelivered(t, res)
 	e.converged(t, des)
 
 	// drop-publication.yaml: the subscription, then the publication; the
@@ -447,7 +461,8 @@ func TestLabPropertiesAndSchedule(t *testing.T) {
 		}
 	}
 	wantAgents(t, p, nil)
-	e.run(t, p)
+	res = e.apply(t, des, plan.Options{}, apply.OutcomeApplied)
+	e.wantDelivered(t, res)
 	e.converged(t, des)
 	if lr := e.inputs(t, des).Current.Publisher.LogReaderAgent; lr != nil {
 		t.Errorf("the export still has a log reader agent after the drop of the last publication (R10)")
@@ -501,7 +516,8 @@ func TestLabSyncMethodCharacter(t *testing.T) {
 	}
 	wantCosts(t, chg, plan.CostOnline)
 	wantAgents(t, p, nil)
-	e.run(t, p)
+	res := e.apply(t, des, plan.Options{}, apply.OutcomeApplied)
+	e.wantDelivered(t, res)
 	e.converged(t, des)
 }
 
@@ -534,8 +550,9 @@ func TestLabDriftCorrected(t *testing.T) {
 	wantCosts(t, chg, plan.CostReinitialization, plan.CostNewSnapshot, plan.CostSubscriberDataReplaced)
 	jobsAround(t, p)
 	wantAgents(t, p, e.snapshotAndPush())
-	e.run(t, p)
+	res := e.apply(t, des, plan.Options{}, apply.OutcomeApplied)
+	e.wantDelivered(t, res, "m_p")
 	e.deliveries = []delivery{{"m_t2", 20}}
-	e.startAndWait(t, p)
+	e.checkDelivered(t)
 	e.converged(t, des)
 }
