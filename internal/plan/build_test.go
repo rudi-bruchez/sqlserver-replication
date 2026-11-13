@@ -474,3 +474,56 @@ func TestStoredCaseInTSQL(t *testing.T) {
 		t.Logf("plan:\n%s%s", p.Summary(), sql)
 	}
 }
+
+// A publication dropped and one created under the same name in another
+// case (SalesRef to SALESREF): publications match by exact name, so the
+// plan drops one and creates the other. The distribution database is case
+// insensitive on the lab (SQL_Latin1_General_CP1_CI_AS), so R61's restore
+// of SalesRef, which finds its job by publication name, finds SALESREF's
+// job after the drop. It sorts before every other step 12 restore, so that
+// the last statement touching that job is SALESREF's own restore, with the
+// file's value (Task 7 fix round 2).
+func TestDroppedRestoreBeforeOtherRestores(t *testing.T) {
+	ops := withJobs(t, buildFull(t, nil, nil, func(des, _ *model.Config) {
+		kept := des.Publications[:0]
+		for _, p := range des.Publications {
+			if p.Name != "SalesRef" {
+				kept = append(kept, p)
+			}
+		}
+		pub := testPub("SALESREF", newTable("m_t"))
+		pub.SnapshotAgent = &model.Agent{JobEnabled: model.Ptr(false)}
+		des.Publications = append(kept, pub)
+	}))
+	var dropped, created *Operation
+	for i := range ops {
+		op := &ops[i]
+		if op.Kind != "job_restore" {
+			continue
+		}
+		switch op.Path {
+		case "publications[SalesRef].snapshot_agent":
+			dropped = op
+		case "publications[SALESREF].snapshot_agent":
+			created = op
+		}
+	}
+	if dropped == nil || created == nil {
+		t.Fatalf("restores:\n%s", opsString(ofKind(ops, "job_restore")))
+	}
+	if dropped.Call.Guard != "@job_id IS NOT NULL" || dropped.Seq >= created.Seq {
+		t.Errorf("R61's restore %d (guard %q) is not before the created publication's %d:\n%s",
+			dropped.Seq, dropped.Call.Guard, created.Seq, opsString(ofKind(ops, "job_restore")))
+	}
+	// The last statement on a snapshot job of that name sets the file's value.
+	last := ops[0]
+	for _, op := range ops {
+		if (op.Kind == "job_restore" || op.Kind == "job_disable") && strings.EqualFold(op.Path, created.Path) {
+			last = op
+		}
+	}
+	if last.Seq != created.Seq {
+		t.Errorf("the last job operation on %s is %d %s, want the created publication's restore %d", created.Path, last.Seq, last.Path, created.Seq)
+	}
+	wantParam(t, *created, "@enabled", "0")
+}

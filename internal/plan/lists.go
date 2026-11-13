@@ -370,8 +370,14 @@ func (b *builder) addJobOps(ops []Operation, refs []AgentRef) []Operation {
 			// sp_droppublication deletes the job, but a way out of apply
 			// before the drop must not leave it disabled: restored to the
 			// value found, by a batch that does nothing once the job is gone
-			// (R61).
-			op := b.jobOp(12, "1"+sep+pub, "job_restore", cost.OpJobRestore, slot, enabledLiteral(snapshotEnabled(cur)))
+			// (R61). Its Order, "0", sorts it before every other step 12
+			// restore ("1"): the distribution database is case insensitive
+			// (SQL_Latin1_General_CP1_CI_AS on the lab), so after the drop
+			// its prologue finds the job of a publication the plan creates
+			// under the same name in another case, and the created
+			// publication's own restore, with the file's value, must come
+			// after it (Task 7 fix round 2).
+			op := b.jobOp(12, "0"+sep+pub, "job_restore", cost.OpJobRestore, slot, enabledLiteral(snapshotEnabled(cur)))
 			op.Call.Prologue, op.Call.Guard = b.jobFind(slot), "@job_id IS NOT NULL"
 			op.Reason = "the snapshot job of the dropped publication is restored to the value found on a way out of apply before the drop; after the drop the job is gone and the call does not run (R61)"
 			op.Sources = append(op.Sources, "R61")
