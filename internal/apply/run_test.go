@@ -37,9 +37,11 @@ type fakeServer struct {
 	// echoSecret makes every statement with a bound secret fail with a
 	// server message that holds the bound value (TestRunMasksEchoedSecret).
 	echoSecret bool
-	// publisherRoot is the working_directory qPublisherRoot returns, and
-	// the listing of qListing is empty (TestListReadsPublisherRoot).
-	publisherRoot string
+	// rootPublisher and publisherRoot: qPublisherRoot returns publisherRoot
+	// for the publisher named rootPublisher (any case), no row for any
+	// other name; the listing of qListing is empty
+	// (TestListReadsPublisherRoot).
+	rootPublisher, publisherRoot string
 }
 
 func (f *fakeServer) add(b string) {
@@ -143,7 +145,11 @@ func (c *applyFakeConn) QueryContext(_ context.Context, q string, args []driver.
 	}
 	switch q {
 	case qPublisherRoot:
-		c.f.add(fmt.Sprintf("publisher root %v", args[0].Value))
+		name := fmt.Sprint(args[0].Value)
+		c.f.add("publisher root " + name)
+		if !strings.EqualFold(name, c.f.rootPublisher) {
+			return &applyFakeRows{}, nil
+		}
 		return &applyFakeRows{rows: [][]driver.Value{{c.f.publisherRoot}}}, nil
 	case qListing:
 		c.f.add(fmt.Sprintf("listing %v", args[0].Value))

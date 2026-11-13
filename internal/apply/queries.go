@@ -173,7 +173,8 @@ func applyQueries() map[string]string {
 	return map[string]string{
 		"qReplServersProbe": qReplServersProbe, "qTMark": qTMark, "qAgentRow": qAgentRow,
 		"qHistoryAfter": qHistoryAfter, "qDistSubStatus": qDistSubStatus, "qListing": qListing,
-		"qLastHistory": qLastHistory, "qAgentJobState": qAgentJobState,
+		"qPublisherRoot": qPublisherRoot,
+		"qLastHistory":   qLastHistory, "qAgentJobState": qAgentJobState,
 		"qSubStatus": qSubStatus, "pendingQuery": pendingQuery,
 		"qImmediateSyncReady": qImmediateSyncReady, "qSyncMethod": qSyncMethod,
 	}

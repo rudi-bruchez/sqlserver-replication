@@ -445,22 +445,27 @@ func TestNoRunYet(t *testing.T) {
 
 // TestListReadsPublisherRoot pins R50b: a publication whose plan gives no
 // snapshot root (working_directory omitted) is listed under the
-// publisher's working_directory read at the distributor at T, which
-// identify reuses; a plan that gives a root is listed there, with no read.
+// publisher's working_directory, read at the distributor at T by the
+// publisher's name, which identify reuses; a plan that gives a root is
+// listed there, with no read; no row for the publisher keeps the root
+// unknown. The distributor and the publisher have different names, so that
+// a read by the wrong name finds no row.
 func TestListReadsPublisherRoot(t *testing.T) {
+	const unknown = "snapshot folder of m_p cannot be listed: its snapshot root is unknown"
 	ctx := context.Background()
 	for _, c := range []struct {
-		name, planRoot, wantList string
-		wantRead                 bool
+		name, planRoot, rootPublisher, wantList, wantUnlisted string
+		wantRead                                              bool
 	}{
-		{"no root in the plan", "", "listing /var/opt/mssql/ReplData", true},
-		{"the plan's root", labRoot, "listing " + labRoot, false},
+		{"no root in the plan", "", "pubsrv", "listing /var/opt/mssql/ReplData", "", true},
+		{"the plan's root", labRoot, "pubsrv", "listing " + labRoot, "", false},
+		{"no row for the publisher", "", "othersrv", "", unknown, true},
 	} {
 		db, f := newFakeServer(t)
-		f.publisherRoot = "/var/opt/mssql/ReplData"
-		s := newSession(Servers{"m-fresh": db})
-		tr := newTracker("m-fresh", "m-fresh")
-		p := &plan.Plan{Publisher: "m-fresh", Database: "m_fresh_pub", DistributionDB: "distribution",
+		f.rootPublisher, f.publisherRoot = c.rootPublisher, "/var/opt/mssql/ReplData"
+		s := newSession(Servers{"DISTSRV": db})
+		tr := newTracker("DISTSRV", "PUBSRV")
+		p := &plan.Plan{Publisher: "PUBSRV", Database: "m_fresh_pub", DistributionDB: "distribution",
 			SnapshotRoots: map[string]string{}}
 		if c.planRoot != "" {
 			p.SnapshotRoots["m_p"] = c.planRoot
@@ -470,22 +475,25 @@ func TestListReadsPublisherRoot(t *testing.T) {
 		if err := tr.list(ctx, s, p, "m_p", &m); err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}
-		if m.unlisted != "" {
-			t.Errorf("%s: unlisted %q", c.name, m.unlisted)
+		if m.unlisted != c.wantUnlisted {
+			t.Errorf("%s: unlisted %q, want %q", c.name, m.unlisted, c.wantUnlisted)
 		}
 		log := f.log()
-		if got := containsString(log, "publisher root m-fresh"); got != c.wantRead {
-			t.Errorf("%s: publisher root read %v, want %v: %q", c.name, got, c.wantRead, log)
+		if got := containsString(log, "publisher root PUBSRV"); got != c.wantRead {
+			t.Errorf("%s: read by the publisher's name %v, want %v: %q", c.name, got, c.wantRead, log)
 		}
-		if !containsString(log, c.wantList) {
-			t.Errorf("%s: batches %q, want %q", c.name, log, c.wantList)
+		if c.wantList == "" && f.count("listing ") != 0 || c.wantList != "" && !containsString(log, c.wantList) {
+			t.Errorf("%s: batches %q, want listing %q", c.name, log, c.wantList)
 		}
 		r := &record{owed: owed{Publication: "m_p"}}
 		if err := tr.identify(ctx, s, p, r); err != nil {
 			t.Fatalf("%s: identify: %v", c.name, err)
 		}
-		if r.unlisted != "" || f.count(c.wantList) != 2 {
-			t.Errorf("%s: identify unlisted %q, batches %q, want a second %q", c.name, r.unlisted, f.log(), c.wantList)
+		if r.unlisted != c.wantUnlisted {
+			t.Errorf("%s: identify unlisted %q, want %q", c.name, r.unlisted, c.wantUnlisted)
+		}
+		if c.wantList != "" && f.count(c.wantList) != 2 {
+			t.Errorf("%s: batches %q, want a second %q from identify", c.name, f.log(), c.wantList)
 		}
 		s.close()
 	}
