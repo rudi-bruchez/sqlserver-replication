@@ -201,7 +201,7 @@ Snapshot reports. Apply writes no snapshot report yet: it prints the outcome of 
 
 Known limits:
 
-- The check of a subscription created with `initialization: lsn` reads `msdb.dbo.restorehistory`, which keys on the destination name: a backup restored under a temporary name and then renamed into place is checked against an older restore of the target name, whose LSN it accepts.
+- The check of a subscription created with `initialization: lsn` reads `msdb.dbo.restorehistory`, which keys on the destination name: a backup restored under a temporary name and then renamed into place is checked against an older restore of the target name, whose LSN it accepts. A database restored under another name and then renamed into place passes the check all the same, since its `family_guid` and its backup match: the check guards against the measured failure, a wrong LSN that silently stops every subscription of the database, and is not a proof that the LSN is right.
 - The snapshot folder of a publisher on a named instance (a name with `\`) is not measured: its deliveries are reported `unconfirmed`, and apply exits 3.
 - A publication whose `unc` folder the distributor cannot read is taken as having no run yet: nothing is confirmed by mistake, but its delivery waits the whole `-wait` before it is reported `unconfirmed`.
 - A misspelled `profile` in a file that also creates the distributor is found only when the call that uses it fails, mid-plan: before the distributor exists there are no profiles to check against.
