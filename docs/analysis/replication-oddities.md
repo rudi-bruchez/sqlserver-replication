@@ -75,6 +75,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected: in a case-sensitive publication database, `P` and `p` are two publications.
 - Observed: they collide in `distribution.dbo.MSpublications`, and `sp_droppublication 'all'` then fails and leaves its transaction open.
 - Source: measured in the re-review of plan 2's final fixes, ledger 2 line 90; plan 3 rule R7.
+- Also observed (by reading): the lab's distribution database has the collation `SQL_Latin1_General_CP1_CI_AS` (`DATABASEPROPERTYEX`, read on the lab). A lookup of a snapshot agent by `MSsnapshot_agents.publication = N'SalesRef'` therefore also finds the agent of a publication `SALESREF` created after `SalesRef` was dropped. Source: plan 4 Task 7 fix round 1 and 2 (2026-11-13); the lookup itself was not run.
 
 ### The log reader of a database dropped with its last publication
 
@@ -173,6 +174,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Observed: it rewrites the filter procedure and `sysarticles.filter_clause` and leaves the synchronization view on the old clause, in every subscription state. With a NULL clause it drops the procedure and also leaves the view. The snapshot then reads the old view while the log reader applies the new filter, until `sp_articleview` is called again.
 - Also observed: `sp_articlefilter` with a new `@filter_name` drops the old filter procedure, and `@filter_clause = NULL` drops the procedure. Source: plan 3 task 9 review, measured (2026-11-12).
 - Also observed: with `@force_reinit_subscription = 1` on a publication whose log reader runs, `sp_articlefilter` printed Msg 18752 from `sys.sp_repldone` in two of five tries; the call completed (return code 0, `@@TRANCOUNT` 0, the filter stored). A client that stops on severity 16 (`sqlcmd -b`) would stop between `sp_articlefilter` and `sp_articleview` and leave the view out of step with the filter. Source: plan 3 task 9 review, measured (2026-11-12).
+- Also observed: the clause is stored verbatim in `sysarticles.filter_clause`, quotes included (`[s] = N'it''s' AND [id] > 1`). Under the database collation `SQL_Latin1_General_CP1_CI_AS` that column compares equal to the same clause in upper case, so a check that a clause change took must compare in a binary collation. A NULL clause stores `filter_clause` NULL, sets `filter` to 0 and drops the procedure; an `N''` clause does the same as NULL. Source: plan 4 Task 6 review, probe P9, measured on 2022 CU27 (2026-11-13).
 - Source: measured, `14-filter-view F2b`, `F2bs`, `F2bu`, `F3`.
 
 ### sp_articleview without a clause
@@ -894,6 +896,12 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Observed: on SQL Server 2022 CU27 for Linux, `msdb.dbo.sp_start_job` and `sp_startpublication_snapshot` both return code 1 and print `HResult 0x5606, Level 16` (22022, the number of a busy job) with the message "SQLServerAgent is not currently running so it cannot be notified of this action."; the message is not raised to the `CATCH` and `@@ERROR` reads 0 after the call. That is only the T-SQL view: go-mssqldb v1.11.0 returns an `mssql.Error` with `Number` 22022, `Class` 16, `State` 1, `ProcName` empty and `LineNo` 0 from `ExecContext`, `QueryContext` and `QueryRowContext`, even inside `TRY...CATCH`, and the busy refusal comes back in the same form. On any 22022 a batch that ends with `SELECT @started AS started` (the R62 `job_start` shape) delivers no row: the caller must classify the error before reading `started`. Only the text tells the two apart: match "SQLServerAgent is not currently running", never "running" alone, which the busy text also contains. With `Agent XPs` 0 and Agent stopped the refusal is the same 22022 and message, as `sa`. `sys.dm_server_services` has one row on Linux, `SQL Server Agent (MSSQLSERVER)`, `status_desc` `Running` or `Stopped`; the `SQLAgent - %` sessions go from 3 to 0; `xp_servicecontrol N'QueryState', N'SQLServerAGENT'` returns `Running.` or `Stopped.`. The `syssessions`-based idle read reads `idle` for a job that was idle when Agent stopped, before and after the refused start: no session row is added while Agent is down. A job running when Agent stopped keeps its open `sysjobactivity` row in that last session, and the same read says `busy` for as long as Agent stays down. `MSSQL_AGENT_ENABLED=false` at container start does keep Agent down (a job started writes no history in 30 s).
 - Source: measured, `lab/agent-stopped.sh`, `AS.*`; the driver forms, the lost `started` row, `Agent XPs` 0 and the job running when Agent stopped by the Task 2 review of plan 4 (same container setup, go-mssqldb v1.11.0). A login that is not `sysadmin` with `Agent XPs` 0 is not measured.
 
+### sp_update_job and a locked row of sysjobs
+
+- Expected: `sp_update_job` of one job waits only for locks on that job.
+- Observed: with another session holding an exclusive lock on the row of job A in `msdb.dbo.sysjobs`, `sp_update_job` of job B on the same server blocks as well, until its client's timeout. After the blocker rolled back, both updates went through. A tool that restores several jobs of one server after one of them blocked can spend its timeout once per job.
+- Source: measured, plan 4 Task 7 review, probe E, 2022 CU27 (2026-11-13).
+
 ### sp_stop_job on a job that has just ended
 
 - Expected: inside `TRY`, a refusal goes to the `CATCH`.
@@ -982,6 +990,12 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected: a profile belongs to a distribution database.
 - Observed (by reading): profiles live in `msdb.dbo.MSagent_profiles` and are shared by every distribution database of the instance, so a profile used through another distribution database reads as unused from one of them.
 - Source: by reading, p2 triage item N; `internal/reader/queries.go:361-371`.
+
+### The profile tables before a distributor
+
+- Expected: `msdb.dbo.MSagent_profiles` is a system table of every instance, empty until a profile is added.
+- Observed: on an instance with no replication configured, a `SELECT` of `msdb.dbo.MSagent_profiles` fails with 208 ("Invalid object name"); `sp_adddistributor` creates the table. A read of the profiles before the distributor exists has to read 208 as no profile.
+- Source: measured, `lab/fresh-apply.sh` first run on `m-fresh` (plan 4 Task 13, 2022 CU27, 2026-11-13).
 
 ### Where sp_add_agent_profile runs
 
@@ -1078,6 +1092,12 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected: `sp_adddistpublisher` accepts a folder it will create.
 - Observed: it refuses a working directory that does not exist (21037). `sp_changedistpublisher working_directory` changes online.
 - Source: measured, `lab/README.md` (start.sh note); `07-changes DST.sp_changedistpublisher.working_directory`.
+
+### The publisher name in MSdistpublishers
+
+- Expected: `msdb.dbo.MSdistpublishers.name` holds the publisher's name as `@@SERVERNAME` gives it.
+- Observed: on the lab it holds `REPLLAB` while `@@SERVERNAME` is `repllab`, as `syssubscriptions.srvname` does. A lookup of the publisher's `working_directory` there compares the name without regard to case.
+- Source: read on the lab, plan 4 Task 13 (ruling R50b, 2026-11-13).
 
 ### sp_changedistpublisher security
 
@@ -1297,6 +1317,12 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Also observed: `RAISERROR(18752, 16, 1, @s)` needs `@s` to be `bigint`, because the message uses `%I64d`; any other type gives error 2786. Source: Task 19 and Task 20 review of plan 3, measured on 2022 CU27 (16.0.4305.5), Linux, container repllab (2026-11-12).
 - Source: measured, `07-changes AGT.*.job_password`; panel 2 Claude item 7; panel 3 GLM item 1; `10-init-modes I2.backup.gap-original`.
 
+### Values echoed by error messages
+
+- Expected: an error message names the parameter, not its value.
+- Observed: Msg 245 (conversion failed) echoes the value it could not convert, raw and not quote-doubled (`a'b;c--d`, for `nvarchar` and `varchar` alike). Msg 2628 (string or binary data would be truncated) prints a prefix of the value ("Truncated value: 'zqx'"). A tool that masks a secret in the messages it prints by replacing the whole value leaves such a prefix visible.
+- Source: measured, plan 4 Task 6 review, probes P2 and P3, 2022 CU27 (2026-11-13).
+
 ### The go-mssqldb driver
 
 - Expected: `PingContext` returns when its context ends, and a "connection timeout" key is read however it is written.
@@ -1395,13 +1421,16 @@ The numbers met, with their meaning in this context. The agent messages met in t
 |---|---|---|
 | 134 | a batch of several replication calls | `DECLARE` of the same variable twice in one batch; nothing executes |
 | 201 | `sp_addpullsubscription_agent` | a required parameter (`@publisher_db`, `@publication`) not passed |
-| 208 | a `SELECT`, `sp_articlefilter` in `master` | the table does not exist, or its schema (the reliable absence probe, a compile error to run as its own batch); `syspublications` not found outside a publication database |
+| 208 | a `SELECT`, `sp_articlefilter` in `master` | the table does not exist, or its schema (the reliable absence probe, a compile error to run as its own batch); `syspublications` not found outside a publication database; `msdb.dbo.MSagent_profiles` before the instance is a distributor |
 | 229 | a `SELECT`; `msdb.dbo.sp_update_job`, `sp_start_job` | the login is denied the table, which `OBJECT_ID` hides as NULL; `msdb.dbo.sysjobs` and `syssessions` even for `SQLAgentOperatorRole`; the job procedures for an msdb user in no Agent role |
-| 245 | `sp_changepublication replicate_ddl` | `N'false'` converted to int; leaves the transaction open |
+| 245 | `sp_changepublication replicate_ddl` | `N'false'` converted to int; leaves the transaction open; the message echoes the value raw |
+| 266 | a batch run through `sp_executesql` (bound parameters) | the transaction count changed inside the batch; added after the real error, which go-mssqldb then reports only in `Error.All` |
 | 300 | `sys.dm_os_waiting_tasks` | `VIEW SERVER PERFORMANCE STATE` missing |
 | 1205 | subscription drops | deadlock, met once by the panel, not reproduced |
+| 1223 | `sp_releaseapplock` | the lock is not held in the current database: an application lock belongs to the database it was taken in |
 | 2601 | distribution agent, inside 20253 | duplicate key in the subscriber table during a bulk copy |
 | 2627 | inside 14151 | primary key violation when a re-add replays delivered rows |
+| 2628 | an `INSERT` or conversion into a column too short | the message prints a prefix of the value |
 | 2786 | `RAISERROR(18752, ...)` | the message uses `%I64d`, so the argument must be `bigint` |
 | 2812 | 2025 hidden helpers | the procedure cannot be found, though `sp_adddistributor` calls it |
 | 3217 | `sp_change_subscription_properties` | invalid property (`publisher_*`, `subscriber_*`, `dynamic_snapshot_location`, an unknown name) |
