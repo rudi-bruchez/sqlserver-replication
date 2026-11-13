@@ -701,3 +701,50 @@ func TestLabRestoreReconnects(t *testing.T) {
 		t.Errorf("the restore ran on the killed connection (err %v)", err)
 	}
 }
+
+// TestLabRestoreReconnectsDuring is the in-restore retry of R48 (Task 7
+// review, Important 1, probe A): the pinned session is killed about 1.5 s
+// into a restore whose prologue waits 3 s, after healthy's probe passed, so
+// only the retry can restore the job.
+func TestLabRestoreReconnectsDuring(t *testing.T) {
+	admin := labPool(t)
+	labJob(t, admin)
+	s, _ := newLabSession(t)
+	p := labJobPlan()
+	p.Operations[1].Call.Prologue = labJobLookup + "\nWAITFOR DELAY '00:00:03';"
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	var j jobs
+	j.arm(p, p.Operations[0])
+	if err := s.exec(ctx, p.Statements()[0], noSecret); err != nil {
+		t.Fatalf("job_disable: %v", err)
+	}
+	pinned, err := s.conn(ctx, labServer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var spid int
+	if err := pinned.QueryRowContext(ctx, "SELECT @@SPID").Scan(&spid); err != nil {
+		t.Fatal(err)
+	}
+	killed := make(chan error, 1)
+	time.AfterFunc(1500*time.Millisecond, func() {
+		_, err := admin.ExecContext(context.Background(), fmt.Sprintf("KILL %d;", spid))
+		killed <- err
+	})
+
+	left := j.restoreRemaining(s, p, 30*time.Second, noSecret)
+	if err := <-killed; err != nil {
+		t.Fatalf("KILL %d: %v", spid, err)
+	}
+	if len(left) != 0 {
+		t.Errorf("restoreRemaining left %q disabled, want nothing", left)
+	}
+	if n := labJobEnabled(t, admin); n != 1 {
+		t.Errorf("enabled after restoreRemaining = %d, want 1", n)
+	}
+	if now, err := s.conn(ctx, labServer); err != nil || now == pinned {
+		t.Errorf("the restore did not reconnect (err %v)", err)
+	}
+}

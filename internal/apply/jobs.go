@@ -70,13 +70,22 @@ func (j *jobs) done(seq int) {
 }
 
 // restoreRemaining runs the armed restores not run yet (R48) and returns
-// the paths left disabled. Each runs, in plan order, under a fresh context
-// bounded by timeout that no interrupt cancels, on the server's pinned
-// connection once healthy has cleared its @@TRANCOUNT, or on a new one
-// from the same pool when its probe fails (a cancelled statement leaves the
-// connection bad, Task 6); a restore that fails on a connection that no
-// longer answers reconnects once and runs again. What still fails is left
-// disabled.
+// the paths left disabled. Each runs, in plan order, by session.restore:
+// under a context of its own, bounded by timeout and cancelled by no
+// interrupt, on the server's pinned connection once healthy has cleared its
+// @@TRANCOUNT, or on a new one from the same pool when its probe fails (a
+// cancelled statement leaves the connection bad, Task 6); a restore that
+// fails on a connection that no longer answers, with time left, reconnects
+// once and runs again. What still fails is left disabled.
+//
+// The budget is per restore, not shared (Task 7 review, minor 3): every
+// armed restore gets its chance, those at a healthy server included, after
+// one at a blocked server spent its own. The worst case is the sum: a lock
+// on one job's row of msdb.dbo.sysjobs blocks sp_update_job of every job at
+// that server (review probe E), so n restores there take n times timeout,
+// and a connect to a server that withholds the prelogin waits the driver's
+// connection timeout instead of the restore's deadline (go-mssqldb ignores
+// the context there, review probe F), once per restore that connects.
 func (j *jobs) restoreRemaining(s *session, p *plan.Plan, timeout time.Duration, secret func(string) (string, bool)) []string {
 	bySeq := map[int]plan.Statement{}
 	for _, st := range p.Statements() {
@@ -105,16 +114,28 @@ func (j *jobs) restoreRemaining(s *session, p *plan.Plan, timeout time.Duration,
 	return left
 }
 
-// restore runs one printed job_restore by restoreRemaining's rules.
+// restore runs one printed job_restore by restoreRemaining's rules. Its
+// deadline bounds every step, the probe, the @@TRANCOUNT reads and the
+// reconnect included: the session's fresh contexts end at it while the
+// restore runs (session.bound), except for a connect the driver does not
+// bound by its context (restoreRemaining). A failure once the deadline is
+// spent is not retried: the retry would run past it, and the next
+// restore's probe replaces a connection the timeout left bad.
 func (s *session) restore(st plan.Statement, timeout time.Duration, secret func(string) (string, bool)) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	deadline, _ := ctx.Deadline()
+	s.bound = deadline
+	defer func() { s.bound = time.Time{} }()
 	if _, _, err := s.healthy(ctx, st.Server); err != nil {
 		return err
 	}
 	err := s.exec(ctx, st, secret)
 	if err == nil {
 		return nil
+	}
+	if ctx.Err() != nil {
+		return err // the timeout is spent: no time left for a retry
 	}
 	conn, cerr := s.conn(ctx, st.Server)
 	if cerr == nil && s.alive(ctx, conn) {
@@ -188,6 +209,15 @@ func (s *session) start(ctx context.Context, st plan.Statement) (started bool, e
 	}
 	started, runErr := readStarted(ctx, p, st.Text)
 	n, readErr := s.tranCount(ctx, p.conn)
+	return startOutcome(started, runErr, n, readErr)
+}
+
+// startOutcome is the decision of start from what the batch returned
+// (started, runErr) and the @@TRANCOUNT read after it (n, readErr): a busy
+// 22022 with no transaction left is started false and no error, SQL
+// Server Agent stopped and every other error an error, a transaction left
+// open errTranOpen; only a batch with no error gives its started row.
+func startOutcome(started bool, runErr error, n int, readErr error) (bool, error) {
 	if runErr != nil {
 		if c, _ := classify(runErr); c == classBusy && readErr == nil && n == 0 {
 			return false, nil

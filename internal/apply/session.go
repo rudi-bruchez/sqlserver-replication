@@ -56,6 +56,10 @@ type session struct {
 	// "lock release failed on <server>.<database>: <message>", for the run
 	// to report (R45): never swallowed.
 	releaseFailures []string
+	// bound, when not zero, is a deadline every fresh context ends at or
+	// before: a restore sets it to its own, so that its probe, its
+	// reconnect and its @@TRANCOUNT reads stay within its timeout (R48).
+	bound time.Time
 }
 
 // newSession takes no connection yet. Two names of s that differ only in
@@ -78,9 +82,16 @@ func newSession(s Servers) *session {
 
 // fresh is a context bounded by the session timeout that the interrupt does
 // not cancel: the @@TRANCOUNT read, its ROLLBACK and the probes run under it
-// (R46, panel M).
+// (R46, panel M). While a restore runs, it ends at the restore's deadline
+// (bound) when that comes first.
 func (s *session) fresh(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(ctx), s.timeout)
+	d := s.timeout
+	if !s.bound.IsZero() {
+		if r := time.Until(s.bound); r < d {
+			d = r
+		}
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), d)
 }
 
 // conn is the pinned connection of server, taken from its pool the first

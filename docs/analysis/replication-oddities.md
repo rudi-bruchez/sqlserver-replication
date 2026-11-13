@@ -865,6 +865,7 @@ Refused calls are written with their error number, `Msg <n>` or simply `(n)`. Th
 - Expected: disabling a job stops it and keeps it from starting.
 - Observed: a disabled job that is running keeps running, to its end; `sp_start_job` starts a disabled job (return code 0); `sp_startpublication_snapshot` also starts a disabled snapshot job (return code 0, `@@ERROR` 0, 12 history rows), and `sp_changepublication_snapshot` changes its schedule and leaves it disabled. A disabled snapshot job whose schedule fires every minute starts no run: no job outcome in 150 s, neither in the snapshot history nor in `sysjobactivity`, the schedule itself still enabled, while the same schedule with the job enabled ran it in the same time.
 - Source: measured, lab README "When the flags are needed" (`sp_stop_job` needed), `O20`, `O21`, `20-apply AP.disabled_schedule` and its control `AP.enabled_schedule`.
+- Also observed: the guarded `job_start` of R62 (`IF <JobIdle> EXEC @rc = msdb.dbo.sp_start_job`) on a disabled plain msdb job reads `started` 1 with no error, and `sysjobs.enabled` stays 0 through the run. A tool that keeps a job disabled during its own changes must not read `enabled` 0 as "no start will happen": its own start, or anyone's `sp_start_job`, still runs the job. Source: plan 4 Task 7 review, probe D, measured on 2022 CU27 (2026-11-13).
 
 ### The SQL Server Agent roles and a replication job
 
