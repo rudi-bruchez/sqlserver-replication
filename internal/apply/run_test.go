@@ -42,6 +42,11 @@ type fakeServer struct {
 	// other name; the listing of qListing is empty
 	// (TestListReadsPublisherRoot).
 	rootPublisher, publisherRoot string
+	// jobFailure, when set, is the row qJobFailedAfter returns (its start
+	// and its message); nil, no row. The polls of the wait for deliveries
+	// are answered for the distribution database "distribution": no agent
+	// row, no history line, sync_method native (TestWaitForFailedGeneration).
+	jobFailure []driver.Value
 }
 
 func (f *fakeServer) add(b string) {
@@ -90,8 +95,12 @@ type applyFakeConn struct{ f *fakeServer }
 func (c *applyFakeConn) Prepare(q string) (driver.Stmt, error) {
 	return nil, fmt.Errorf("fake: prepare %q", q)
 }
-func (*applyFakeConn) Close() error              { return nil }
-func (*applyFakeConn) Begin() (driver.Tx, error) { return nil, fmt.Errorf("fake: no transactions") }
+func (*applyFakeConn) Close() error { return nil }
+
+// CheckNamedValue passes every argument as given, mssql.DateTime1
+// included, as go-mssqldb does.
+func (*applyFakeConn) CheckNamedValue(*driver.NamedValue) error { return nil }
+func (*applyFakeConn) Begin() (driver.Tx, error)                { return nil, fmt.Errorf("fake: no transactions") }
 
 func (c *applyFakeConn) ExecContext(_ context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
 	if c.f.echoSecret {
@@ -104,6 +113,10 @@ func (c *applyFakeConn) ExecContext(_ context.Context, q string, args []driver.N
 	}
 	if strings.HasPrefix(q, "USE ") {
 		c.f.add(q)
+		return driver.RowsAffected(0), nil
+	}
+	if q == distQuery(qReplServersProbe, "distribution", "") {
+		c.f.add("servers probe")
 		return driver.RowsAffected(0), nil
 	}
 	if strings.Contains(q, "EXEC msdb.dbo.sp_update_job") {
@@ -154,6 +167,20 @@ func (c *applyFakeConn) QueryContext(_ context.Context, q string, args []driver.
 	case qListing:
 		c.f.add(fmt.Sprintf("listing %v", args[0].Value))
 		return &applyFakeRows{}, nil
+	case distQuery(qAgentRow, "distribution", ""):
+		c.f.add("agent rows")
+		return &applyFakeRows{}, nil
+	case qSyncMethod:
+		c.f.add("sync_method")
+		return &applyFakeRows{rows: [][]driver.Value{{int64(0)}}}, nil
+	}
+	if strings.HasSuffix(q, "\n"+qJobFailedAfter) {
+		// The T passed must be a datetime, the type it was read as.
+		c.f.add(fmt.Sprintf("job failure %T %v", args[0].Value, time.Time(args[0].Value.(mssql.DateTime1)).Format(time.RFC3339Nano)))
+		if c.f.jobFailure == nil {
+			return &applyFakeRows{}, nil
+		}
+		return &applyFakeRows{rows: [][]driver.Value{c.f.jobFailure}}, nil
 	}
 	if strings.HasSuffix(q, "SELECT CASE WHEN "+plan.JobIdle+" THEN 1 ELSE 0 END;") {
 		c.f.add("idle")
@@ -165,8 +192,14 @@ func (c *applyFakeConn) QueryContext(_ context.Context, q string, args []driver.
 
 type applyFakeRows struct{ rows [][]driver.Value }
 
-func (*applyFakeRows) Columns() []string { return []string{"rc"} }
-func (*applyFakeRows) Close() error      { return nil }
+// Columns is one column, or as many as the first row has.
+func (r *applyFakeRows) Columns() []string {
+	if len(r.rows) > 0 && len(r.rows[0]) > 1 {
+		return make([]string, len(r.rows[0]))
+	}
+	return []string{"rc"}
+}
+func (*applyFakeRows) Close() error { return nil }
 func (r *applyFakeRows) Next(dest []driver.Value) error {
 	if len(r.rows) == 0 {
 		return io.EOF
@@ -796,5 +829,105 @@ func TestRunMasksEchoedSecret(t *testing.T) {
 	}
 	if !strings.Contains(o, "  failed: Msg 50000: the value **** is refused\n") {
 		t.Errorf("output lacks the masked failure line:\n%s", o)
+	}
+}
+
+// waitRunner is a runner at the wait for deliveries, on the fake server db,
+// with one pending record of m_p to REPLLAB/m_sdb recorded at at, its
+// folder known, and -wait of wait.
+func waitRunner(t *testing.T, db *sql.DB, at time.Time, wait time.Duration) (*runner, *record, *bytes.Buffer, func()) {
+	t.Helper()
+	ctx := context.Background()
+	runCtx, cancel := context.WithCancel(ctx)
+	waitCtx, cancelWait := context.WithTimeout(runCtx, wait)
+	var out bytes.Buffer
+	p := &plan.Plan{Publisher: "REPLLAB", Database: "m_pdb", DistributionDB: "distribution",
+		SnapshotJobs: map[string]string{"m_p": "DECLARE @job_id uniqueidentifier;"}}
+	r := &runner{o: Options{Wait: wait, Timeout: 5 * time.Second}, p: p, out: &out, res: &Result{},
+		parent: ctx, runCtx: runCtx, intr: make(chan struct{}), waitCtx: waitCtx,
+		distributor: "REPLLAB", s: newSession(Servers{"REPLLAB": db})}
+	r.tr = newTracker("REPLLAB", "REPLLAB")
+	rec := &record{owed: owed{Publication: "m_p", Subscription: "REPLLAB/m_sdb", T: at,
+		Mark: []byte{0, 0, 0, 0, 0, 0, 0x10, 0}, Folder: "REPLLAB_M_PDB_M_P"}}
+	r.tr.records = []*record{rec}
+	stop := func() {
+		cancelWait()
+		cancel()
+		r.s.close()
+	}
+	t.Cleanup(stop)
+	return r, rec, &out, func() { close(r.intr); cancel() }
+}
+
+// TestWaitForFailedGeneration pins R51a: while waiting for a delivery, a
+// failed job outcome of the publication's snapshot job for a run started
+// at or after T ends the delivery at once, unconfirmed, its detail naming
+// the job's message; T is passed as a datetime. Without such a row the
+// wait goes on until -wait is spent; an S7 record is not read.
+func TestWaitForFailedGeneration(t *testing.T) {
+	at := time.Date(2026, 11, 13, 5, 57, 7, 853e6, time.UTC)
+	const msg = "The job failed.  The Job was invoked by User sa.  The last step to run was step 3 (Detect nonlogged agent shutdown.)."
+
+	db, f := newFakeServer(t)
+	f.jobFailure = []driver.Value{time.Date(2026, 11, 13, 5, 57, 8, 0, time.UTC), msg}
+	r, rec, _, _ := waitRunner(t, db, at, 10*time.Second)
+	t0 := time.Now()
+	r.waitFor(func(*record) bool { return true })
+	if d := time.Since(t0); d > 3*time.Second {
+		t.Errorf("a failed generation was waited for %v: notes %q, batches %q", d, r.res.Notes, f.log())
+	}
+	want := "the snapshot job of m_p failed, run started 2026-11-13 05:57:08: " + msg
+	if rec.unlisted != want {
+		t.Errorf("detail %q, want %q", rec.unlisted, want)
+	}
+	if got := r.tr.results(false); len(got) != 1 || got[0].Status != deliveryUnconfirmed || got[0].Detail != want {
+		t.Errorf("results %+v", got)
+	}
+	if !containsString(f.log(), "job failure mssql.DateTime1 2026-11-13T05:57:07.853Z") {
+		t.Errorf("T not passed as a datetime: %q", f.log())
+	}
+
+	db, f = newFakeServer(t)
+	r, rec, _, _ = waitRunner(t, db, at, 1500*time.Millisecond)
+	t0 = time.Now()
+	r.waitFor(func(*record) bool { return true })
+	if d := time.Since(t0); d < time.Second || rec.unlisted != "" {
+		t.Errorf("no failed outcome: waited %v, detail %q, want the whole -wait and no detail", d, rec.unlisted)
+	}
+	if f.count("job failure ") == 0 {
+		t.Errorf("the outcome was never read: %q", f.log())
+	}
+
+	db, f = newFakeServer(t)
+	f.jobFailure = []driver.Value{time.Date(2026, 11, 13, 5, 57, 8, 0, time.UTC), msg}
+	r, rec, _, _ = waitRunner(t, db, at, 1500*time.Millisecond)
+	rec.S7 = true
+	r.waitFor(func(*record) bool { return true })
+	if rec.unlisted != "" || f.count("job failure ") != 0 {
+		t.Errorf("S7: detail %q, batches %q", rec.unlisted, f.log())
+	}
+}
+
+// TestDeferWaitInterrupted pins M2 of the final review: an interrupt
+// during the wait for deliveries prints one line that says so, and the
+// outcome is R52's interrupt.
+func TestDeferWaitInterrupted(t *testing.T) {
+	db, _ := newFakeServer(t)
+	r, _, out, interrupt := waitRunner(t, db, time.Date(2026, 11, 13, 5, 57, 7, 0, time.UTC), time.Minute)
+	r.deferPub = "m_p"
+	time.AfterFunc(300*time.Millisecond, interrupt)
+	t0 := time.Now()
+	if r.deferWait() {
+		t.Fatal("deferWait went on after an interrupt")
+	}
+	if d := time.Since(t0); d > 5*time.Second {
+		t.Errorf("the interrupt was seen after %v", d)
+	}
+	o := out.String()
+	if strings.Count(o, "interrupted while waiting for the deliveries\n") != 1 {
+		t.Errorf("output:\n%s", o)
+	}
+	if r.res.Outcome != OutcomeInterrupted {
+		t.Errorf("outcome %q, want %q", r.res.Outcome, OutcomeInterrupted)
 	}
 }

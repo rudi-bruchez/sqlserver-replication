@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	mssql "github.com/microsoft/go-mssqldb"
+
 	"github.com/rudi-bruchez/sqlserver-replication/internal/plan"
 )
 
@@ -91,17 +93,30 @@ func parseDelivered(comments string) (pubFolder, run string, ok bool) {
 	return parts[1], parts[2], true
 }
 
+// runLayout is the name of a run folder: the snapshot agent's start time,
+// yyyyMMddHHmmss, on the distributor's clock (R50c).
+const runLayout = "20060102150405"
+
 // acceptRun tells whether a delivered run of the publication's folder
 // confirms o (R50): never while a run was in progress at T (the record is
 // retaken once the job is idle); any run for an S7 subscription (Task 3
-// row DL.s7_frequent: its run was already listed at T); otherwise only a
-// run absent from the listing at T.
+// row DL.s7_frequent: its run was already listed at T, so R50c does not
+// apply to it); otherwise only a run absent from the listing at T whose
+// name, read as yyyyMMddHHmmss, is not earlier than T truncated to the
+// second (R50c): the name is the one fact a folder unreadable at T, whose
+// listing shows no run, cannot hide (final review, I1). A name that does
+// not parse is not accepted. Both clocks are the distributor's: T is its
+// GETDATE(), the name its snapshot agent's.
 func acceptRun(o owed, run string) bool {
 	if o.RunningAtT {
 		return false
 	}
 	if o.S7 {
 		return true
+	}
+	at, err := time.ParseInLocation(runLayout, run, o.T.Location())
+	if err != nil || at.Before(o.T.Truncate(time.Second)) {
+		return false
 	}
 	for _, r := range o.Listing {
 		if strings.EqualFold(r, run) {
@@ -116,7 +131,7 @@ type record struct {
 	owed
 	agents       []int  // its distribution agent rows; nil until read
 	run          string // <folder>\<run> once confirmed
-	unlisted     string // why it can never be confirmed (the folder rule)
+	unlisted     string // why it can never be confirmed (the folder rule, or a failed generation, R51a)
 	concurrentOK bool   // its MSsubscriptions rows read status 2
 	jobState     string // read at the end by describe: idle, running, unknown
 	lastHistory  string // read at the end by describe
@@ -721,6 +736,53 @@ func hasAgent(agents []int, a int) bool {
 		}
 	}
 	return false
+}
+
+// failureQuery is the lookup of a snapshot job followed by
+// qJobFailedAfter (R51a).
+func failureQuery(lookup string) string {
+	return strings.TrimRight(lookup, "\n") + "\n" + qJobFailedAfter
+}
+
+// generationFailed ends at once every record of recs still pending whose
+// publication's snapshot job has a failed job outcome (step 0) for a run
+// that started at or after the record's T (R51a): it can no longer be
+// confirmed by the run it waits for, and its detail names the job's last
+// history message. T is passed back as a datetime, the type it was read
+// as, and compared on the distributor (qJobFailedAfter). An S7 record,
+// which any run confirms, and a record whose job ran at T, which is
+// retaken with a later T, are not read. A job the lookup does not find
+// (50000) has no outcome.
+func (t *tracker) generationFailed(ctx context.Context, s *session, p *plan.Plan, recs []*record) error {
+	var conn *sql.Conn
+	for _, r := range recs {
+		if r.run != "" || r.unlisted != "" || r.S7 || r.RunningAtT {
+			continue
+		}
+		lookup, ok := p.SnapshotJobLookup(r.Publication)
+		if !ok {
+			continue
+		}
+		if conn == nil {
+			var err error
+			if conn, err = s.conn(ctx, t.distributor); err != nil {
+				return err
+			}
+		}
+		var at time.Time
+		var msg string
+		switch err := conn.QueryRowContext(ctx, failureQuery(lookup), mssql.DateTime1(r.T)).Scan(&at, &msg); {
+		case errors.Is(err, sql.ErrNoRows):
+			continue
+		case err != nil:
+			if de, ok := driverError(err); ok && de.Number == 50000 {
+				continue
+			}
+			return fmt.Errorf("read the outcome of the snapshot job of %s: %w", r.Publication, err)
+		}
+		r.unlisted = fmt.Sprintf("the snapshot job of %s failed, run started %s: %s", r.Publication, at.Format("2006-01-02 15:04:05"), msg)
+	}
+	return nil
 }
 
 // pending is the deliveries of pub still awaited: neither confirmed nor

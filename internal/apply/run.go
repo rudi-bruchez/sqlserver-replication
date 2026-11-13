@@ -1189,12 +1189,35 @@ func (r *runner) deliveryWait() {
 // owed runs once more, and not again (R51).
 func (r *runner) waitFor(in func(*record) bool) {
 	told := map[string]bool{}
+	readFailures := true
 	for {
 		if err := r.tr.poll(r.waitCtx, r.s, r.p); err != nil {
 			if r.waitCtx.Err() == nil {
 				r.note("the wait for deliveries stopped: %v", err)
 			}
+			r.waitInterrupted()
 			return
+		}
+		if readFailures {
+			var sel []*record
+			for _, rec := range r.tr.records {
+				if in(rec) {
+					sel = append(sel, rec)
+				}
+			}
+			// R51a: a failed generation after T ends its deliveries at
+			// once. The read is a report: one that fails is noted and not
+			// repeated, and the wait goes on.
+			if err := r.tr.generationFailed(r.waitCtx, r.s, r.p, sel); err != nil {
+				if r.waitInterrupted() {
+					return
+				}
+				if r.waitCtx.Err() != nil {
+					return
+				}
+				r.note("%v", err)
+				readFailures = false
+			}
 		}
 		var pend []*record
 		for _, rec := range r.tr.records {
@@ -1220,9 +1243,22 @@ func (r *runner) waitFor(in func(*record) bool) {
 			return
 		}
 		if !r.sleep(r.waitCtx) {
+			r.waitInterrupted()
 			return
 		}
 	}
+}
+
+// waitInterrupted prints, when the run was interrupted, the line that says
+// the wait for deliveries ended on the interrupt (final review, M2), and
+// tells whether it was. The outcome is R52's for an interrupt, which the
+// caller sets.
+func (r *runner) waitInterrupted() bool {
+	if !r.interrupted() {
+		return false
+	}
+	fmt.Fprintln(r.out, "interrupted while waiting for the deliveries")
+	return true
 }
 
 // retakeIdle retakes the pending records whose job ran at T once that job

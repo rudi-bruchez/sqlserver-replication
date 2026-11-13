@@ -125,6 +125,20 @@ FROM sys.dm_os_enumerate_filesystem(@p1, N'*')`
 	// name compares without regard to case. @p1 the publisher.
 	qPublisherRoot = `
 SELECT working_directory FROM msdb.dbo.MSdistpublishers WHERE UPPER(name) = UPPER(@p1)`
+
+	// The failed outcome of a run of a snapshot job that started at or
+	// after T (R51a): the job outcome row (step_id 0) with run_status 0,
+	// its start read through msdb.dbo.agent_datetime and compared on the
+	// distributor with T truncated to the second, since run_date and
+	// run_time have no fraction. It follows the job lookup, which sets
+	// @job_id (failureQuery). The latest such row: its start and its
+	// message. @p1 T, passed as a datetime.
+	qJobFailedAfter = `
+SELECT TOP (1) msdb.dbo.agent_datetime(h.run_date, h.run_time), ISNULL(h.message, N'')
+FROM msdb.dbo.sysjobhistory AS h
+WHERE h.job_id = @job_id AND h.step_id = 0 AND h.run_status = 0
+  AND msdb.dbo.agent_datetime(h.run_date, h.run_time) >= DATEADD(millisecond, -DATEPART(millisecond, @p1), @p1)
+ORDER BY h.instance_id DESC`
 )
 
 // Queries run at the publisher, in the publication database.
@@ -174,7 +188,9 @@ func applyQueries() map[string]string {
 		"qReplServersProbe": qReplServersProbe, "qTMark": qTMark, "qAgentRow": qAgentRow,
 		"qHistoryAfter": qHistoryAfter, "qDistSubStatus": qDistSubStatus, "qListing": qListing,
 		"qPublisherRoot": qPublisherRoot,
-		"qLastHistory":   qLastHistory, "qAgentJobState": qAgentJobState,
+		// It follows a job lookup, which declares @job_id.
+		"qJobFailedAfter": "DECLARE @job_id uniqueidentifier;\n" + qJobFailedAfter,
+		"qLastHistory":    qLastHistory, "qAgentJobState": qAgentJobState,
 		"qSubStatus": qSubStatus, "pendingQuery": pendingQuery,
 		"qImmediateSyncReady": qImmediateSyncReady, "qSyncMethod": qSyncMethod,
 	}

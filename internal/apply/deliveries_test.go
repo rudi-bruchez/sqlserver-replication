@@ -89,6 +89,53 @@ func TestAcceptRunFolder(t *testing.T) {
 	}
 }
 
+// TestAcceptRunNamedAfterT pins R50c: a run is accepted only when its
+// name, read as yyyyMMddHHmmss, is not earlier than T truncated to the
+// second, whatever the listing at T says. The reproduction of the final
+// review (I1): a publication folder unreadable at T lists no run, and a
+// run generated before T was then accepted.
+func TestAcceptRunNamedAfterT(t *testing.T) {
+	at := time.Date(2026, 11, 13, 5, 43, 46, 853e6, time.UTC)
+	cases := []struct {
+		name string
+		o    owed
+		run  string
+		want bool
+	}{
+		{"named before T, empty listing", owed{T: at}, "20261113054345", false},
+		{"named a day before T, empty listing", owed{T: at}, "20261112054346", false},
+		{"named at T's second", owed{T: at}, "20261113054346", true},
+		{"named after T", owed{T: at}, "20261113054347", true},
+		{"named after T, listed at T", owed{T: at, Listing: []string{"20261113054347"}}, "20261113054347", false},
+		{"a name that does not parse", owed{T: at}, "snapshot", false},
+		{"a name with a suffix", owed{T: at}, "20261113054347_1", false},
+		{"a name too short", owed{T: at}, "202611130543", false},
+		{"S7, named before T", owed{T: at, S7: true}, "20261113054345", true},
+	}
+	for _, c := range cases {
+		if got := acceptRun(c.o, c.run); got != c.want {
+			t.Errorf("%s: acceptRun(%q) = %v, want %v", c.name, c.run, got, c.want)
+		}
+	}
+	// The same through confirm: the line of a run named before T confirms
+	// nothing, at T's second it confirms.
+	mark := []byte{0, 0, 0, 0, 0, 0, 0x10, 0}
+	for _, c := range []struct{ run, want string }{
+		{"20261113054345", ""},
+		{"20261113054346", `REPLLAB_M_PDB_X_M_P\20261113054346`},
+	} {
+		r := &record{owed: owed{Publication: "m_p", Subscription: "SUB/m_sdb", T: at, Mark: mark,
+			Folder: "REPLLAB_M_PDB_X_M_P"}, agents: []int{7}}
+		tr := &tracker{lines: map[lineKey]line{}, records: []*record{r}}
+		tr.keep(line{agent: 7, ts: []byte{0, 0, 0, 0, 0, 0, 0x10, 1}, time: at.Add(time.Second),
+			comments: `Delivered snapshot from the 'unc\REPLLAB_M_PDB_X_M_P\` + c.run + `\' sub-folder in 107 milliseconds`})
+		tr.confirm()
+		if r.run != c.want {
+			t.Errorf("confirm of run %s: %q, want %q", c.run, r.run, c.want)
+		}
+	}
+}
+
 func TestPubFolderIdentified(t *testing.T) {
 	unc := labRoot + "/unc/"
 	// One directory under <root>/unc named <PUBLISHER>_<DB>_<PUB>, upper-cased
